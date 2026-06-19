@@ -15,6 +15,7 @@ use App\Http\Controllers\Realization\RealizationEntryController;
 use App\Http\Controllers\Realization\RealizationAttachmentController;
 use App\Http\Controllers\Dashboard\DashboardController;
 use App\Http\Controllers\Reports\ReportController;
+use App\Http\Controllers\Reports\RecapController;
 use App\Http\Controllers\Settings\SystemSettingController;
 use App\Http\Controllers\Users\UserController;
 use Illuminate\Support\Facades\Route;
@@ -120,7 +121,7 @@ Route::prefix('v1')->middleware(['auth:sanctum', 'ensure.unit.access'])->group(f
     Route::get('reports/realization',   [ReportController::class, 'realization']);
     Route::get('reports/over-budget',   [ReportController::class, 'overBudget']);
     Route::get('reports/missing-proof', [ReportController::class, 'missingProof']);
-    Route::get('reports/recap',         [ReportController::class, 'recap']);
+    Route::get('reports/recap',         [RecapController::class, 'index']);
     Route::post('reports/export',       [ReportController::class, 'export']);
     Route::get('reports/export/{job}',  [ReportController::class, 'exportStatus']);
 
