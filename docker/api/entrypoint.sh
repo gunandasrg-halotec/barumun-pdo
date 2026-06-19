@@ -9,8 +9,11 @@ if [ ! -f vendor/autoload.php ]; then
     composer install --no-interaction --quiet
 fi
 
-# Setup .env dari .env.docker (di-inject via env_file di docker-compose)
-# Laravel akan membaca env vars dari environment, bukan file .env saat APP_KEY sudah ada
+# Regenerasi autoload agar map ke file yang di-mount dari host (bukan dari image build)
+echo "[PDO] Regenerasi autoload map..."
+composer dump-autoload --optimize --quiet
+
+# Setup .env
 if [ ! -f .env ]; then
     cp .env.example .env
 fi
@@ -21,7 +24,7 @@ if [ -z "$APP_KEY" ] || grep -q "^APP_KEY=$" .env 2>/dev/null; then
     php artisan key:generate --no-interaction
 fi
 
-# Publish Sanctum config (idempotent)
+# Publish Sanctum config
 php artisan vendor:publish --provider="Laravel\Sanctum\SanctumServiceProvider" \
     --tag="sanctum-config" --no-interaction 2>/dev/null || true
 
@@ -29,9 +32,8 @@ echo "[PDO] Menjalankan migrasi database..."
 php artisan migrate --force --no-interaction
 
 echo "[PDO] Menjalankan seeder (hanya jika tabel kosong)..."
-# Cek apakah sudah ada data di tabel companies
-COMPANY_COUNT=$(php artisan tinker --execute="echo DB::table('companies')->count();" 2>/dev/null || echo "0")
-if [ "$COMPANY_COUNT" = "0" ]; then
+ROW_COUNT=$(php artisan tinker --execute="echo \DB::table('companies')->count();" 2>/dev/null | tail -1)
+if [ "$ROW_COUNT" = "0" ] || [ -z "$ROW_COUNT" ]; then
     php artisan db:seed --force --no-interaction
     echo "[PDO] Seeder selesai."
 else

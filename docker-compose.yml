@@ -28,6 +28,7 @@ services:
       - ./apps/api/database:/var/www/api/database
       - ./apps/api/routes/api.php:/var/www/api/routes/api.php
       - ./apps/api/bootstrap/app.php:/var/www/api/bootstrap/app.php
+      - ./apps/api/bootstrap/providers.php:/var/www/api/bootstrap/providers.php
       # Persist vendor & storage di named volume (tidak di-replace oleh mount host)
       - api_vendor:/var/www/api/vendor
       - api_storage:/var/www/api/storage
