@@ -404,7 +404,7 @@ return new class extends Migration
             $table->string('action', 50);
             $table->jsonb('old_values')->nullable();
             $table->jsonb('new_values')->nullable();
-            $table->inet('ip_address')->nullable();
+            $table->string('ip_address', 45)->nullable();
             $table->text('user_agent')->nullable();
             $table->timestampTz('created_at')->useCurrent();
 
