@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { usePdo } from '@/hooks/usePdo'
@@ -5,12 +6,13 @@ import { useAuthStore } from '@/store/auth.store'
 import { PdoStatusBadge } from '@/components/ui/Badge'
 import { Button } from '@/components/ui/Button'
 import { EmptyState } from '@/components/ui/EmptyState'
+import { ClosePdoModal } from '@/components/pdo/ClosePdoModal'
 import { useToastStore } from '@/store/toast.store'
 import { fmt, fmtDate, fmtPeriode } from '@/lib/format'
 import { isKerani } from '@/lib/auth'
 import { api } from '@/lib/api'
 import type { PdoDetail, ApiResponse, RoleCode } from '@/types'
-import { ArrowLeft, GitBranch } from 'lucide-react'
+import { ArrowLeft, GitBranch, Lock } from 'lucide-react'
 
 export function PdoDetailPage() {
   const { id }   = useParams<{ id: string }>()
@@ -19,6 +21,8 @@ export function PdoDetailPage() {
   const qc       = useQueryClient()
   const user     = useAuthStore((s) => s.user)
   const role     = user?.role.code as RoleCode | undefined
+
+  const [showCloseModal, setShowCloseModal] = useState(false)
 
   const { data: pdo, isLoading } = usePdo(id)
 
@@ -76,6 +80,15 @@ export function PdoDetailPage() {
                 Ajukan ke Asisten
               </Button>
             </>
+          )}
+          {/* BR-CLOSE-002: Tombol Tutup PDO hanya untuk MANAJER_KEUANGAN saat status final */}
+          {role === 'MANAJER_KEUANGAN' && pdo.status === 'final' && (
+            <Button
+              className="bg-red text-white hover:bg-red/90"
+              onClick={() => setShowCloseModal(true)}
+            >
+              <Lock className="w-4 h-4" /> Tutup PDO
+            </Button>
           )}
           <Button variant="secondary" onClick={() => navigate(`/pdo/${pdo.id}/approval`)}>
             <GitBranch className="w-4 h-4" /> Approval
@@ -146,11 +159,34 @@ export function PdoDetailPage() {
         )}
       </div>
 
+      {pdo.status === 'closed' && pdo.closed_at && (
+        <div className="card mt-4 border border-[#e5e7eb] bg-[#f9fafb]">
+          <p className="text-sm text-muted">
+            PDO ini ditutup pada <strong>{fmtDate(pdo.closed_at)}</strong>
+            {pdo.closure_type === 'manual' ? ` oleh ${pdo.closer?.full_name ?? 'Manajer Keuangan'}` : ' secara otomatis (sistem)'}.
+          </p>
+        </div>
+      )}
+
       {pdo.notes && (
         <div className="card mt-4">
           <h4 className="text-[13px] font-[850] text-muted mb-1">Catatan</h4>
           <p className="text-sm">{pdo.notes}</p>
         </div>
+      )}
+
+      {id && pdo && (
+        <ClosePdoModal
+          isOpen={showCloseModal}
+          pdoId={id}
+          periodYear={pdo.period_year}
+          periodMonth={pdo.period_month}
+          onSuccess={() => {
+            setShowCloseModal(false)
+            qc.invalidateQueries({ queryKey: ['pdo', id] })
+          }}
+          onClose={() => setShowCloseModal(false)}
+        />
       )}
     </div>
   )

@@ -2,58 +2,54 @@
 
 namespace App\Http\Controllers\PDO;
 
+use App\Exceptions\PdoNotFinalException;
 use App\Http\Controllers\Controller;
-use App\Models\AuditLog;
-use App\Models\PdoHeader;
-use App\Models\Role;
+use App\Services\PDO\PdoCloseService;
+use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 
 class PdoCloseController extends Controller
 {
+    public function __construct(private readonly PdoCloseService $closeService) {}
+
     /**
-     * Tutup PDO yang sudah Final (status: final → closed).
-     * Hanya MANAJER_KEUANGAN atau DIREKTUR_KEUANGAN.
+     * POST /api/v1/pdo/{id}/close
+     * BR-CLOSE-002: Penutupan manual — hanya MANAJER_KEUANGAN
      */
-    public function close(Request $request, PdoHeader $pdo): JsonResponse
+    public function close(Request $request, string $id): JsonResponse
     {
-        if (! $request->user()->hasAnyRole([Role::MANAJER_KEUANGAN, Role::DIREKTUR_KEUANGAN])) {
+        $validated = $request->validate([
+            'closed_date'   => ['required', 'date', 'after_or_equal:today'],
+            'closure_notes' => ['nullable', 'string', 'max:1000'],
+        ]);
+
+        try {
+            $pdo = $this->closeService->closeManual($id, $request->user(), $validated);
+        } catch (AuthorizationException $e) {
             return response()->json([
                 'success' => false,
-                'error'   => ['code' => 'FORBIDDEN', 'message' => 'Hanya Manajer/Direktur Keuangan yang bisa menutup PDO.'],
+                'error'   => ['code' => 'FORBIDDEN', 'message' => $e->getMessage()],
             ], 403);
-        }
-
-        if (! $pdo->isFinal()) {
+        } catch (PdoNotFinalException $e) {
             return response()->json([
                 'success' => false,
-                'error'   => ['code' => 'INVALID_STATUS', 'message' => 'Hanya PDO berstatus final yang bisa ditutup.'],
-            ], 409);
+                'error'   => ['code' => 'PDO_NOT_FINAL', 'message' => $e->getMessage()],
+            ], 422);
         }
 
-        $request->validate([
-            'closure_type'  => ['required', 'in:system,manual'],
-            'closure_notes' => ['nullable', 'string'],
+        $closedBy = $pdo->closer;
+
+        return response()->json([
+            'success' => true,
+            'data'    => [
+                'pdo_number'   => $pdo->pdo_number,
+                'status'       => $pdo->status,
+                'closure_type' => $pdo->closure_type,
+                'closed_at'    => $pdo->closed_at?->toIso8601String(),
+                'closed_by'    => $closedBy ? ['id' => $closedBy->id, 'full_name' => $closedBy->full_name] : null,
+            ],
+            'message' => 'PDO berhasil ditutup.',
         ]);
-
-        $old = $pdo->toArray();
-        $pdo->update([
-            'status'        => PdoHeader::STATUS_CLOSED,
-            'closed_by'     => $request->user()->id,
-            'closed_at'     => now(),
-            'closure_type'  => $request->input('closure_type'),
-            'closure_notes' => $request->input('closure_notes'),
-        ]);
-
-        AuditLog::record(
-            actor: $request->user(),
-            entityType: 'pdo_headers',
-            entityId: $pdo->id,
-            action: 'STATUS_CHANGE',
-            oldValues: $old,
-            newValues: $pdo->fresh()->toArray()
-        );
-
-        return response()->json(['success' => true, 'data' => $pdo->fresh(), 'message' => 'PDO berhasil ditutup.']);
     }
 }

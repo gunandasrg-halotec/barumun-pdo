@@ -58,12 +58,12 @@ Route::prefix('v1')->middleware(['auth:sanctum', 'ensure.unit.access'])->group(f
     // PDO Details (baris item)
     Route::prefix('pdo/{pdo}')->group(function () {
         Route::get('details',               [PdoDetailController::class, 'index']);
-        Route::post('details',              [PdoDetailController::class, 'store']);
-        Route::put('details/{detail}',      [PdoDetailController::class, 'update']);
-        Route::delete('details/{detail}',   [PdoDetailController::class, 'destroy']);
+        Route::post('details',              [PdoDetailController::class, 'store'])->middleware('check.pdo.status');
+        Route::put('details/{detail}',      [PdoDetailController::class, 'update'])->middleware('check.pdo.status');
+        Route::delete('details/{detail}',   [PdoDetailController::class, 'destroy'])->middleware('check.pdo.status');
 
         // Approval workflow
-        Route::post('submit',              [PdoApprovalController::class, 'submit']);
+        Route::post('submit',              [PdoApprovalController::class, 'submit'])->middleware('check.pdo.status');
         Route::post('approve',             [PdoApprovalController::class, 'approve']);
         Route::post('reject',              [PdoApprovalController::class, 'reject']);
         Route::get('approval-history',     [PdoApprovalController::class, 'history']);
@@ -71,26 +71,28 @@ Route::prefix('v1')->middleware(['auth:sanctum', 'ensure.unit.access'])->group(f
         // Transfer summary per PDO
         Route::get('transfers',            [TransferEntryController::class, 'summaryByPdo']);
 
-        // Penutupan PDO
+        // Penutupan PDO — tidak perlu check.pdo.status karena endpoint ini yang menutup
         Route::post('close',               [PdoCloseController::class, 'close']);
 
         // Realisasi per PDO
         Route::get('realizations',         [RealizationEntryController::class, 'summaryByPdo']);
         Route::get('realizations/items',   [RealizationEntryController::class, 'itemsByPdo']);
+        // BR-CLOSE-003: write realisasi diblokir untuk PDO closed
+        Route::post('realizations',        [RealizationEntryController::class, 'store'])->middleware('check.pdo.status');
     });
 
     // ── Transfer Entries (per pdo_detail) ─────────────
     Route::prefix('pdo-details/{detail}')->group(function () {
         Route::get('transfers',  [TransferEntryController::class, 'index']);
-        Route::post('transfers', [TransferEntryController::class, 'store']);
+        Route::post('transfers', [TransferEntryController::class, 'store'])->middleware('check.pdo.status');
     });
-    Route::put('transfer-entries/{entry}', [TransferEntryController::class, 'update']); // koreksi
+    Route::put('transfer-entries/{entry}', [TransferEntryController::class, 'update'])->middleware('check.pdo.status'); // koreksi
 
     // ── Realisasi Dana ────────────────────────────────
     Route::get('realization-entries',         [RealizationEntryController::class, 'index']);
-    Route::post('realization-entries',        [RealizationEntryController::class, 'store']);
-    Route::put('realization-entries/{entry}', [RealizationEntryController::class, 'update']);
-    Route::delete('realization-entries/{entry}', [RealizationEntryController::class, 'destroy']);
+    Route::post('realization-entries',        [RealizationEntryController::class, 'store'])->middleware('check.pdo.status');
+    Route::put('realization-entries/{entry}', [RealizationEntryController::class, 'update'])->middleware('check.pdo.status');
+    Route::delete('realization-entries/{entry}', [RealizationEntryController::class, 'destroy'])->middleware('check.pdo.status');
 
     // Attachments (bukti transaksi)
     Route::post('realization-entries/{entry}/attachments',              [RealizationAttachmentController::class, 'store']);

@@ -1,5 +1,7 @@
 <?php
 
+use App\Console\Commands\AutoClosePdoCommand;
+use App\Http\Middleware\CheckPdoStatus;
 use App\Http\Middleware\EnsureUnitAccess;
 use Illuminate\Auth\AuthenticationException;
 use Illuminate\Foundation\Application;
@@ -14,11 +16,19 @@ return Application::configure(basePath: dirname(__DIR__))
         apiPrefix: 'api',
         health: '/up',
     )
+    ->withSchedule(function (\Illuminate\Console\Scheduling\Schedule $schedule) {
+        // BR-CLOSE-001: auto-close PDO setiap malam pukul 23:55 WIB
+        $schedule->command(AutoClosePdoCommand::class)
+            ->dailyAt('23:55')
+            ->timezone('Asia/Jakarta')
+            ->onOneServer();
+    })
     ->withMiddleware(function (Middleware $middleware) {
 
         // ── Alias middleware ──────────────────────────────
         $middleware->alias([
             'ensure.unit.access' => EnsureUnitAccess::class,
+            'check.pdo.status'   => CheckPdoStatus::class,
         ]);
 
         // ── Sanctum stateful domains (untuk SPA cookie auth) ──
