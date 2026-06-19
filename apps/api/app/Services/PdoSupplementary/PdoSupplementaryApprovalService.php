@@ -1,0 +1,138 @@
+<?php
+
+namespace App\Services\PdoSupplementary;
+
+use App\Models\PdoSupplementaryApprovalLog;
+use App\Models\PdoSupplementaryHeader;
+use App\Models\Role;
+use App\Models\User;
+use App\Services\Notification\WhatsAppNotificationService;
+use Illuminate\Support\Facades\DB;
+
+class PdoSupplementaryApprovalService
+{
+    /**
+     * Chain identik dengan PDO Bulanan — status final berbeda: final_merged (bukan final).
+     */
+    private const TRANSITION_MAP = [
+        PdoSupplementaryHeader::STATUS_SUBMITTED          => [Role::ASISTEN_KEBUN,     PdoSupplementaryHeader::STATUS_REVIEWED_ASISTEN],
+        PdoSupplementaryHeader::STATUS_REVIEWED_ASISTEN   => [Role::MANAJER_KEBUN,     PdoSupplementaryHeader::STATUS_IN_REVIEW_MANAGER],
+        PdoSupplementaryHeader::STATUS_IN_REVIEW_MANAGER  => [Role::MANAJER_KEUANGAN,  PdoSupplementaryHeader::STATUS_IN_REVIEW_DIREKTUR],
+        PdoSupplementaryHeader::STATUS_IN_REVIEW_DIREKTUR => [Role::DIREKTUR_KEUANGAN, PdoSupplementaryHeader::STATUS_FINAL_MERGED],
+    ];
+
+    public function __construct(
+        private readonly WhatsAppNotificationService $wa = new WhatsAppNotificationService()
+    ) {}
+
+    /** Submit PDO Tambahan: draft/rejected → submitted */
+    public function submit(PdoSupplementaryHeader $supp, string $submissionDate, User $actor): PdoSupplementaryHeader
+    {
+        if (! $actor->hasRole(Role::KERANI)) {
+            abort(response()->json(['success' => false, 'error' => ['code' => 'FORBIDDEN', 'message' => 'Hanya KERANI yang bisa submit PDO Tambahan.']], 403));
+        }
+
+        $allowedStatuses = [PdoSupplementaryHeader::STATUS_DRAFT, PdoSupplementaryHeader::STATUS_REJECTED];
+        if (! in_array($supp->status, $allowedStatuses)) {
+            abort(response()->json(['success' => false, 'error' => ['code' => 'INVALID_STATUS', 'message' => 'PDO Tambahan harus berstatus draft atau rejected untuk di-submit.']], 409));
+        }
+
+        if ($supp->details()->where('amount', '>', 0)->doesntExist()) {
+            abort(response()->json(['success' => false, 'error' => ['code' => 'SUPPLEMENTARY_EMPTY', 'message' => 'PDO Tambahan harus memiliki minimal satu item dengan jumlah > 0.']], 422));
+        }
+
+        return DB::transaction(function () use ($supp, $submissionDate, $actor) {
+            $action = $supp->isRejected()
+                ? PdoSupplementaryApprovalLog::ACTION_RESUBMIT
+                : PdoSupplementaryApprovalLog::ACTION_SUBMIT;
+
+            $supp->update([
+                'status'          => PdoSupplementaryHeader::STATUS_SUBMITTED,
+                'submission_date' => $submissionDate,
+            ]);
+
+            $this->appendLog($supp, $actor, 'kerani_submit', $action);
+
+            return $supp->fresh();
+        });
+    }
+
+    /** Approve berdasarkan role approver — chain sama seperti PDO Bulanan */
+    public function approve(PdoSupplementaryHeader $supp, ?string $reason, User $actor): PdoSupplementaryHeader
+    {
+        [$requiredRole, $nextStatus] = $this->resolveTransition($supp, $actor);
+
+        return DB::transaction(function () use ($supp, $actor, $reason, $nextStatus) {
+            $stage = $supp->status;
+            $supp->update(['status' => $nextStatus]);
+
+            $this->appendLog($supp, $actor, $stage, PdoSupplementaryApprovalLog::ACTION_APPROVE, $reason);
+
+            return $supp->fresh();
+        });
+    }
+
+    /** Reject di tahap manapun → kembali ke status rejected (bukan draft, agar KERANI tahu perlu resubmit) */
+    public function reject(PdoSupplementaryHeader $supp, string $reason, User $actor): PdoSupplementaryHeader
+    {
+        if (! $actor->canApprove()) {
+            abort(response()->json(['success' => false, 'error' => ['code' => 'FORBIDDEN', 'message' => 'Anda tidak memiliki akses untuk menolak PDO Tambahan ini.']], 403));
+        }
+
+        $inReview = [
+            PdoSupplementaryHeader::STATUS_SUBMITTED,
+            PdoSupplementaryHeader::STATUS_REVIEWED_ASISTEN,
+            PdoSupplementaryHeader::STATUS_IN_REVIEW_MANAGER,
+            PdoSupplementaryHeader::STATUS_IN_REVIEW_DIREKTUR,
+        ];
+
+        if (! in_array($supp->status, $inReview)) {
+            abort(response()->json(['success' => false, 'error' => ['code' => 'INVALID_STATUS', 'message' => 'PDO Tambahan tidak bisa ditolak pada status ini.']], 409));
+        }
+
+        return DB::transaction(function () use ($supp, $actor, $reason) {
+            $stage = $supp->status;
+            $supp->update(['status' => PdoSupplementaryHeader::STATUS_REJECTED]);
+
+            $this->appendLog($supp, $actor, $stage, PdoSupplementaryApprovalLog::ACTION_REJECT, $reason);
+
+            return $supp->fresh();
+        });
+    }
+
+    public function history(PdoSupplementaryHeader $supp)
+    {
+        return $supp->approvalLogs()->with('actor')->orderBy('sequence_number')->get();
+    }
+
+    // ─────────────────────────────────────────────────────
+    // PRIVATE
+    // ─────────────────────────────────────────────────────
+
+    private function resolveTransition(PdoSupplementaryHeader $supp, User $actor): array
+    {
+        if (! isset(self::TRANSITION_MAP[$supp->status])) {
+            abort(response()->json(['success' => false, 'error' => ['code' => 'INVALID_STATUS', 'message' => 'PDO Tambahan tidak bisa di-approve pada status ini.']], 409));
+        }
+
+        [$requiredRole, $nextStatus] = self::TRANSITION_MAP[$supp->status];
+
+        if (! $actor->hasRole($requiredRole)) {
+            abort(response()->json(['success' => false, 'error' => ['code' => 'FORBIDDEN', 'message' => "Approval tahap ini membutuhkan role {$requiredRole}."]], 403));
+        }
+
+        return [$requiredRole, $nextStatus];
+    }
+
+    private function appendLog(PdoSupplementaryHeader $supp, User $actor, string $stage, string $action, ?string $reason = null): void
+    {
+        PdoSupplementaryApprovalLog::create([
+            'pdo_supplementary_header_id' => $supp->id,
+            'actor_user_id'               => $actor->id,
+            'approval_stage'              => $stage,
+            'action'                      => $action,
+            'reason'                      => $reason,
+            'sequence_number'             => $supp->nextApprovalSequence(),
+        ]);
+    }
+}

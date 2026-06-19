@@ -6,13 +6,20 @@ use App\Http\Controllers\Controller;
 use App\Http\Requests\PDO\ApprovePdoRequest;
 use App\Http\Requests\PDO\RejectPdoRequest;
 use App\Http\Requests\PDO\SubmitPdoRequest;
+use App\Http\Requests\PdoSupplementary\SubmitPdoSupplementaryRequest;
 use App\Models\PdoHeader;
+use App\Models\PdoSupplementaryHeader;
 use App\Services\PDO\PdoApprovalService;
+use App\Services\PdoSupplementary\PdoSupplementaryApprovalService;
 use Illuminate\Http\JsonResponse;
+use Illuminate\Http\Request;
 
 class PdoApprovalController extends Controller
 {
-    public function __construct(private readonly PdoApprovalService $service) {}
+    public function __construct(
+        private readonly PdoApprovalService $service,
+        private readonly PdoSupplementaryApprovalService $suppService = new PdoSupplementaryApprovalService(),
+    ) {}
 
     public function submit(SubmitPdoRequest $request, PdoHeader $pdo): JsonResponse
     {
@@ -46,19 +53,29 @@ class PdoApprovalController extends Controller
         return response()->json(['success' => true, 'data' => $logs]);
     }
 
-    /** Placeholder — PDO Tambahan diimplementasikan di sprint berikutnya */
-    public function submitSupplementary(): JsonResponse
+    public function submitSupplementary(SubmitPdoSupplementaryRequest $request, PdoSupplementaryHeader $supplementary): JsonResponse
     {
-        return response()->json(['success' => false, 'error' => ['code' => 'NOT_IMPLEMENTED', 'message' => 'Fitur ini belum tersedia.']], 501);
+        $updated = $this->suppService->submit($supplementary, $request->input('submission_date'), $request->user());
+
+        return response()->json(['success' => true, 'data' => $updated, 'message' => 'PDO Tambahan berhasil disubmit untuk review.']);
     }
 
-    public function approveSupplementary(): JsonResponse
+    public function approveSupplementary(ApprovePdoRequest $request, PdoSupplementaryHeader $supplementary): JsonResponse
     {
-        return response()->json(['success' => false, 'error' => ['code' => 'NOT_IMPLEMENTED', 'message' => 'Fitur ini belum tersedia.']], 501);
+        $updated = $this->suppService->approve($supplementary, $request->input('reason'), $request->user());
+
+        $isFinal = $updated->status === PdoSupplementaryHeader::STATUS_FINAL_MERGED;
+        $message = $isFinal
+            ? 'PDO Tambahan disetujui Direktur. Silakan lakukan merge ke PDO Bulanan.'
+            : 'PDO Tambahan berhasil disetujui dan diteruskan ke tahap berikutnya.';
+
+        return response()->json(['success' => true, 'data' => $updated, 'message' => $message]);
     }
 
-    public function rejectSupplementary(): JsonResponse
+    public function rejectSupplementary(RejectPdoRequest $request, PdoSupplementaryHeader $supplementary): JsonResponse
     {
-        return response()->json(['success' => false, 'error' => ['code' => 'NOT_IMPLEMENTED', 'message' => 'Fitur ini belum tersedia.']], 501);
+        $updated = $this->suppService->reject($supplementary, $request->input('reason'), $request->user());
+
+        return response()->json(['success' => true, 'data' => $updated, 'message' => 'PDO Tambahan ditolak. KERANI dapat merevisi dan resubmit.']);
     }
 }
