@@ -139,6 +139,7 @@ return new class extends Migration
             $table->bigInteger('default_rate')->nullable();
             $table->string('mode_input', 20)->default('manual');
             $table->boolean('is_routine')->default(false);
+            $table->integer('display_order')->default(0);
             $table->boolean('is_active')->default(true);
             $table->text('notes')->nullable();
             $table->timestampsTz();
