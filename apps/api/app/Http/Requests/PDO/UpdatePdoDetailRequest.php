@@ -1,0 +1,27 @@
+<?php
+
+namespace App\Http\Requests\PDO;
+
+use App\Models\Role;
+use Illuminate\Foundation\Http\FormRequest;
+
+class UpdatePdoDetailRequest extends FormRequest
+{
+    public function authorize(): bool
+    {
+        return $this->user()?->hasAnyRole([Role::KERANI, Role::ADMIN]) ?? false;
+    }
+
+    public function rules(): array
+    {
+        return [
+            'description'   => ['sometimes', 'string'],
+            'quantity'      => ['nullable', 'numeric', 'min:0'],
+            'unit'          => ['nullable', 'string', 'max:50'],
+            'rate'          => ['nullable', 'integer', 'min:0'],
+            'amount'        => ['sometimes', 'integer', 'min:0'],
+            'notes'         => ['nullable', 'string'],
+            'display_order' => ['sometimes', 'integer', 'min:0'],
+        ];
+    }
+}
