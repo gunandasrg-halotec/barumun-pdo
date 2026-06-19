@@ -1,0 +1,76 @@
+services:
+  api:
+    build:
+      context: ./apps/api
+      dockerfile: Dockerfile.dev
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./apps/api:/var/www/html
+      - /var/www/html/vendor
+    environment:
+      APP_ENV: local
+      APP_DEBUG: "true"
+      DB_HOST: db
+      DB_PORT: 5432
+      DB_DATABASE: pdo_local
+      DB_USERNAME: pdo_user
+      DB_PASSWORD: secret
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY}
+      AWS_DEFAULT_REGION: ap-southeast-3
+      AWS_BUCKET: ${AWS_BUCKET}
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_started
+
+  web:
+    build:
+      context: ./apps/web
+      dockerfile: Dockerfile.dev
+    ports:
+      - "5173:5173"
+    volumes:
+      - ./apps/web:/app
+      - /app/node_modules
+    environment:
+      VITE_API_URL: http://localhost:8000/api/v1
+    depends_on:
+      - api
+
+  db:
+    image: postgres:15-alpine
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_DB: pdo_local
+      POSTGRES_USER: pdo_user
+      POSTGRES_PASSWORD: secret
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U pdo_user -d pdo_local"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+
+  mailpit:
+    image: axllent/mailpit:latest
+    ports:
+      - "8025:8025"  # Web UI
+      - "1025:1025"  # SMTP
+
+volumes:
+  postgres_data:
+  redis_data:
