@@ -45,7 +45,7 @@ class AttachmentService
             'file_size_bytes'      => $file->getSize(),
         ]);
 
-        AuditLog::append(
+        AuditLog::record(
             actor: $actor,
             entityType: 'realization_attachments',
             entityId: $attachment->id,
@@ -76,7 +76,7 @@ class AttachmentService
         Storage::disk(config('filesystems.default'))->delete($attachment->file_path);
         $attachment->delete();
 
-        AuditLog::append(
+        AuditLog::record(
             actor: $actor,
             entityType: 'realization_attachments',
             entityId: $attachment->id,

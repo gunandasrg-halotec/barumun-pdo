@@ -1,16 +1,16 @@
 import axios, { AxiosError } from 'axios'
+import { useAuthStore } from '@/store/auth.store'
 import type { ApiError } from '@/types'
 
 export const api = axios.create({
   baseURL: '/api/v1',
-  withCredentials: true, // Sanctum cookie
   headers: { 'Accept': 'application/json', 'Content-Type': 'application/json' },
 })
 
-// Request interceptor — CSRF token dari meta tag jika ada
+// Request interceptor — sertakan Bearer token Sanctum
 api.interceptors.request.use((config) => {
-  const token = document.querySelector('meta[name="csrf-token"]')?.getAttribute('content')
-  if (token) config.headers['X-CSRF-TOKEN'] = token
+  const token = useAuthStore.getState().token
+  if (token) config.headers['Authorization'] = `Bearer ${token}`
   return config
 })
 

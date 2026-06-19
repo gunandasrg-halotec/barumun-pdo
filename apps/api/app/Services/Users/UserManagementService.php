@@ -45,7 +45,7 @@ class UserManagementService
             'is_active'          => $data['is_active'] ?? true,
         ]);
 
-        AuditLog::append(
+        AuditLog::record(
             actor: $actor,
             entityType: 'users',
             entityId: $user->id,
@@ -85,7 +85,7 @@ class UserManagementService
         $old = $user->makeHidden(['password_hash'])->toArray();
         $user->update($payload);
 
-        AuditLog::append(
+        AuditLog::record(
             actor: $actor,
             entityType: 'users',
             entityId: $user->id,
@@ -113,7 +113,7 @@ class UserManagementService
         $user->update(['is_active' => false]);
         $user->delete();
 
-        AuditLog::append(
+        AuditLog::record(
             actor: $actor,
             entityType: 'users',
             entityId: $user->id,

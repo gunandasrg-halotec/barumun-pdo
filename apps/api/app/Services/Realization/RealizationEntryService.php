@@ -112,7 +112,7 @@ class RealizationEntryService
                 'explanation'      => $data['explanation'] ?? null,
             ]);
 
-            AuditLog::append(
+            AuditLog::record(
                 actor: $actor,
                 entityType: 'realization_entries',
                 entityId: $entry->id,
@@ -167,7 +167,7 @@ class RealizationEntryService
             $old = $entry->toArray();
             $entry->update($data);
 
-            AuditLog::append(
+            AuditLog::record(
                 actor: $actor,
                 entityType: 'realization_entries',
                 entityId: $entry->id,
@@ -198,7 +198,7 @@ class RealizationEntryService
         $old = $entry->toArray();
         $entry->delete();
 
-        AuditLog::append(
+        AuditLog::record(
             actor: $actor,
             entityType: 'realization_entries',
             entityId: $entry->id,

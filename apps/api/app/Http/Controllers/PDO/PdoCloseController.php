@@ -45,7 +45,7 @@ class PdoCloseController extends Controller
             'closure_notes' => $request->input('closure_notes'),
         ]);
 
-        AuditLog::append(
+        AuditLog::record(
             actor: $request->user(),
             entityType: 'pdo_headers',
             entityId: $pdo->id,

@@ -86,7 +86,7 @@ class TransferEntryService
                 'notes'            => $data['notes'] ?? null,
             ]);
 
-            AuditLog::append(
+            AuditLog::record(
                 actor: $actor,
                 entityType: 'transfer_entries',
                 entityId: $entry->id,
@@ -137,7 +137,7 @@ class TransferEntryService
             $old = $entry->toArray();
             $entry->update($data);
 
-            AuditLog::append(
+            AuditLog::record(
                 actor: $actor,
                 entityType: 'transfer_entries',
                 entityId: $entry->id,

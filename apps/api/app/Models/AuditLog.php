@@ -56,10 +56,10 @@ class AuditLog extends Model
      * Catat satu entri audit log.
      *
      * Penggunaan:
-     *   AuditLog::append(actor: $user, entityType: 'pdo_headers', entityId: $pdo->id, action: 'STATUS_CHANGE',
+     *   AuditLog::record(actor: $user, entityType: 'pdo_headers', entityId: $pdo->id, action: 'STATUS_CHANGE',
      *                    oldValues: ['status' => 'draft'], newValues: ['status' => 'submitted']);
      */
-    public static function append(
+    public static function record(
         ?User $actor,
         string $entityType,
         string $entityId,

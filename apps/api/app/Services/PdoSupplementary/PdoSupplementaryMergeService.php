@@ -72,7 +72,7 @@ class PdoSupplementaryMergeService
             // BR-MERGE-004: tandai sudah merged
             $supp->update(['merged_at' => now()]);
 
-            AuditLog::append(
+            AuditLog::record(
                 actor: $actor,
                 entityType: 'pdo_supplementary_headers',
                 entityId: $supp->id,

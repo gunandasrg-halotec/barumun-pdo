@@ -4,12 +4,7 @@ import path from 'path'
 
 export default defineConfig({
   plugins: [
-    react({
-      // React Compiler (React 19) — optimasi re-render otomatis
-      babel: {
-        plugins: [['babel-plugin-react-compiler', {}]],
-      },
-    }),
+    react(),
   ],
   resolve: {
     alias: {

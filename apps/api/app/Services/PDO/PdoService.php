@@ -71,7 +71,7 @@ class PdoService
             // BR-PDO-002: isi template otomatis dari item rutin aktif
             $this->fillRoutineTemplate($pdo);
 
-            AuditLog::append(
+            AuditLog::record(
                 actor: $actor,
                 entityType: 'pdo_headers',
                 entityId: $pdo->id,
@@ -92,7 +92,7 @@ class PdoService
         $old = $pdo->toArray();
         $pdo->update($data);
 
-        AuditLog::append(
+        AuditLog::record(
             actor: $actor,
             entityType: 'pdo_headers',
             entityId: $pdo->id,
@@ -112,7 +112,7 @@ class PdoService
         $old = $pdo->toArray();
         $pdo->delete();
 
-        AuditLog::append(
+        AuditLog::record(
             actor: $actor,
             entityType: 'pdo_headers',
             entityId: $pdo->id,
@@ -150,7 +150,7 @@ class PdoService
             'display_order'  => $data['display_order'] ?? $this->nextDisplayOrder($pdo),
         ]);
 
-        AuditLog::append(
+        AuditLog::record(
             actor: $actor,
             entityType: 'pdo_details',
             entityId: $detail->id,
@@ -169,7 +169,7 @@ class PdoService
         $old = $detail->toArray();
         $detail->update($data);
 
-        AuditLog::append(
+        AuditLog::record(
             actor: $actor,
             entityType: 'pdo_details',
             entityId: $detail->id,
@@ -188,7 +188,7 @@ class PdoService
         $old = $detail->toArray();
         $detail->delete();
 
-        AuditLog::append(
+        AuditLog::record(
             actor: $actor,
             entityType: 'pdo_details',
             entityId: $detail->id,

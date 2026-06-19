@@ -19,13 +19,17 @@ export function useMe() {
 }
 
 export function useLogin() {
-  const setUser = useAuthStore((s) => s.setUser)
+  const setUser  = useAuthStore((s) => s.setUser)
+  const setToken = useAuthStore((s) => s.setToken)
 
   return useMutation({
     mutationFn: async (data: { email: string; password: string }) => {
-      const res = await api.post<ApiResponse<{ user: AuthUser }>>('/auth/login', data)
+      const res = await api.post<ApiResponse<{ user: AuthUser; access_token: string }>>('/auth/login', data)
       return res.data.data
     },
-    onSuccess: (data) => setUser(data.user),
+    onSuccess: (data) => {
+      setToken(data.access_token)
+      setUser(data.user)
+    },
   })
 }

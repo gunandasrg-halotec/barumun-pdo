@@ -40,7 +40,7 @@ class MasterDataService
 
         $category = ExpenseCategory::create($data);
 
-        AuditLog::append(
+        AuditLog::record(
             actor: $actor,
             entityType: 'expense_categories',
             entityId: $category->id,
@@ -62,7 +62,7 @@ class MasterDataService
         $old = $category->toArray();
         $category->update($data);
 
-        AuditLog::append(
+        AuditLog::record(
             actor: $actor,
             entityType: 'expense_categories',
             entityId: $category->id,
@@ -100,7 +100,7 @@ class MasterDataService
             $action = 'DELETE';
         }
 
-        AuditLog::append(
+        AuditLog::record(
             actor: $actor,
             entityType: 'expense_categories',
             entityId: $category->id,
@@ -136,7 +136,7 @@ class MasterDataService
 
         $sub = ExpenseSubcategory::create($data);
 
-        AuditLog::append(
+        AuditLog::record(
             actor: $actor,
             entityType: 'expense_subcategories',
             entityId: $sub->id,
@@ -159,7 +159,7 @@ class MasterDataService
         $old = $subcategory->toArray();
         $subcategory->update($data);
 
-        AuditLog::append(
+        AuditLog::record(
             actor: $actor,
             entityType: 'expense_subcategories',
             entityId: $subcategory->id,
@@ -196,7 +196,7 @@ class MasterDataService
             $action = 'DELETE';
         }
 
-        AuditLog::append(
+        AuditLog::record(
             actor: $actor,
             entityType: 'expense_subcategories',
             entityId: $subcategory->id,
@@ -243,7 +243,7 @@ class MasterDataService
 
         $item = ExpenseItem::create($data);
 
-        AuditLog::append(
+        AuditLog::record(
             actor: $actor,
             entityType: 'expense_items',
             entityId: $item->id,
@@ -269,7 +269,7 @@ class MasterDataService
         $old = $item->toArray();
         $item->update($data);
 
-        AuditLog::append(
+        AuditLog::record(
             actor: $actor,
             entityType: 'expense_items',
             entityId: $item->id,
@@ -288,7 +288,7 @@ class MasterDataService
             $item->update(['is_active' => false]);
             $item->delete(); // soft delete
 
-            AuditLog::append(
+            AuditLog::record(
                 actor: $actor,
                 entityType: 'expense_items',
                 entityId: $item->id,
@@ -304,7 +304,7 @@ class MasterDataService
         $old = $item->toArray();
         $item->forceDelete();
 
-        AuditLog::append(
+        AuditLog::record(
             actor: $actor,
             entityType: 'expense_items',
             entityId: $item->id,

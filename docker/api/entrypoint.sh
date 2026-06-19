@@ -18,6 +18,18 @@ if [ ! -f .env ]; then
     cp .env.example .env
 fi
 
+# Timpa nilai default scaffold agar sesuai Docker environment
+sed -i "s|^CACHE_STORE=.*|CACHE_STORE=file|" .env
+sed -i "s|^SESSION_DRIVER=.*|SESSION_DRIVER=file|" .env
+sed -i "s|^DB_CONNECTION=.*|DB_CONNECTION=pgsql|" .env
+
+# Append DB vars jika belum ada (scaffold sqlite tidak include host/port/user/pass)
+grep -q "^DB_HOST=" .env     || echo "DB_HOST=${DB_HOST:-db}"             >> .env
+grep -q "^DB_PORT=" .env     || echo "DB_PORT=${DB_PORT:-5432}"           >> .env
+grep -q "^DB_DATABASE=" .env || echo "DB_DATABASE=${DB_DATABASE:-pdo_db}" >> .env
+grep -q "^DB_USERNAME=" .env || echo "DB_USERNAME=${DB_USERNAME:-pdo_user}" >> .env
+grep -q "^DB_PASSWORD=" .env || echo "DB_PASSWORD=${DB_PASSWORD:-secret}"  >> .env
+
 # Generate APP_KEY jika belum ada
 if [ -z "$APP_KEY" ] || grep -q "^APP_KEY=$" .env 2>/dev/null; then
     echo "[PDO] Generating APP_KEY..."

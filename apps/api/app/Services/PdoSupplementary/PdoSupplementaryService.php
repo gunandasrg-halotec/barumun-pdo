@@ -80,7 +80,7 @@ class PdoSupplementaryService
                 'notes'                => $data['notes'] ?? null,
             ]);
 
-            AuditLog::append(
+            AuditLog::record(
                 actor: $actor,
                 entityType: 'pdo_supplementary_headers',
                 entityId: $supp->id,
@@ -100,7 +100,7 @@ class PdoSupplementaryService
         $old = $supp->toArray();
         $supp->update($data);
 
-        AuditLog::append(
+        AuditLog::record(
             actor: $actor,
             entityType: 'pdo_supplementary_headers',
             entityId: $supp->id,
@@ -135,7 +135,7 @@ class PdoSupplementaryService
             'display_order'               => $data['display_order'] ?? $this->nextOrder($supp),
         ]);
 
-        AuditLog::append(
+        AuditLog::record(
             actor: $actor,
             entityType: 'pdo_supplementary_details',
             entityId: $detail->id,
@@ -154,7 +154,7 @@ class PdoSupplementaryService
         $old = $detail->toArray();
         $detail->update($data);
 
-        AuditLog::append(
+        AuditLog::record(
             actor: $actor,
             entityType: 'pdo_supplementary_details',
             entityId: $detail->id,
@@ -173,7 +173,7 @@ class PdoSupplementaryService
         $old = $detail->toArray();
         $detail->delete();
 
-        AuditLog::append(
+        AuditLog::record(
             actor: $actor,
             entityType: 'pdo_supplementary_details',
             entityId: $detail->id,

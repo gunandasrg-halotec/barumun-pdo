@@ -26,7 +26,7 @@ class AuthController extends Controller
         if (RateLimiter::tooManyAttempts($key, 5)) {
             $seconds = RateLimiter::availableIn($key);
 
-            AuditLog::append(
+            AuditLog::record(
                 actor: null,
                 entityType: 'users',
                 entityId: '00000000-0000-0000-0000-000000000000',
@@ -51,7 +51,7 @@ class AuthController extends Controller
         if (! $user || ! Hash::check($request->password, $user->password_hash)) {
             RateLimiter::hit($key, 900); // 15 menit
 
-            AuditLog::append(
+            AuditLog::record(
                 actor: null,
                 entityType: 'users',
                 entityId: '00000000-0000-0000-0000-000000000000',
@@ -89,7 +89,7 @@ class AuthController extends Controller
         $user->update(['last_login_at' => now()]);
 
         // Audit log
-        AuditLog::append(
+        AuditLog::record(
             actor: $user,
             entityType: 'users',
             entityId: $user->id,
@@ -119,7 +119,7 @@ class AuthController extends Controller
         // Revoke token saat ini
         $request->user()->currentAccessToken()->delete();
 
-        AuditLog::append(
+        AuditLog::record(
             actor: $user,
             entityType: 'users',
             entityId: $user->id,
@@ -173,6 +173,8 @@ class AuthController extends Controller
     }
 
     /**
+     * GET /api/v1/auth/me
+     */
     public function me(Request $request): JsonResponse
     {
         $user = $request->user()->load(['role', 'plantationUnit']);
@@ -182,8 +184,6 @@ class AuthController extends Controller
             'data'    => $this->formatUser($user),
         ]);
     }
-
-    // ─── Private helpers ──────────────────────────────────
 
     private function formatUser(User $user): array
     {

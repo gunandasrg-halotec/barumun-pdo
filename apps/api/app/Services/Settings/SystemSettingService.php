@@ -47,7 +47,7 @@ class SystemSettingService
 
             $setting->update(['value' => $value, 'updated_by' => $actor->id]);
 
-            AuditLog::append(
+            AuditLog::record(
                 actor: $actor,
                 entityType: 'system_settings',
                 entityId: $setting->id,
@@ -111,7 +111,7 @@ class SystemSettingService
         $old = $template->toArray();
         $template->update($data);
 
-        AuditLog::append(
+        AuditLog::record(
             actor: $actor,
             entityType: 'notification_templates',
             entityId: $template->id,
