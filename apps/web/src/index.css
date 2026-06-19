@@ -1,0 +1,155 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --bg:     #f5f7f3;
+    --panel:  #ffffff;
+    --ink:    #17231d;
+    --muted:  #657267;
+    --line:   #dde7df;
+    --green:  #0f6b45;
+    --green2: #16a36d;
+    --mint:   #e8f6ef;
+    --blue:   #2563eb;
+    --yellow: #d99106;
+    --red:    #dc2626;
+    --purple: #7c3aed;
+    --slate:  #334155;
+    --shadow: 0 18px 45px rgba(17,40,29,.10);
+    --radius: 18px;
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    font-family: 'Inter', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;
+    background: var(--bg);
+    color: var(--ink);
+    font-size: 14px;
+    line-height: 1.5;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  h1, h2, h3, h4 { color: var(--ink); }
+}
+
+@layer components {
+  /* ── Badge variants ── */
+  .badge {
+    @apply inline-flex items-center px-2.5 py-0.5 rounded-badge text-xs font-bold whitespace-nowrap;
+  }
+  .badge-approved { @apply bg-[#ddf8e9] text-[#0f6b45]; }
+  .badge-review   { @apply bg-[#dbeafe] text-[#1d4ed8]; }
+  .badge-draft    { @apply bg-[#f1f5f9] text-[#475569]; }
+  .badge-warnb    { @apply bg-[#fef3c7] text-[#a16207]; }
+  .badge-reject   { @apply bg-[#fee2e2] text-[#b91c1c]; }
+  .badge-over     { @apply bg-[#fee2e2] text-[#b91c1c]; }
+  .badge-ok       { @apply bg-[#dcfce7] text-[#15803d]; }
+  .badge-purple   { @apply bg-[#ede9fe] text-[#6d28d9]; }
+  .badge-closed   { @apply bg-[#e2e8f0] text-[#334155]; }
+  .badge-auto     { @apply bg-[#f1f5f9] text-[#64748b] text-[10px]; }
+
+  /* ── Group rows in tables ── */
+  .group-row td   { @apply bg-[#f2faf5] font-black text-green; }
+  .subgroup-row td { @apply bg-[#fbf7e8] font-black text-[#84540b]; }
+
+  /* ── Card ── */
+  .card {
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow);
+    padding: 18px;
+  }
+
+  /* ── Sticky table header ── */
+  .table-sticky th {
+    @apply sticky top-0 bg-[#f7faf7] text-[#526257] text-[11px] uppercase tracking-wider font-bold z-10;
+  }
+
+  /* ── Progress bar ── */
+  .progress-bar {
+    @apply h-3 rounded-badge bg-[#e8eee9] overflow-hidden;
+  }
+  .progress-bar span {
+    @apply block h-full rounded-badge;
+    background: linear-gradient(90deg, var(--green), #26b87c);
+    transition: width 0.3s ease;
+  }
+
+  /* ── Toast ── */
+  .toast {
+    @apply fixed bottom-5 right-5 z-50 px-4 py-3 rounded-[14px] text-white text-sm font-medium;
+    background: #123c2d;
+    box-shadow: var(--shadow);
+    opacity: 0;
+    transform: translateY(14px);
+    transition: .25s;
+    pointer-events: none;
+  }
+  .toast.show { opacity: 1; transform: translateY(0); }
+
+  /* ── Input base ── */
+  .input-base {
+    @apply w-full border border-line bg-white rounded-btn px-3 py-2.5 text-ink text-sm;
+    outline: none;
+  }
+  .input-base:focus { outline: 2px solid #b7e9d1; }
+
+  /* ── Table input (editable baris PDO) ── */
+  .table-input {
+    @apply w-full min-w-[115px] border border-[#dbe7df] bg-white rounded-lg px-2 py-2 text-ink text-sm;
+    outline: none;
+  }
+  .table-input:focus { outline: 2px solid #b7e9d1; }
+
+  /* ── Invalid row highlight ── */
+  .row-invalid .table-input,
+  .row-invalid select {
+    outline: 2px solid #fecaca !important;
+    background: #fff7f7 !important;
+  }
+
+  /* ── Empty state ── */
+  .empty-state {
+    @apply p-6 rounded-[16px] text-muted text-center;
+    border: 1px dashed var(--line);
+    background: #fbfdfb;
+  }
+
+  /* ── Tree toggle ── */
+  .tree-toggle {
+    @apply inline-flex items-center gap-1.5 border border-[#b7e9d1] bg-mint text-green rounded-badge
+           px-2.5 py-1.5 font-black cursor-pointer min-w-[104px] justify-center text-sm;
+  }
+  .tree-toggle:hover { @apply bg-[#d9f5e7]; }
+
+  /* ── History button ── */
+  .btn-history {
+    @apply inline-flex items-center gap-1.5 bg-[#dbeafe] text-[#1d4ed8] border border-[#bfdbfe]
+           rounded-btn px-3 py-2 text-sm font-bold cursor-pointer;
+    box-shadow: none;
+  }
+
+  /* ── Form label ── */
+  .label {
+    @apply block text-[12px] font-[850] text-muted mb-1.5;
+  }
+
+  /* ── Field error message ── */
+  .field-error {
+    @apply text-[11px] text-red mt-1;
+  }
+
+  /* ── Checkbox ── */
+  .checkbox {
+    @apply w-4 h-4 rounded accent-green cursor-pointer;
+  }
+
+  /* ── Supplementary header separator ── */
+  .supp-separator td {
+    @apply bg-[#dbeafe] text-[#1d4ed8] font-bold text-sm;
+  }
+}

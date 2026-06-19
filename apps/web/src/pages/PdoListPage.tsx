@@ -1,0 +1,215 @@
+import { useState } from 'react'
+import { useNavigate } from 'react-router-dom'
+import { usePdoList, useClosePdo } from '@/hooks/usePdo'
+import { useAuthStore } from '@/store/auth.store'
+import { PdoStatusBadge } from '@/components/ui/Badge'
+import { Button } from '@/components/ui/Button'
+import { Modal } from '@/components/ui/Modal'
+import { EmptyState } from '@/components/ui/EmptyState'
+import { fmt, fmtPeriode, fmtDate } from '@/lib/format'
+import { isKerani, isMgrKeu } from '@/lib/auth'
+import { useToastStore } from '@/store/toast.store'
+import type { PdoHeader, RoleCode } from '@/types'
+import { Search, FileDown } from 'lucide-react'
+
+export function PdoListPage() {
+  const user     = useAuthStore((s) => s.user)
+  const navigate = useNavigate()
+  const toast    = useToastStore((s) => s.push)
+  const role     = user?.role.code as RoleCode | undefined
+
+  const [search, setSearch]     = useState('')
+  const [statusFilter, setStatus] = useState('')
+  const [closingPdo, setClosingPdo] = useState<PdoHeader | null>(null)
+  const [closeDate, setCloseDate]   = useState('')
+  const [closeNotes, setCloseNotes] = useState('')
+
+  const { data, isLoading } = usePdoList({
+    search: search || undefined,
+    status: statusFilter || undefined,
+  })
+
+  const closePdo = useClosePdo(closingPdo?.id ?? '')
+
+  const handleClose = async () => {
+    if (!closingPdo || !closeDate) return
+    try {
+      await closePdo.mutateAsync({ closure_date: closeDate, notes: closeNotes })
+      toast('PDO berhasil ditutup')
+      setClosingPdo(null)
+    } catch {
+      toast('Gagal menutup PDO', 'error')
+    }
+  }
+
+  return (
+    <div>
+      {/* Hero */}
+      <div className="flex items-start justify-between mb-6">
+        <div>
+          <h2 className="text-[28px] font-[950] text-ink">Daftar PDO</h2>
+          <p className="text-muted text-sm mt-1">
+            Detail PDO dibuka dari tombol Detail. Approval timeline dibuka dengan mengklik status PDO.
+          </p>
+        </div>
+        {role && isKerani(role) && (
+          <Button onClick={() => navigate('/pdo/buat')}>+ Buat PDO Baru</Button>
+        )}
+      </div>
+
+      {/* Filter Bar */}
+      <div className="flex items-center gap-3 mb-4 flex-wrap">
+        <div className="relative">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted" />
+          <input
+            className="input-base pl-9 w-64"
+            placeholder="Cari nomor PDO..."
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+          />
+        </div>
+        <select
+          className="input-base w-auto"
+          value={statusFilter}
+          onChange={(e) => setStatus(e.target.value)}
+        >
+          <option value="">Semua Status</option>
+          <option value="draft">Draft</option>
+          <option value="submitted">Submitted</option>
+          <option value="reviewed_asisten">Reviewed Asisten</option>
+          <option value="in_review_manager">In Review Manager</option>
+          <option value="in_review_direktur">In Review Direktur</option>
+          <option value="final">Final</option>
+          <option value="closed">Closed</option>
+        </select>
+        <Button variant="secondary" size="sm">
+          <FileDown className="w-4 h-4" /> Export Excel
+        </Button>
+      </div>
+
+      {/* Table */}
+      <div className="overflow-auto border border-line rounded-drawer bg-white">
+        <table className="w-full border-collapse" style={{ minWidth: 1060 }}>
+          <thead>
+            <tr>
+              {['Nomor PDO', 'Unit', 'Periode', 'Total Pengajuan', 'Total Transfer',
+                'Total Realisasi', 'Saldo', 'Status', 'Tipe', 'Dibuat Oleh', 'Aksi'].map((h) => (
+                <th key={h} className="px-4 py-3 text-left text-[11px] font-bold uppercase tracking-wider text-[#526257] bg-[#f7faf7] sticky top-0">
+                  {h}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {isLoading ? (
+              Array.from({ length: 5 }).map((_, i) => (
+                <tr key={i}>
+                  {Array.from({ length: 11 }).map((__, j) => (
+                    <td key={j} className="px-4 py-3">
+                      <div className="h-4 bg-[#f0f4f0] rounded animate-pulse" />
+                    </td>
+                  ))}
+                </tr>
+              ))
+            ) : !data?.data?.length ? (
+              <tr>
+                <td colSpan={11} className="px-4 py-8">
+                  <EmptyState message='Belum ada PDO. Klik "Buat PDO Baru" untuk memulai pengajuan.' />
+                </td>
+              </tr>
+            ) : (
+              data.data.map((pdo) => (
+                <tr key={pdo.id} className="hover:bg-[#fbfdfb] border-t border-line">
+                  <td className="px-4 py-3 font-bold text-ink text-sm">{pdo.pdo_number}</td>
+                  <td className="px-4 py-3 text-sm">{pdo.plantation_unit?.code ?? '—'}</td>
+                  <td className="px-4 py-3 text-sm">{fmtPeriode(pdo.period_month, pdo.period_year)}</td>
+                  <td className="px-4 py-3 text-sm">{fmt(pdo.total_amount)}</td>
+                  <td className="px-4 py-3 text-sm">{fmt(pdo.total_transferred)}</td>
+                  <td className="px-4 py-3 text-sm">{fmt(pdo.total_realized)}</td>
+                  <td className="px-4 py-3 text-sm">{fmt(pdo.balance)}</td>
+                  <td className="px-4 py-3">
+                    <PdoStatusBadge
+                      status={pdo.status}
+                      onClick={() => navigate(`/pdo/${pdo.id}/approval`)}
+                    />
+                  </td>
+                  <td className="px-4 py-3">
+                    <span className="badge badge-draft">Bulanan</span>
+                  </td>
+                  <td className="px-4 py-3 text-sm">{pdo.creator?.full_name ?? '—'}</td>
+                  <td className="px-4 py-3">
+                    <div className="flex items-center gap-2">
+                      <button
+                        className="text-sm font-bold text-green hover:underline"
+                        onClick={() => navigate(`/pdo/${pdo.id}`)}
+                      >
+                        Detail
+                      </button>
+                      {role && isKerani(role) && pdo.status === 'draft' && (
+                        <button
+                          className="text-sm font-bold text-green hover:underline"
+                          onClick={() => navigate(`/pdo/${pdo.id}/edit`)}
+                        >
+                          Edit
+                        </button>
+                      )}
+                      {role && isMgrKeu(role) && pdo.status === 'final' && (
+                        <button
+                          className="text-sm font-bold text-red hover:underline"
+                          onClick={() => {
+                            setClosingPdo(pdo)
+                            setCloseDate(new Date().toISOString().split('T')[0])
+                          }}
+                        >
+                          Tutup PDO
+                        </button>
+                      )}
+                    </div>
+                  </td>
+                </tr>
+              ))
+            )}
+          </tbody>
+        </table>
+      </div>
+
+      {/* Modal Tutup PDO */}
+      <Modal
+        open={!!closingPdo}
+        onClose={() => setClosingPdo(null)}
+        title={`Tutup PDO: ${closingPdo?.pdo_number}`}
+      >
+        <p className="text-sm text-muted mb-4">
+          Menutup PDO akan mencegah input realisasi dan transfer baru. Tindakan ini tidak dapat dibatalkan.
+        </p>
+        <div className="flex flex-col gap-3">
+          <div>
+            <label className="block text-[12px] font-[850] text-muted mb-1.5">Tanggal Penutupan</label>
+            <input
+              type="date"
+              className="input-base"
+              value={closeDate}
+              min={new Date().toISOString().split('T')[0]}
+              onChange={(e) => setCloseDate(e.target.value)}
+            />
+          </div>
+          <div>
+            <label className="block text-[12px] font-[850] text-muted mb-1.5">Catatan (opsional)</label>
+            <textarea
+              className="input-base resize-none"
+              rows={3}
+              value={closeNotes}
+              onChange={(e) => setCloseNotes(e.target.value)}
+            />
+          </div>
+        </div>
+        <div className="flex justify-end gap-2 mt-5">
+          <Button variant="secondary" onClick={() => setClosingPdo(null)}>Batal</Button>
+          <Button variant="danger" loading={closePdo.isPending} onClick={handleClose}>
+            Tutup PDO
+          </Button>
+        </div>
+      </Modal>
+    </div>
+  )
+}
