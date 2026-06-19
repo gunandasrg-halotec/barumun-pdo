@@ -7,6 +7,7 @@ use App\Models\PdoHeader;
 use App\Models\Role;
 use App\Models\TransferEntry;
 use App\Models\User;
+use App\Services\Notification\WhatsAppNotificationService;
 use Illuminate\Support\Facades\DB;
 
 class PdoApprovalService
@@ -25,6 +26,8 @@ class PdoApprovalService
         PdoHeader::STATUS_IN_REVIEW_MANAGER  => [Role::MANAJER_KEUANGAN,    PdoHeader::STATUS_IN_REVIEW_DIREKTUR],
         PdoHeader::STATUS_IN_REVIEW_DIREKTUR => [Role::DIREKTUR_KEUANGAN,   PdoHeader::STATUS_FINAL],
     ];
+
+    public function __construct(private readonly WhatsAppNotificationService $wa = new WhatsAppNotificationService()) {}
 
     /** BR-APPROVAL-001: submit PDO (draft → submitted) */
     public function submit(PdoHeader $pdo, string $submissionDate, User $actor): PdoHeader
@@ -49,6 +52,9 @@ class PdoApprovalService
 
             $this->appendLog($pdo, $actor, 'kerani_submit', PdoApprovalLog::ACTION_SUBMIT);
 
+            // BR-NOTIF-001: notifikasi WhatsApp ke Asisten Kebun
+            $this->wa->notifySubmitted($pdo->fresh()->load(['creator', 'plantationUnit']));
+
             return $pdo->fresh();
         });
     }
@@ -67,6 +73,12 @@ class PdoApprovalService
             // BR-APPROVAL-003: PDO Final → auto-generate transfer untuk semua detail
             if ($nextStatus === PdoHeader::STATUS_FINAL) {
                 $this->autoGenerateTransferEntries($pdo);
+                $this->wa->notifyFinal($pdo->fresh()->load('creator'));
+            } elseif ($nextStatus === PdoHeader::STATUS_REVIEWED_ASISTEN) {
+                $this->wa->notifyApprovedByAsisten($pdo->fresh());
+            } elseif ($nextStatus === PdoHeader::STATUS_IN_REVIEW_DIREKTUR) {
+                // BR-NOTIF-002: notifikasi setelah Manajer Kebun approve
+                $this->wa->notifyApprovedByManager($pdo->fresh());
             }
 
             return $pdo->fresh();
@@ -98,6 +110,9 @@ class PdoApprovalService
             $pdo->update(['status' => PdoHeader::STATUS_DRAFT]);
 
             $this->appendLog($pdo, $actor, $currentStatus, PdoApprovalLog::ACTION_REJECT, $reason);
+
+            // BR-NOTIF-003: notifikasi penolakan ke KERANI
+            $this->wa->notifyRejected($pdo->fresh()->load('creator'), $reason);
 
             return $pdo->fresh();
         });
