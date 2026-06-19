@@ -1,76 +1,62 @@
 services:
-  api:
-    build:
-      context: ./apps/api
-      dockerfile: Dockerfile.dev
-    ports:
-      - "8000:8000"
-    volumes:
-      - ./apps/api:/var/www/html
-      - /var/www/html/vendor
-    environment:
-      APP_ENV: local
-      APP_DEBUG: "true"
-      DB_HOST: db
-      DB_PORT: 5432
-      DB_DATABASE: pdo_local
-      DB_USERNAME: pdo_user
-      DB_PASSWORD: secret
-      REDIS_HOST: redis
-      REDIS_PORT: 6379
-      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID}
-      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY}
-      AWS_DEFAULT_REGION: ap-southeast-3
-      AWS_BUCKET: ${AWS_BUCKET}
-    depends_on:
-      db:
-        condition: service_healthy
-      redis:
-        condition: service_started
 
-  web:
-    build:
-      context: ./apps/web
-      dockerfile: Dockerfile.dev
-    ports:
-      - "5173:5173"
-    volumes:
-      - ./apps/web:/app
-      - /app/node_modules
-    environment:
-      VITE_API_URL: http://localhost:8000/api/v1
-    depends_on:
-      - api
-
+  # ── Database ──────────────────────────────────────────────────────────────────
   db:
-    image: postgres:15-alpine
-    ports:
-      - "5432:5432"
+    image: postgres:16-alpine
     environment:
-      POSTGRES_DB: pdo_local
+      POSTGRES_DB: pdo_db
       POSTGRES_USER: pdo_user
       POSTGRES_PASSWORD: secret
     volumes:
-      - postgres_data:/var/lib/postgresql/data
+      - pgdata:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U pdo_user -d pdo_local"]
+      test: ["CMD-SHELL", "pg_isready -U pdo_user -d pdo_db"]
       interval: 5s
       timeout: 5s
-      retries: 5
+      retries: 10
 
-  redis:
-    image: redis:7-alpine
-    ports:
-      - "6379:6379"
+  # ── Backend (Laravel) ─────────────────────────────────────────────────────────
+  api:
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile.dev
     volumes:
-      - redis_data:/data
-
-  mailpit:
-    image: axllent/mailpit:latest
+      # Overlay kode custom kita ke atas scaffold Laravel (hot-reload)
+      - ./apps/api/app:/var/www/api/app
+      - ./apps/api/database:/var/www/api/database
+      - ./apps/api/routes/api.php:/var/www/api/routes/api.php
+      - ./apps/api/bootstrap/app.php:/var/www/api/bootstrap/app.php
+      # Persist vendor & storage di named volume (tidak di-replace oleh mount host)
+      - api_vendor:/var/www/api/vendor
+      - api_storage:/var/www/api/storage
+    env_file:
+      - docker/api/.env.docker
     ports:
-      - "8025:8025"  # Web UI
-      - "1025:1025"  # SMTP
+      - "8000:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: on-failure
+
+  # ── Frontend (React + Vite) ───────────────────────────────────────────────────
+  web:
+    build:
+      context: .
+      dockerfile: apps/web/Dockerfile.dev
+    volumes:
+      - ./apps/web:/app
+      - web_node_modules:/app/node_modules
+    environment:
+      - VITE_API_TARGET=http://api:8000
+    ports:
+      - "5173:5173"
+    depends_on:
+      - api
 
 volumes:
-  postgres_data:
-  redis_data:
+  pgdata:
+  api_vendor:
+  api_storage:
+  web_node_modules:

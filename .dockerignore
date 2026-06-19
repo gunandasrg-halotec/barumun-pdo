@@ -1,0 +1,21 @@
+# Git
+.git
+.gitignore
+
+# Dependencies (diinstall di dalam container)
+apps/api/vendor
+apps/web/node_modules
+
+# Env files (gunakan docker/api/.env.docker)
+apps/api/.env
+
+# OS
+.DS_Store
+**/.DS_Store
+
+# Docs
+docs/
+*.md
+
+# Test artifacts
+apps/api/coverage
