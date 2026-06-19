@@ -10,10 +10,11 @@ use App\Models\PdoHeader;
 use App\Models\PlantationUnit;
 use App\Models\RealizationEntry;
 use App\Models\Role;
-use App\Models\SystemSetting;
 use App\Models\TransferEntry;
+use App\Models\SystemSetting;
 use App\Models\User;
-use App\Services\Reports\ReportService;
+use App\Models\Company;
+use App\Services\Reports\ReportQueryService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Str;
 use Tests\TestCase;
@@ -22,10 +23,9 @@ class ReportServiceTest extends TestCase
 {
     use RefreshDatabase;
 
-    private ReportService $service;
+    private ReportQueryService $service;
     private string $companyId;
     private PlantationUnit $unit;
-    private User $manajer;
     private int $year;
     private int $month;
 
@@ -33,50 +33,52 @@ class ReportServiceTest extends TestCase
     {
         parent::setUp();
 
-        $this->service   = new ReportService();
-        $this->companyId = (string) Str::uuid();
+        $this->service   = new ReportQueryService();
+        $company         = Company::factory()->create();
+        $this->companyId = $company->id;
         $this->year      = 2026;
         $this->month     = 6;
         $this->unit      = PlantationUnit::factory()->create(['company_id' => $this->companyId]);
-
-        $role          = Role::factory()->create(['code' => Role::MANAJER_KEUANGAN]);
-        $this->manajer = User::factory()->create(['company_id' => $this->companyId, 'role_id' => $role->id]);
     }
 
-    public function test_realization_report_returns_rows_for_period(): void
+    public function test_realization_returns_rows_for_period(): void
     {
-        $this->seedPdoWithRealization(budget: 1000000, realized: 800000);
+        $this->seedPdoWithRealization(budget: 1_000_000, realized: 800_000);
 
-        $rows = $this->service->realization($this->manajer, ['year' => $this->year, 'month' => $this->month]);
+        $filters = ['period_year' => $this->year, 'period_month' => $this->month, 'company_id' => $this->companyId];
+        $rows    = $this->service->getRealizationData($filters);
 
         $this->assertNotEmpty($rows);
-        $this->assertEquals(1000000, $rows[0]->budget);
-        $this->assertEquals(800000, $rows[0]->total_realized);
+        $this->assertEquals(1_000_000, (int) $rows->first()->amount);
+        $this->assertEquals(800_000, (int) $rows->first()->total_realization);
     }
 
-    public function test_realization_report_empty_for_different_period(): void
+    public function test_realization_empty_for_different_period(): void
     {
-        $this->seedPdoWithRealization(budget: 1000000, realized: 800000);
+        $this->seedPdoWithRealization(budget: 1_000_000, realized: 800_000);
 
-        $rows = $this->service->realization($this->manajer, ['year' => 2025, 'month' => 1]);
+        $rows = $this->service->getRealizationData(['period_year' => 2025, 'period_month' => 1]);
 
         $this->assertEmpty($rows);
     }
 
-    public function test_over_budget_report_only_returns_overspent_items(): void
+    public function test_over_budget_only_returns_overspent_items(): void
     {
-        $this->seedPdoWithRealization(budget: 500000, realized: 700000); // over
-        $this->seedPdoWithRealization(budget: 1000000, realized: 800000, month: 6, unitNew: true); // dalam budget
+        $this->seedPdoWithRealization(budget: 500_000, realized: 700_000);   // over
+        $this->seedPdoWithRealization(budget: 1_000_000, realized: 800_000); // within budget
 
-        $rows = $this->service->overBudget($this->manajer, ['year' => $this->year, 'month' => $this->month]);
+        $filters = ['period_year' => $this->year, 'period_month' => $this->month];
+        $rows    = $this->service->getOverBudgetData($filters);
 
         $this->assertCount(1, $rows);
-        $this->assertGreaterThan(0, $rows[0]->over_amount);
+        $this->assertGreaterThan(
+            (int) $rows->first()->total_transfer,
+            (int) $rows->first()->total_realization
+        );
     }
 
     public function test_missing_proof_returns_entries_above_threshold_without_attachment(): void
     {
-        // Setup threshold di system_settings
         \DB::table('system_settings')->insert([
             'id'         => (string) Str::uuid(),
             'company_id' => $this->companyId,
@@ -85,51 +87,115 @@ class ReportServiceTest extends TestCase
             'updated_at' => now(),
         ]);
 
-        [$pdo, $detail] = $this->seedPdoBase();
+        [, $detail] = $this->seedPdoBase();
 
-        // Realisasi di atas threshold, tanpa attachment
         RealizationEntry::factory()->create([
             'pdo_detail_id' => $detail->id,
-            'amount'        => 600000, // > threshold 500.000
+            'amount'        => 600_000,
         ]);
 
-        $rows = $this->service->missingProof($this->manajer, ['year' => $this->year, 'month' => $this->month]);
+        $filters = ['period_year' => $this->year, 'period_month' => $this->month, 'company_id' => $this->companyId];
+        $rows    = $this->service->getMissingProofData($filters);
 
         $this->assertNotEmpty($rows);
     }
 
-    public function test_recap_sums_budget_and_realized_by_category(): void
+    public function test_missing_proof_excludes_entries_with_attachment(): void
     {
-        $this->seedPdoWithRealization(budget: 2000000, realized: 1500000);
+        \DB::table('system_settings')->insert([
+            'id'         => (string) Str::uuid(),
+            'company_id' => $this->companyId,
+            'key'        => SystemSetting::KEY_THRESHOLD_PROOF,
+            'value'      => '500000',
+            'updated_at' => now(),
+        ]);
 
-        $rows = $this->service->recap($this->manajer, ['year' => $this->year, 'month' => $this->month]);
+        [, $detail] = $this->seedPdoBase();
 
-        $this->assertNotEmpty($rows);
-        $this->assertGreaterThan(0, $rows[0]->total_budget);
-        $this->assertGreaterThanOrEqual(0, $rows[0]->absorption_pct);
+        $entry = RealizationEntry::factory()->create([
+            'pdo_detail_id' => $detail->id,
+            'amount'        => 600_000,
+        ]);
+
+        // Attach a file — should be excluded
+        \DB::table('realization_attachments')->insert([
+            'id'                    => (string) Str::uuid(),
+            'realization_entry_id'  => $entry->id,
+            'file_name'             => 'proof.jpg',
+            'file_path'             => 'proofs/proof.jpg',
+            'mime_type'             => 'image/jpeg',
+            'file_size_bytes'       => 10240,
+            'uploaded_by'           => $entry->recorded_by,
+            'created_at'            => now(),
+        ]);
+
+        $filters = ['period_year' => $this->year, 'period_month' => $this->month, 'company_id' => $this->companyId];
+        $rows    = $this->service->getMissingProofData($filters);
+
+        $this->assertEmpty($rows);
     }
 
-    // ─────────────────────────────────────────────────────
-    // HELPERS
-    // ─────────────────────────────────────────────────────
-
-    private function seedPdoWithRealization(int $budget, int $realized, int $month = null, bool $unitNew = false): array
+    public function test_recap_returns_hierarchical_structure(): void
     {
-        [$pdo, $detail] = $this->seedPdoBase($month, $unitNew);
+        $this->seedPdoWithRealization(budget: 2_000_000, realized: 1_500_000);
+
+        $filters = ['period_year' => $this->year, 'period_month' => $this->month];
+        $recap   = $this->service->getRecapData($filters);
+
+        $this->assertArrayHasKey('categories', $recap);
+        $this->assertArrayHasKey('grand_total_amount', $recap);
+        $this->assertNotEmpty($recap['categories']);
+        $this->assertNotEmpty($recap['categories'][0]['subcategories']);
+    }
+
+    public function test_status_resolves_to_sesuai_when_realization_equals_transfer(): void
+    {
+        [, $detail] = $this->seedPdoBase();
+
+        TransferEntry::factory()->create(['pdo_detail_id' => $detail->id, 'amount' => 500_000]);
+        RealizationEntry::factory()->create(['pdo_detail_id' => $detail->id, 'amount' => 500_000]);
+
+        $filters = ['period_year' => $this->year, 'period_month' => $this->month];
+        $row     = $this->service->getRealizationData($filters)->first();
+
+        $this->assertEquals('sesuai', $row->status);
+    }
+
+    public function test_status_resolves_to_over_budget(): void
+    {
+        [, $detail] = $this->seedPdoBase();
+
+        TransferEntry::factory()->create(['pdo_detail_id' => $detail->id, 'amount' => 300_000]);
+        RealizationEntry::factory()->create(['pdo_detail_id' => $detail->id, 'amount' => 400_000]);
+
+        $filters = ['period_year' => $this->year, 'period_month' => $this->month];
+        $row     = $this->service->getRealizationData($filters)->first();
+
+        $this->assertEquals('over_budget', $row->status);
+    }
+
+    // ── Helpers ───────────────────────────────────────────────────────────────
+
+    private function seedPdoWithRealization(int $budget, int $realized): array
+    {
+        $unit   = PlantationUnit::factory()->create(['company_id' => $this->companyId]);
+        [, $detail] = $this->seedPdoBase($unit);
+
+        TransferEntry::factory()->create(['pdo_detail_id' => $detail->id, 'amount' => $budget]);
 
         RealizationEntry::factory()->create([
             'pdo_detail_id' => $detail->id,
             'amount'        => $realized,
         ]);
 
-        return [$pdo, $detail];
+        return [$detail->pdo_header, $detail];
     }
 
-    private function seedPdoBase(int $month = null, bool $unitNew = false): array
+    private function seedPdoBase(?PlantationUnit $unit = null): array
     {
+        $unit       ??= $this->unit;
         $keraniRole = Role::firstOrCreate(['code' => Role::KERANI], ['name' => 'Kerani']);
-        $kerani     = User::factory()->create(['company_id' => $this->companyId, 'role_id' => $keraniRole->id]);
-        $unit       = $unitNew ? PlantationUnit::factory()->create(['company_id' => $this->companyId]) : $this->unit;
+        $kerani     = User::factory()->create(['role_id' => $keraniRole->id, 'plantation_unit_id' => $unit->id]);
 
         $category = ExpenseCategory::factory()->create(['company_id' => $this->companyId, 'include_in_recap' => true]);
         $sub      = ExpenseSubcategory::factory()->create(['category_id' => $category->id]);
@@ -140,14 +206,14 @@ class ReportServiceTest extends TestCase
             'plantation_unit_id' => $unit->id,
             'created_by'         => $kerani->id,
             'status'             => PdoHeader::STATUS_FINAL,
-            'period_month'       => $month ?? $this->month,
+            'period_month'       => $this->month,
             'period_year'        => $this->year,
         ]);
 
         $detail = PdoDetail::factory()->create([
-            'pdo_header_id'  => $pdo->id,
-            'expense_item_id'=> $item->id,
-            'amount'         => 1000000,
+            'pdo_header_id'   => $pdo->id,
+            'expense_item_id' => $item->id,
+            'amount'          => 1_000_000,
         ]);
 
         return [$pdo, $detail];

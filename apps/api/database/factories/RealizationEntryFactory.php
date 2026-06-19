@@ -16,7 +16,7 @@ class RealizationEntryFactory extends Factory
         return [
             'pdo_detail_id'    => PdoDetail::factory(),
             'recorded_by'      => User::factory(),
-            'transaction_date' => $this->faker->dateThisYear(),
+            'transaction_date' => now()->toDateString(),
             'amount'           => $this->faker->numberBetween(50000, 3000000),
             'payment_method'   => RealizationEntry::PAYMENT_TUNAI,
             'reference_number' => 'REAL-' . $this->faker->numerify('######'),

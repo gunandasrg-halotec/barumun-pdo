@@ -18,7 +18,7 @@ class TransferEntryFactory extends Factory
             'recorded_by'      => User::factory(),
             'entry_source'     => TransferEntry::SOURCE_MANUAL,
             'is_auto_generated'=> false,
-            'transfer_date'    => $this->faker->dateThisYear(),
+            'transfer_date'    => now()->toDateString(),
             'amount'           => $this->faker->numberBetween(100000, 5000000),
             'reference_number' => 'TRF-' . $this->faker->numerify('######'),
             'notes'            => null,

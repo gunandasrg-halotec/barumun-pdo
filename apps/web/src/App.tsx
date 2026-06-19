@@ -20,6 +20,7 @@ import { PdoSupplementaryListPage }     from '@/pages/PdoSupplementaryListPage'
 import { PdoSupplementaryFormPage }     from '@/pages/PdoSupplementaryFormPage'
 import { PdoSupplementaryDetailPage }   from '@/pages/PdoSupplementaryDetailPage'
 import { LaporanPage }                  from '@/pages/LaporanPage'
+import { RekapitulasiPage }             from '@/pages/RekapitulasiPage'
 import { SettingsPage }                 from '@/pages/SettingsPage'
 
 function RequireAuth({ children }: { children: React.ReactNode }) {
@@ -73,8 +74,9 @@ export default function App() {
           <Route path="pdo-tambahan/:id/edit"     element={<PdoSupplementaryFormPage />} />
 
           {/* Laporan & Settings */}
-          <Route path="laporan"  element={<LaporanPage />} />
-          <Route path="settings" element={<SettingsPage />} />
+          <Route path="laporan"        element={<LaporanPage />} />
+          <Route path="rekapitulasi"   element={<RekapitulasiPage />} />
+          <Route path="settings"       element={<SettingsPage />} />
         </Route>
 
         <Route path="*" element={<Navigate to="/dashboard" replace />} />
