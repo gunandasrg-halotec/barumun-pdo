@@ -1,203 +1,182 @@
-# Panduan Deployment — AWS EC2 (Ubuntu + PostgreSQL + Nginx)
+# Panduan Deployment — AWS EC2 (Docker Production)
 
-**Stack:** Ubuntu 22.04/24.04 · PHP 8.4 · Laravel 13 · PostgreSQL 16 · Nginx · Node 22 · Certbot SSL
+**Stack:** Ubuntu 22.04/24.04 · Docker 26+ · Docker Compose V2 · PHP-FPM 8.4 · Laravel 13 · PostgreSQL 16 · Redis 7 · Nginx · Certbot SSL
 
-> **Catatan arsitektur repo:** Repository hanya berisi kode custom (Controllers, Models, Services,
-> Migrations, Seeders, Routes, Frontend). File scaffold Laravel (composer.json, artisan, config/,
-> public/) dibuat langsung di server menggunakan `composer create-project` pada Tahap 4.
+> **Catatan arsitektur:** Deployment menggunakan Docker Compose produksi (`docker-compose.prod.yml`).
+> Tidak perlu install PHP, Node, atau PostgreSQL secara manual — semua berjalan dalam container.
 
 ---
 
 ## Prasyarat
 
-Sebelum memulai, pastikan:
-
-- EC2 instance sudah berjalan (minimal **t3.small** — 2 vCPU, 2 GB RAM)
-- Security Group EC2 sudah membuka port **22** (SSH), **80** (HTTP), **443** (HTTPS)
-- File `.pem` / key pair SSH tersedia di komputer lokal Anda
-- Record DNS domain sudah diarahkan ke IP publik EC2 (butuh 5–30 menit propagasi)
+- EC2 instance berjalan (minimal **t3.small** — 2 vCPU, 2 GB RAM; disarankan **t3.medium** untuk produksi)
+- Security Group membuka port **22** (SSH), **80** (HTTP), **443** (HTTPS)
+- File `.pem` / key pair SSH tersedia di komputer lokal
+- Record DNS domain sudah diarahkan ke IP publik EC2
 - AWS S3 bucket sudah dibuat untuk upload bukti realisasi
-- IAM user dengan akses S3 sudah dibuat (dapat `ACCESS_KEY` dan `SECRET_KEY`)
+- IAM user dengan akses S3 (butuh `ACCESS_KEY` dan `SECRET_KEY`)
 
 ---
 
-## Tahap 1 — Masuk ke Server & Update
+## Tahap 1 — Masuk ke Server & Install Docker
 
 ```bash
 # SSH ke server
 ssh -i /path/ke/keypair.pem ubuntu@<IP_PUBLIK_EC2>
 
-# Update sistem operasi
+# Update sistem
 sudo apt update && sudo apt upgrade -y
+
+# Install Docker
+curl -fsSL https://get.docker.com | sudo sh
+sudo usermod -aG docker ubuntu
+
+# Logout lalu login kembali agar grup docker aktif
+exit
+ssh -i /path/ke/keypair.pem ubuntu@<IP_PUBLIK_EC2>
+
+# Verifikasi
+docker --version
+docker compose version
 ```
 
 ---
 
-## Tahap 2 — Install Dependensi Server
+## Tahap 2 — Clone Repository
 
 ```bash
-# ── PHP 8.4 ──────────────────────────────────────────────
-sudo add-apt-repository ppa:ondrej/php -y
-sudo apt update
-sudo apt install -y php8.4-fpm php8.4-cli php8.4-pgsql php8.4-mbstring \
-  php8.4-xml php8.4-curl php8.4-zip php8.4-bcmath php8.4-tokenizer \
-  php8.4-intl php8.4-gd
-
-# ── Composer ─────────────────────────────────────────────
-curl -sS https://getcomposer.org/installer | php
-sudo mv composer.phar /usr/local/bin/composer
-
-# ── Node.js 22 ───────────────────────────────────────────
-curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash -
-sudo apt install -y nodejs
-
-# ── PostgreSQL 16 ────────────────────────────────────────
-sudo apt install -y postgresql postgresql-contrib
-
-# ── Nginx & Git ──────────────────────────────────────────
-sudo apt install -y nginx git
+cd /opt
+sudo git clone https://github.com/gunandasrg-halotec/barumun-pdo.git pdo
+sudo chown -R ubuntu:ubuntu /opt/pdo
+cd /opt/pdo
 ```
 
 ---
 
-## Tahap 3 — Setup PostgreSQL
+## Tahap 3 — Konfigurasi Environment Produksi
 
 ```bash
-sudo -u postgres psql
+cp apps/api/.env.example docker/api/.env.production
+nano docker/api/.env.production
 ```
 
-```sql
-CREATE USER pdo_user WITH PASSWORD 'GANTI_PASSWORD_KUAT_DISINI';
-CREATE DATABASE pdo_db OWNER pdo_user;
-GRANT ALL PRIVILEGES ON DATABASE pdo_db TO pdo_user;
-\q
-```
-
----
-
-## Tahap 4 — Setup Backend Laravel
-
-Karena repo hanya berisi kode custom (tanpa scaffold Laravel), langkah ini
-**membuat proyek Laravel baru dulu**, lalu **menimpa dengan kode kita**.
-
-```bash
-# Buat direktori kerja
-sudo mkdir -p /var/www
-cd /var/www
-
-# ── LANGKAH 4a: Buat scaffold Laravel 13 baru ────────────
-composer create-project laravel/laravel pdo-api --prefer-dist
-# (proses ini ±2–5 menit, mengunduh ~40 MB)
-
-# ── LANGKAH 4b: Clone repository kita ───────────────────
-git clone https://github.com/gunandasrg-halotec/barumun-pdo.git /tmp/barumun-pdo
-
-# ── LANGKAH 4c: Overlay kode custom ke scaffold ─────────
-REPO=/tmp/barumun-pdo/apps/api
-TARGET=/var/www/pdo-api
-
-# Timpa dengan kode custom kita
-cp -r $REPO/app/*         $TARGET/app/
-cp -r $REPO/database/*    $TARGET/database/
-cp    $REPO/routes/api.php $TARGET/routes/api.php
-cp -r $REPO/tests/*       $TARGET/tests/
-cp    $REPO/.env.example  $TARGET/.env.example
-cp    $REPO/bootstrap/app.php $TARGET/bootstrap/app.php
-
-# Tambah package yang dibutuhkan
-cd $TARGET
-composer require laravel/sanctum
-
-# ── LANGKAH 4d: Konfigurasi .env ────────────────────────
-cp .env.example .env
-nano .env
-```
-
-Isi nilai berikut di `.env` (ganti semua `<...>`):
+Isi semua nilai yang ditandai **WAJIB**:
 
 ```dotenv
-APP_NAME="PDO Barumun"
+APP_NAME="PDO Barumun Palma Nauli"
 APP_ENV=production
-APP_KEY=                            # akan di-generate di langkah berikut
+APP_KEY=                          # WAJIB — generate: lihat langkah di bawah
 APP_DEBUG=false
 APP_URL=https://<DOMAIN_ANDA>
 APP_TIMEZONE=Asia/Jakarta
 
 DB_CONNECTION=pgsql
-DB_HOST=127.0.0.1
+DB_HOST=db                        # nama service di docker-compose
 DB_PORT=5432
-DB_DATABASE=pdo_db
+DB_DATABASE=pdo_prod
 DB_USERNAME=pdo_user
-DB_PASSWORD=GANTI_PASSWORD_KUAT_DISINI
+DB_PASSWORD=<PASSWORD_KUAT_32_KARAKTER>   # WAJIB
 
-FILESYSTEM_DISK=s3
-AWS_ACCESS_KEY_ID=<S3_ACCESS_KEY>
-AWS_SECRET_ACCESS_KEY=<S3_SECRET_KEY>
-AWS_DEFAULT_REGION=ap-southeast-1
-AWS_BUCKET=<NAMA_S3_BUCKET>
+CACHE_STORE=redis
+SESSION_DRIVER=redis
+QUEUE_CONNECTION=redis
+REDIS_HOST=redis                  # nama service di docker-compose
+REDIS_PORT=6379
+REDIS_PASSWORD=<REDIS_PASSWORD>   # WAJIB — sama dengan nilai di .env (docker-compose)
 
 SANCTUM_STATEFUL_DOMAINS=<DOMAIN_ANDA>
 SESSION_DOMAIN=.<DOMAIN_ANDA>
+SESSION_SECURE_COOKIE=true
 
-LOG_CHANNEL=daily
-LOG_LEVEL=error
+FILESYSTEM_DISK=s3                # WAJIB untuk upload bukti transaksi
+AWS_ACCESS_KEY_ID=<S3_ACCESS_KEY>       # WAJIB
+AWS_SECRET_ACCESS_KEY=<S3_SECRET_KEY>   # WAJIB
+AWS_DEFAULT_REGION=ap-southeast-3
+AWS_BUCKET=pdo-barumunpalma-prod
+AWS_URL=
+
+LOG_CHANNEL=stderr
+LOG_LEVEL=warning
+
+MAIL_MAILER=smtp
+MAIL_HOST=<SMTP_HOST>
+MAIL_PORT=587
+MAIL_USERNAME=<SMTP_USER>
+MAIL_PASSWORD=<SMTP_PASSWORD>
+MAIL_ENCRYPTION=tls
+MAIL_FROM_ADDRESS=noreply@<DOMAIN_ANDA>
+MAIL_FROM_NAME="PDO Barumun Palma Nauli"
+
+SENTRY_LARAVEL_DSN=               # Opsional: isi dari sentry.io untuk error monitoring
 ```
 
+Generate `APP_KEY` (jalankan sekali saja, simpan hasilnya):
+
 ```bash
-# ── LANGKAH 4e: Inisialisasi aplikasi ───────────────────
+docker run --rm php:8.4-cli php -r "echo 'base64:'.base64_encode(random_bytes(32)).PHP_EOL;"
+```
 
-# Generate APP_KEY
-php artisan key:generate
+Salin output ke nilai `APP_KEY=` di `.env.production`.
 
-# Publish Sanctum config
-php artisan vendor:publish --provider="Laravel\Sanctum\SanctumServiceProvider"
+Buat file `.env` untuk variabel docker-compose:
 
-# Jalankan migrasi + seeder
-php artisan migrate --seed --force
-
-# Optimasi production
-php artisan config:cache
-php artisan route:cache
-php artisan view:cache
-
-# ── LANGKAH 4f: Permission folder ────────────────────────
-sudo chown -R www-data:www-data /var/www/pdo-api/storage
-sudo chown -R www-data:www-data /var/www/pdo-api/bootstrap/cache
-sudo chmod -R 775 /var/www/pdo-api/storage
-sudo chmod -R 775 /var/www/pdo-api/bootstrap/cache
+```bash
+cat > /opt/pdo/.env << 'EOF'
+DB_DATABASE=pdo_prod
+DB_USERNAME=pdo_user
+DB_PASSWORD=<PASSWORD_KUAT_SAMA_DENGAN_DIATAS>
+REDIS_PASSWORD=<REDIS_PASSWORD_SAMA_DENGAN_DIATAS>
+VITE_API_URL=https://<DOMAIN_ANDA>
+EOF
 ```
 
 ---
 
-## Tahap 5 — Build Frontend (React)
+## Tahap 4 — Build & Jalankan Container
 
 ```bash
-# Buat folder frontend
-sudo mkdir -p /var/www/pdo-web
-sudo chown ubuntu:ubuntu /var/www/pdo-web
+cd /opt/pdo
 
-# Salin kode frontend dari repo yang sudah di-clone
-cp -r /tmp/barumun-pdo/apps/web/. /var/www/pdo-web/
+# Build semua image (pertama kali ±5–10 menit)
+docker compose -f docker-compose.prod.yml build
 
-cd /var/www/pdo-web
+# Jalankan semua container di background
+docker compose -f docker-compose.prod.yml up -d
 
-# Install dependencies
-npm install
-
-# Build production
-npm run build
-# Hasil ada di: /var/www/pdo-web/dist/
+# Cek status
+docker compose -f docker-compose.prod.yml ps
 ```
+
+Output yang diharapkan:
+
+```
+NAME            STATUS              PORTS
+pdo-db-1        running (healthy)   5432/tcp
+pdo-redis-1     running             6379/tcp
+pdo-api-1       running             0.0.0.0:8000->80/tcp
+pdo-web-1       running             0.0.0.0:80->80/tcp
+```
+
+Container `api` menjalankan otomatis saat start:
+- `php artisan migrate --force`
+- `php artisan config:cache && route:cache && view:cache`
+- PHP-FPM + Nginx (port 80)
+- 2 queue workers (`exports,notifications,scheduled`)
+- Laravel scheduler (loop setiap menit)
 
 ---
 
-## Tahap 6 — Konfigurasi Nginx
+## Tahap 5 — Setup Nginx Host + SSL
+
+Install Nginx dan Certbot di EC2 sebagai SSL termination:
+
+```bash
+sudo apt install -y nginx certbot python3-certbot-nginx
+```
 
 ```bash
 sudo nano /etc/nginx/sites-available/pdo
 ```
-
-Paste konfigurasi berikut (ganti `<DOMAIN_ANDA>`):
 
 ```nginx
 server {
@@ -210,130 +189,75 @@ server {
     listen 443 ssl;
     server_name <DOMAIN_ANDA> www.<DOMAIN_ANDA>;
 
-    # SSL — diisi otomatis oleh Certbot (Tahap 7)
-    # ssl_certificate ...
+    # SSL — diisi otomatis oleh Certbot
+    # ssl_certificate     ...
     # ssl_certificate_key ...
 
-    # Frontend React SPA
-    root /var/www/pdo-web/dist;
-    index index.html;
+    client_max_body_size 20M;
 
+    # Frontend React SPA (container web port 80)
     location / {
-        try_files $uri $uri/ /index.html;
+        proxy_pass         http://127.0.0.1:80;
+        proxy_set_header   Host $host;
+        proxy_set_header   X-Real-IP $remote_addr;
+        proxy_set_header   X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header   X-Forwarded-Proto $scheme;
     }
 
-    # Backend API Laravel
+    # Backend API Laravel (container api port 8000)
     location /api/ {
-        proxy_pass http://127.0.0.1:8000/;
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_pass         http://127.0.0.1:8000/api/;
+        proxy_set_header   Host $host;
+        proxy_set_header   X-Real-IP $remote_addr;
+        proxy_set_header   X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header   X-Forwarded-Proto $scheme;
+        proxy_read_timeout 120s;
     }
-
-    client_max_body_size 10M;
-
-    gzip on;
-    gzip_types text/plain text/css application/json application/javascript;
 }
 ```
 
 ```bash
-# Aktifkan site
 sudo ln -s /etc/nginx/sites-available/pdo /etc/nginx/sites-enabled/
-sudo rm /etc/nginx/sites-enabled/default
+sudo rm -f /etc/nginx/sites-enabled/default
+sudo nginx -t && sudo systemctl restart nginx
 
-# Test konfigurasi
-sudo nginx -t
-
-# Restart
-sudo systemctl restart nginx
-```
-
-### Setup Laravel untuk berjalan di port 8000
-
-Buat systemd service agar Laravel Octane / artisan serve berjalan otomatis:
-
-```bash
-sudo nano /etc/systemd/system/pdo-api.service
-```
-
-```ini
-[Unit]
-Description=PDO Laravel API
-After=network.target
-
-[Service]
-User=www-data
-WorkingDirectory=/var/www/pdo-api
-ExecStart=/usr/bin/php artisan serve --host=127.0.0.1 --port=8000
-Restart=always
-RestartSec=3
-
-[Install]
-WantedBy=multi-user.target
-```
-
-```bash
-sudo systemctl enable pdo-api
-sudo systemctl start pdo-api
-sudo systemctl status pdo-api
-```
-
----
-
-## Tahap 7 — SSL Certificate (HTTPS Gratis)
-
-```bash
-sudo apt install -y certbot python3-certbot-nginx
-
+# Pasang SSL certificate gratis
 sudo certbot --nginx -d <DOMAIN_ANDA> -d www.<DOMAIN_ANDA>
-
-# Verifikasi auto-renewal
 sudo certbot renew --dry-run
 ```
 
 ---
 
-## Tahap 8 — Setup Cron untuk Scheduler
+## Tahap 6 — Verifikasi Deployment
 
 ```bash
-sudo crontab -e -u www-data
-```
+# Status semua container
+docker compose -f docker-compose.prod.yml ps
 
-Tambahkan:
-```
-* * * * * cd /var/www/pdo-api && php artisan schedule:run >> /dev/null 2>&1
-```
+# Log API (lihat migrasi & startup)
+docker compose -f docker-compose.prod.yml logs api --tail=50
 
----
+# Test API (harus dapat HTTP 401 — bukan 404 atau 502)
+curl -s -o /dev/null -w "%{http_code}" \
+  -H "Accept: application/json" \
+  https://<DOMAIN_ANDA>/api/v1/auth/me
 
-## Tahap 9 — Verifikasi Deployment
-
-```bash
-# Cek semua service
-sudo systemctl status nginx
-sudo systemctl status php8.4-fpm
-sudo systemctl status postgresql
-sudo systemctl status pdo-api
-
-# Test API
-curl http://127.0.0.1:8000/api/ping
-curl https://<DOMAIN_ANDA>/api/ping
-
-# Pantau log
-tail -f /var/www/pdo-api/storage/logs/laravel.log
-tail -f /var/log/nginx/error.log
+# Test login
+curl -s -X POST https://<DOMAIN_ANDA>/api/v1/auth/login \
+  -H "Content-Type: application/json" \
+  -H "Accept: application/json" \
+  -d '{"email":"admin@barumunpalma.co.id","password":"ChangeMe123!"}'
 ```
 
 Buka browser: `https://<DOMAIN_ANDA>` — halaman login harus muncul.
 
 **Akun default (seeder):**
+
 | Role | Email | Password |
-|---|---|---|
+|------|-------|----------|
 | Admin | admin@barumunpalma.co.id | ChangeMe123! |
 
-> **Ganti password admin segera setelah pertama login via halaman Pengaturan.**
+> **Ganti password admin segera setelah pertama login.**
 
 ---
 
@@ -343,56 +267,52 @@ Buka browser: `https://<DOMAIN_ANDA>` — halaman login harus muncul.
 User Browser
      │ HTTPS (443)
      ▼
-  Nginx
-  ├── /         → /var/www/pdo-web/dist/    (React SPA)
-  └── /api/*    → 127.0.0.1:8000           (Laravel php artisan serve)
-                        │
-                 PostgreSQL 16
-                 (localhost:5432)
-                        │
-                 AWS S3
-                 (upload bukti realisasi)
+Nginx (host EC2) — SSL termination
+  ├── /       → Docker pdo-web-1:80   (React SPA via Nginx container)
+  └── /api/*  → Docker pdo-api-1:8000 (Laravel PHP-FPM + Nginx container)
+                    │
+               pdo-db-1:5432    (PostgreSQL 16)
+               pdo-redis-1:6379 (Redis 7 — cache, session, queue)
+                    │
+               AWS S3            (upload bukti realisasi)
 ```
+
+Dalam container `api` dikelola Supervisor:
+
+| Process | Fungsi |
+|---------|--------|
+| `nginx` | Reverse proxy ke PHP-FPM |
+| `php-fpm` | Memproses request Laravel (4–20 workers) |
+| `queue-worker` × 2 | Memproses export Excel/PDF dan notifikasi |
+| `scheduler` | Menjalankan `pdo:auto-close` setiap menit |
 
 ---
 
-## Update Aplikasi (Setelah Kode Baru di-Push)
+## Update Aplikasi (Deploy Kode Baru)
 
 ```bash
+cd /opt/pdo
+
 # Pull kode terbaru
-cd /tmp/barumun-pdo && git pull origin main
+git pull origin main
 
-# Update backend — overlay ulang kode custom
-REPO=/tmp/barumun-pdo/apps/api
-TARGET=/var/www/pdo-api
+# Rebuild image dan restart container (migrasi berjalan otomatis)
+docker compose -f docker-compose.prod.yml up -d --build api web
 
-cp -r $REPO/app/*          $TARGET/app/
-cp -r $REPO/database/*     $TARGET/database/
-cp    $REPO/routes/api.php $TARGET/routes/api.php
-cp    $REPO/bootstrap/app.php $TARGET/bootstrap/app.php
-
-cd $TARGET
-php artisan migrate --force
-php artisan config:cache && php artisan route:cache && php artisan view:cache
-sudo systemctl restart pdo-api
-
-# Update frontend
-cp -r /tmp/barumun-pdo/apps/web/. /var/www/pdo-web/
-cd /var/www/pdo-web && npm install && npm run build
-
-sudo systemctl reload nginx
+# Pantau log startup
+docker compose -f docker-compose.prod.yml logs api -f
 ```
 
 ---
 
-## Troubleshooting Umum
+## Troubleshooting
 
 | Gejala | Kemungkinan Penyebab | Solusi |
-|---|---|---|
-| `502 Bad Gateway` | Laravel service tidak jalan | `sudo systemctl restart pdo-api` |
-| `404 pada /api/*` | Nginx proxy salah konfigurasi | Cek `location /api/` di nginx config |
-| `500 Server Error` | Error PHP / env salah | `tail -f /var/www/pdo-api/storage/logs/laravel.log` |
-| `composer not found` | Composer belum diinstall | Ulangi Tahap 2 bagian Composer |
-| Database error | Password salah di `.env` | Cek `DB_*` di `.env`, restart service |
-| Upload bukti gagal | Kredensial S3 salah | Cek `AWS_*` di `.env` |
-| `npm run build` error | Node version terlalu lama | Pastikan Node 22: `node --version` |
+|--------|----------------------|--------|
+| Container `api` restart loop | `APP_KEY` kosong atau `.env.production` tidak ada | `docker compose -f docker-compose.prod.yml logs api` |
+| `502 Bad Gateway` | Container belum siap / crash | `docker compose -f docker-compose.prod.yml ps` — cek status |
+| Upload bukti gagal | Kredensial AWS S3 salah | Cek `AWS_*` di `.env.production`, pastikan bucket sudah ada |
+| Export Excel/PDF tidak diproses | Queue worker mati | `docker compose -f docker-compose.prod.yml restart api` |
+| Login berhasil tapi data kosong | Seeder belum jalan | `docker compose -f docker-compose.prod.yml exec api php artisan db:seed --force` |
+| Migration error saat startup | Konflik migration | `docker compose -f docker-compose.prod.yml exec api php artisan migrate:status` |
+| `SQLSTATE` error saat startup | DB belum healthy saat api start | `docker compose -f docker-compose.prod.yml restart api` |
