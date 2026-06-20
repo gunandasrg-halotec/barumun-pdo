@@ -16,5 +16,9 @@ apps/api/vendor/
 apps/api/storage/logs/*.log
 apps/api/bootstrap/cache/*.php
 
+# Production secrets — jangan pernah di-commit
+docker/api/.env.production
+docker/api/.env.staging
+
 # Node
 node_modules/

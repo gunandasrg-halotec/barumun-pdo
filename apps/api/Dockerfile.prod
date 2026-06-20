@@ -1,0 +1,59 @@
+# ── Stage 1: Composer dependencies ────────────────────────────────────────────
+FROM composer:2 AS vendor
+
+WORKDIR /app
+
+# Install Laravel skeleton dependencies
+RUN composer create-project laravel/laravel . \
+    --prefer-dist --no-progress --no-interaction --quiet \
+    && composer require \
+        laravel/sanctum \
+        league/flysystem-aws-s3-v3 \
+        maatwebsite/excel \
+        barryvdh/laravel-dompdf \
+        sentry/sentry-laravel \
+        --no-interaction --quiet
+
+# Copy application code on top of the skeleton
+COPY apps/api/app/      ./app/
+COPY apps/api/database/ ./database/
+COPY apps/api/routes/   ./routes/
+COPY apps/api/bootstrap/ ./bootstrap/
+
+# Optimise autoloader for production
+RUN composer dump-autoload --optimize --no-dev --classmap-authoritative
+
+# ── Stage 2: Production image (PHP-FPM) ───────────────────────────────────────
+FROM php:8.4-fpm-alpine
+
+# Install system dependencies & PHP extensions
+RUN apk add --no-cache \
+        nginx supervisor \
+        postgresql-dev libpng-dev libzip-dev \
+    && docker-php-ext-install pdo pdo_pgsql gd bcmath zip opcache \
+    && pecl install redis && docker-php-ext-enable redis \
+    && rm -rf /tmp/pear
+
+# PHP-FPM & opcache tuning
+COPY docker/api/prod/php.ini    /usr/local/etc/php/conf.d/app.ini
+COPY docker/api/prod/fpm.conf   /usr/local/etc/php-fpm.d/www.conf
+
+# Nginx config
+COPY docker/api/prod/nginx.conf /etc/nginx/nginx.conf
+
+# Supervisor config (php-fpm + nginx + queue worker + scheduler)
+COPY docker/api/prod/supervisord.conf /etc/supervisord.conf
+
+WORKDIR /var/www/api
+
+# Copy from vendor stage
+COPY --from=vendor /app ./
+
+# Entrypoint: migrate, cache config, start supervisor
+COPY docker/api/prod/entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh \
+    && chown -R www-data:www-data /var/www/api/storage /var/www/api/bootstrap/cache
+
+EXPOSE 80
+
+ENTRYPOINT ["/entrypoint.sh"]
