@@ -1,20 +1,68 @@
 # Panduan Deployment — AWS EC2 (Docker Production)
 
-**Stack:** Ubuntu 22.04/24.04 · Docker 26+ · Docker Compose V2 · PHP-FPM 8.4 · Laravel 13 · PostgreSQL 16 · Redis 7 · Nginx · Certbot SSL
+**Stack:** Ubuntu 22.04/24.04 · Docker 26+ · Docker Compose V2 · PHP-FPM 8.4 · Laravel 13 · AWS RDS PostgreSQL 16 · Redis 7 · Nginx · Certbot SSL
 
-> **Catatan arsitektur:** Deployment menggunakan Docker Compose produksi (`docker-compose.prod.yml`).
-> Tidak perlu install PHP, Node, atau PostgreSQL secara manual — semua berjalan dalam container.
+> **Catatan arsitektur:** Database PostgreSQL menggunakan **AWS RDS** (bukan container). Redis, API, dan Frontend berjalan dalam Docker Compose di EC2.
 
 ---
 
 ## Prasyarat
 
 - EC2 instance berjalan (minimal **t3.small** — 2 vCPU, 2 GB RAM; disarankan **t3.medium** untuk produksi)
-- Security Group membuka port **22** (SSH), **80** (HTTP), **443** (HTTPS)
+- Security Group EC2 membuka port **22** (SSH), **80** (HTTP), **443** (HTTPS)
+- **AWS RDS PostgreSQL 16** sudah dibuat (lihat Tahap 0 di bawah)
 - File `.pem` / key pair SSH tersedia di komputer lokal
 - Record DNS domain sudah diarahkan ke IP publik EC2
 - AWS S3 bucket sudah dibuat untuk upload bukti realisasi
 - IAM user dengan akses S3 (butuh `ACCESS_KEY` dan `SECRET_KEY`)
+
+---
+
+## Tahap 0 — Setup AWS RDS PostgreSQL
+
+### Buat RDS Instance
+
+1. Buka **AWS Console → RDS → Create database**
+2. Pilih:
+   - Engine: **PostgreSQL 16**
+   - Template: **Production** (atau Free tier untuk staging)
+   - DB instance identifier: `pdo-barumun-prod`
+   - Master username: `pdo_user`
+   - Master password: *(simpan baik-baik — ini nilai `DB_PASSWORD`)*
+   - Instance class: `db.t3.micro` (cukup untuk awal)
+   - Storage: 20 GB GP3
+   - **Multi-AZ**: disarankan untuk produksi
+3. Di **Connectivity**:
+   - VPC: pilih VPC yang sama dengan EC2
+   - Public access: **No** (lebih aman)
+   - VPC Security Group: buat baru atau pilih yang ada
+4. Klik **Create database** — tunggu status `Available` (~5 menit)
+
+### Konfigurasi Security Group RDS
+
+Tambahkan **Inbound Rule** pada Security Group RDS:
+
+| Type | Protocol | Port | Source |
+|------|----------|------|--------|
+| PostgreSQL | TCP | 5432 | Security Group EC2 (bukan IP!) |
+
+> Gunakan referensi Security Group (bukan CIDR) agar koneksi tetap aman saat IP EC2 berubah.
+
+### Catat Endpoint RDS
+
+Setelah RDS `Available`, catat **Endpoint** dari:
+AWS Console → RDS → Databases → `pdo-barumun-prod` → **Connectivity & security** → Endpoint
+
+Contoh: `pdo-barumun-prod.abc123xyz.ap-southeast-3.rds.amazonaws.com`
+
+### Buat Database
+
+```bash
+# Dari EC2 (setelah terkoneksi di Tahap 1):
+psql -h <RDS_ENDPOINT> -U pdo_user -c "CREATE DATABASE pdo_prod;"
+```
+
+Atau gunakan pgAdmin/DBeaver dari laptop jika RDS dapat diakses publik sementara.
 
 ---
 
@@ -38,6 +86,16 @@ ssh -i /path/ke/keypair.pem ubuntu@<IP_PUBLIK_EC2>
 # Verifikasi
 docker --version
 docker compose version
+
+# Install psql client (untuk verifikasi koneksi ke RDS)
+sudo apt install -y postgresql-client
+```
+
+Verifikasi koneksi ke RDS:
+
+```bash
+psql -h <RDS_ENDPOINT> -U pdo_user -d pdo_prod -c "SELECT version();"
+# Harus menampilkan versi PostgreSQL — jika gagal, cek Security Group RDS
 ```
 
 ---
@@ -71,11 +129,11 @@ APP_URL=https://<DOMAIN_ANDA>
 APP_TIMEZONE=Asia/Jakarta
 
 DB_CONNECTION=pgsql
-DB_HOST=db                        # nama service di docker-compose
+DB_HOST=<RDS_ENDPOINT>.rds.amazonaws.com   # WAJIB — endpoint dari AWS Console
 DB_PORT=5432
 DB_DATABASE=pdo_prod
 DB_USERNAME=pdo_user
-DB_PASSWORD=<PASSWORD_KUAT_32_KARAKTER>   # WAJIB
+DB_PASSWORD=<MASTER_PASSWORD_RDS>          # WAJIB — password yang dibuat saat buat RDS
 
 CACHE_STORE=redis
 SESSION_DRIVER=redis
@@ -122,9 +180,6 @@ Buat file `.env` untuk variabel docker-compose:
 
 ```bash
 cat > /opt/pdo/.env << 'EOF'
-DB_DATABASE=pdo_prod
-DB_USERNAME=pdo_user
-DB_PASSWORD=<PASSWORD_KUAT_SAMA_DENGAN_DIATAS>
 REDIS_PASSWORD=<REDIS_PASSWORD_SAMA_DENGAN_DIATAS>
 VITE_API_URL=https://<DOMAIN_ANDA>
 EOF
@@ -151,14 +206,13 @@ Output yang diharapkan:
 
 ```
 NAME            STATUS              PORTS
-pdo-db-1        running (healthy)   5432/tcp
 pdo-redis-1     running             6379/tcp
 pdo-api-1       running             0.0.0.0:8000->80/tcp
 pdo-web-1       running             0.0.0.0:80->80/tcp
 ```
 
 Container `api` menjalankan otomatis saat start:
-- `php artisan migrate --force`
+- `php artisan migrate --force` (terhadap RDS)
 - `php artisan config:cache && route:cache && view:cache`
 - PHP-FPM + Nginx (port 80)
 - 2 queue workers (`exports,notifications,scheduled`)
@@ -271,10 +325,10 @@ Nginx (host EC2) — SSL termination
   ├── /       → Docker pdo-web-1:80   (React SPA via Nginx container)
   └── /api/*  → Docker pdo-api-1:8000 (Laravel PHP-FPM + Nginx container)
                     │
-               pdo-db-1:5432    (PostgreSQL 16)
-               pdo-redis-1:6379 (Redis 7 — cache, session, queue)
+               pdo-redis-1:6379  (Redis 7 — cache, session, queue)   [Docker]
                     │
-               AWS S3            (upload bukti realisasi)
+               AWS RDS :5432     (PostgreSQL 16 — managed database)   [AWS]
+               AWS S3            (upload bukti realisasi)             [AWS]
 ```
 
 Dalam container `api` dikelola Supervisor:
@@ -311,8 +365,8 @@ docker compose -f docker-compose.prod.yml logs api -f
 |--------|----------------------|--------|
 | Container `api` restart loop | `APP_KEY` kosong atau `.env.production` tidak ada | `docker compose -f docker-compose.prod.yml logs api` |
 | `502 Bad Gateway` | Container belum siap / crash | `docker compose -f docker-compose.prod.yml ps` — cek status |
+| `SQLSTATE` / koneksi RDS gagal | Security Group RDS tidak mengizinkan EC2, atau `DB_HOST` salah | Cek inbound rule SG RDS, verifikasi endpoint di `.env.production` |
 | Upload bukti gagal | Kredensial AWS S3 salah | Cek `AWS_*` di `.env.production`, pastikan bucket sudah ada |
 | Export Excel/PDF tidak diproses | Queue worker mati | `docker compose -f docker-compose.prod.yml restart api` |
 | Login berhasil tapi data kosong | Seeder belum jalan | `docker compose -f docker-compose.prod.yml exec api php artisan db:seed --force` |
-| Migration error saat startup | Konflik migration | `docker compose -f docker-compose.prod.yml exec api php artisan migrate:status` |
-| `SQLSTATE` error saat startup | DB belum healthy saat api start | `docker compose -f docker-compose.prod.yml restart api` |
+| Migration error saat startup | Konflik migration atau DB belum ada | `docker compose -f docker-compose.prod.yml exec api php artisan migrate:status` |
