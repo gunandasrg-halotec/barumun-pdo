@@ -16,7 +16,10 @@ const schemaCreate = z.object({
   password:          z.string().min(8, 'Minimal 8 karakter'),
   whatsapp_number:   z.string().min(10, 'Nomor tidak valid'),
   role_id:           z.string().uuid('Pilih role'),
-  plantation_unit_id: z.string().uuid().nullable().optional(),
+  plantation_unit_id: z.preprocess(
+    (v) => (v === '' ? null : v),
+    z.string().uuid().nullable().optional(),
+  ),
   is_active:         z.boolean(),
 })
 
