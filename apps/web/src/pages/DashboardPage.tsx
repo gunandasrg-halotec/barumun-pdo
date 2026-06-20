@@ -36,7 +36,7 @@ export function DashboardPage() {
   return (
     <div>
       {/* Hero */}
-      <div className="flex items-start justify-between mb-6">
+      <div className="flex flex-col desk:flex-row desk:items-start desk:justify-between gap-3 mb-6">
         <div>
           <h2 className="text-[28px] font-[950] text-ink">
             Dashboard PDO {fmtPeriode(filters.period_month, filters.period_year)}
@@ -76,13 +76,13 @@ export function DashboardPage() {
 
       {/* KPI Cards */}
       {isLoading ? (
-        <div className="grid grid-cols-5 gap-4 mb-6">
+        <div className="grid grid-cols-1 desk:grid-cols-5 gap-4 mb-6">
           {Array.from({ length: 5 }).map((_, i) => (
             <div key={i} className="card animate-pulse h-24 bg-[#f0f4f0]" />
           ))}
         </div>
       ) : (
-        <div className="grid grid-cols-5 gap-4 mb-6">
+        <div className="grid grid-cols-1 desk:grid-cols-5 gap-4 mb-6">
           <KpiCard
             label="Total Pengajuan"
             value={fmtShort(summary?.total_amount)}
@@ -119,7 +119,7 @@ export function DashboardPage() {
       )}
 
       {/* Charts */}
-      <div className="grid gap-4" style={{ gridTemplateColumns: '1.15fr 0.85fr' }}>
+      <div className="grid grid-cols-1 desk:grid-cols-[1.15fr_0.85fr] gap-4">
         {/* Bar Chart */}
         <div className="card">
           <div className="flex items-center justify-between mb-4">

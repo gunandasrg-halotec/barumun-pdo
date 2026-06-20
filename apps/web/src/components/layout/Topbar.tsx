@@ -28,7 +28,7 @@ export function Topbar({ onSearch }: TopbarProps) {
   return (
     <header className="flex items-center justify-between px-7 py-4 bg-white border-b border-line sticky top-0 z-20">
       {/* Search */}
-      <div className="relative" style={{ width: 430, maxWidth: '50vw' }}>
+      <div className="relative flex-1 max-w-[430px]">
         <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted" />
         <input
           type="text"

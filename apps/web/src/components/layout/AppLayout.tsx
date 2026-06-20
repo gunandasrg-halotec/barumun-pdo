@@ -10,18 +10,12 @@ export function AppLayout() {
   if (!user) return <Navigate to="/login" replace />
 
   return (
-    <div
-      className="grid min-h-screen"
-      style={{ gridTemplateColumns: '282px 1fr' }}
-    >
+    <div className="flex flex-col desk:grid desk:grid-cols-[282px_1fr] min-h-screen">
       <Sidebar />
 
       <div className="flex flex-col min-h-screen overflow-hidden">
         <Topbar />
-        <main
-          className="flex-1 overflow-auto"
-          style={{ padding: '22px 28px 40px' }}
-        >
+        <main className="flex-1 overflow-auto px-5 py-5 desk:px-7 desk:py-[22px] desk:pb-10">
           <Outlet />
         </main>
       </div>

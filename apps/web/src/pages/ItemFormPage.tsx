@@ -89,7 +89,7 @@ export function ItemFormPage() {
           {errors.subcategory_id && <p className="field-error">{errors.subcategory_id.message}</p>}
         </div>
 
-        <div className="grid grid-cols-2 gap-4">
+        <div className="grid grid-cols-1 desk:grid-cols-2 gap-4">
           <div>
             <label className="label">Kode</label>
             <input {...register('code')} className="input-base" placeholder="A1.001" />
@@ -107,7 +107,7 @@ export function ItemFormPage() {
           {errors.name && <p className="field-error">{errors.name.message}</p>}
         </div>
 
-        <div className="grid grid-cols-2 gap-4">
+        <div className="grid grid-cols-1 desk:grid-cols-2 gap-4">
           <div>
             <label className="label">Satuan (opsional)</label>
             <input {...register('default_unit')} className="input-base" placeholder="kg" />

@@ -87,7 +87,7 @@ export function SettingsPage() {
       {/* Section 1: Threshold */}
       <div className="card mb-4">
         <h3 className="text-[17px] font-[850] mb-4">Threshold Global</h3>
-        <div className="grid grid-cols-2 gap-4">
+        <div className="grid grid-cols-1 desk:grid-cols-2 gap-4">
           <div>
             <label className="block text-[12px] font-[850] text-muted mb-1.5">
               Threshold Wajib Bukti (Rp)
@@ -177,7 +177,7 @@ export function SettingsPage() {
       {/* Section 3: Jadwal Reminder */}
       <div className="card mb-4">
         <h3 className="text-[17px] font-[850] mb-4">Jadwal Reminder Bulanan</h3>
-        <div className="grid grid-cols-2 gap-4">
+        <div className="grid grid-cols-1 desk:grid-cols-2 gap-4">
           <div>
             <label className="block text-[12px] font-[850] text-muted mb-1.5">Tanggal (1–28)</label>
             <input

@@ -71,7 +71,7 @@ export function KategoriFormPage() {
       </div>
 
       <form onSubmit={handleSubmit((d) => save.mutate(d))} className="card flex flex-col gap-4">
-        <div className="grid grid-cols-2 gap-4">
+        <div className="grid grid-cols-1 desk:grid-cols-2 gap-4">
           <div>
             <label className="label">Kode</label>
             <input {...register('code')} className="input-base" placeholder="A" />

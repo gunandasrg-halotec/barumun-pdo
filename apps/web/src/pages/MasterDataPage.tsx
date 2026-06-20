@@ -70,7 +70,7 @@ export function MasterDataPage() {
 
       {/* Tab: Hierarki */}
       {tab === 'hierarki' && (
-        <div className="grid gap-4" style={{ gridTemplateColumns: '1.1fr 0.9fr' }}>
+        <div className="grid grid-cols-1 desk:grid-cols-[1.1fr_0.9fr] gap-4">
           <div className="overflow-auto border border-line rounded-drawer bg-white">
             <table className="w-full border-collapse">
               <thead>

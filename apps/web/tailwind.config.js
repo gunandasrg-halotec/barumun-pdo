@@ -2,6 +2,9 @@
 export default {
   content: ['./index.html', './src/**/*.{ts,tsx}'],
   theme: {
+    screens: {
+      desk: '1050px',
+    },
     extend: {
       colors: {
         bg:      '#f5f7f3',

@@ -175,7 +175,7 @@ export function PdoSupplementaryFormPage() {
                     <Trash2 className="w-4 h-4" />
                   </button>
 
-                  <div className="grid grid-cols-2 gap-3 mb-3">
+                  <div className="grid grid-cols-1 desk:grid-cols-2 gap-3 mb-3">
                     <div>
                       <label className="label">Item Biaya</label>
                       <select
@@ -198,7 +198,7 @@ export function PdoSupplementaryFormPage() {
                     </div>
                   </div>
 
-                  <div className="grid grid-cols-4 gap-3 mb-3">
+                  <div className="grid grid-cols-2 desk:grid-cols-4 gap-3 mb-3">
                     <div>
                       <label className="label">Volume</label>
                       <input type="number" {...register(`details.${idx}.quantity`)} className="input-base" step="0.01" />

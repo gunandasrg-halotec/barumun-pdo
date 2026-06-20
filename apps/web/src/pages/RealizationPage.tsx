@@ -201,7 +201,7 @@ export function RealizationPage() {
             {errors.pdo_detail_id && <p className="field-error">{errors.pdo_detail_id.message}</p>}
           </div>
 
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 desk:grid-cols-2 gap-3">
             <div>
               <label className="label">Tanggal Transaksi</label>
               <input type="date" {...register('transaction_date')} className="input-base" />
@@ -213,7 +213,7 @@ export function RealizationPage() {
             </div>
           </div>
 
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 desk:grid-cols-2 gap-3">
             <div>
               <label className="label">Metode Pembayaran</label>
               <select {...register('payment_method')} className="input-base">

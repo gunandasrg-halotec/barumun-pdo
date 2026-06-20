@@ -214,7 +214,7 @@ export function PdoFormPage() {
         {/* Header */}
         <div className="card mb-4">
           <h3 className="text-[17px] font-[850] mb-4">Informasi Umum</h3>
-          <div className="grid grid-cols-3 gap-4">
+          <div className="grid grid-cols-1 desk:grid-cols-3 gap-4">
             <div>
               <label className="label">Unit Kebun</label>
               <select {...register('plantation_unit_id')} className="input-base">
@@ -275,7 +275,7 @@ export function PdoFormPage() {
                     </button>
 
                     {/* [F] Row: Cascading 3-level dropdown */}
-                    <div className="grid grid-cols-3 gap-3 mb-3">
+                    <div className="grid grid-cols-1 desk:grid-cols-3 gap-3 mb-3">
                       {/* Level 1: Kategori */}
                       <div>
                         <label className="label">Kategori</label>
@@ -334,7 +334,7 @@ export function PdoFormPage() {
                       </div>
                     </div>
 
-                    <div className="grid grid-cols-2 gap-3 mb-3">
+                    <div className="grid grid-cols-1 desk:grid-cols-2 gap-3 mb-3">
                       <div>
                         <label className="label">Deskripsi</label>
                         <input {...register(`details.${idx}.description`)} className="input-base" />
@@ -348,7 +348,7 @@ export function PdoFormPage() {
                       </div>
                     </div>
 
-                    <div className="grid grid-cols-4 gap-3">
+                    <div className="grid grid-cols-2 desk:grid-cols-4 gap-3">
                       <div>
                         <label className="label">Volume</label>
                         <input type="number" {...register(`details.${idx}.quantity`)} className="input-base" step="0.01" />

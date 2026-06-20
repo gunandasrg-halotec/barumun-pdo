@@ -85,7 +85,7 @@ export function SubKategoriFormPage() {
           {errors.category_id && <p className="field-error">{errors.category_id.message}</p>}
         </div>
 
-        <div className="grid grid-cols-2 gap-4">
+        <div className="grid grid-cols-1 desk:grid-cols-2 gap-4">
           <div>
             <label className="label">Kode</label>
             <input {...register('code')} className="input-base" placeholder="A1" />

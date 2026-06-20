@@ -155,7 +155,7 @@ export function TransferPage() {
             {errors.pdo_detail_id && <p className="field-error">{errors.pdo_detail_id.message}</p>}
           </div>
 
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 desk:grid-cols-2 gap-3">
             <div>
               <label className="label">Tanggal Transfer</label>
               <input type="date" {...register('transfer_date')} className="input-base" />

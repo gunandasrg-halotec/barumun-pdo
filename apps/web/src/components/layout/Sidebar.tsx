@@ -29,11 +29,11 @@ export function Sidebar() {
 
   return (
     <aside
-      className="flex flex-col h-screen sticky top-0 overflow-hidden"
-      style={{ background: '#0c3d2c', width: 282, minWidth: 282, padding: '24px 18px' }}
+      className="flex flex-col desk:h-screen desk:sticky desk:top-0 desk:overflow-hidden"
+      style={{ background: '#0c3d2c', padding: '16px 14px' }}
     >
       {/* Brand */}
-      <div className="flex items-center gap-3 mb-8">
+      <div className="flex items-center gap-3 mb-4 desk:mb-8">
         <div
           className="flex items-center justify-center text-white font-[900] text-sm rounded-[14px] shrink-0"
           style={{
@@ -51,15 +51,15 @@ export function Sidebar() {
         </div>
       </div>
 
-      {/* Navigation */}
-      <nav className="flex flex-col gap-1 flex-1">
+      {/* Navigation — 2 cols on mobile, 1 col on desktop */}
+      <nav className="grid grid-cols-2 gap-1 desk:flex desk:flex-col desk:flex-1">
         {visibleItems.map(({ to, icon: Icon, label }) => (
           <NavLink
             key={to}
             to={to}
             className={({ isActive }) =>
               cn(
-                'flex items-center gap-3 px-[13px] py-3 rounded-[10px] text-[14px] font-[750] transition-colors',
+                'flex items-center gap-2 desk:gap-3 px-3 desk:px-[13px] py-2.5 desk:py-3 rounded-[10px] text-[13px] desk:text-[14px] font-[750] transition-colors',
                 'text-[#d9f5e7] no-underline',
                 isActive
                   ? 'bg-[rgba(255,255,255,.13)]'
@@ -68,14 +68,14 @@ export function Sidebar() {
             }
           >
             <Icon className="w-4 h-4 shrink-0" />
-            {label}
+            <span className="truncate">{label}</span>
           </NavLink>
         ))}
       </nav>
 
-      {/* User info at bottom */}
+      {/* User info — hidden on mobile to save space */}
       {user && (
-        <div className="mt-6 pt-4 border-t border-[rgba(255,255,255,.1)]">
+        <div className="hidden desk:block mt-6 pt-4 border-t border-[rgba(255,255,255,.1)]">
           <div className="text-[12px] text-[#a8d4be]">{user.role.name}</div>
           <div className="text-[14px] font-[700] text-[#d9f5e7] truncate">{user.full_name}</div>
           {user.plantation_unit && (
