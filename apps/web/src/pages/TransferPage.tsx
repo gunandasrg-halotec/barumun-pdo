@@ -62,8 +62,8 @@ export function TransferPage() {
 
   const save = useMutation({
     mutationFn: (data: Form) => {
-      const { pdo_header_id: _h, ...payload } = data
-      return api.post('/transfer-entries', payload)
+      const { pdo_header_id: _h, pdo_detail_id, ...payload } = data
+      return api.post(`/pdo-details/${pdo_detail_id}/transfers`, payload)
     },
     onSuccess: () => {
       toast('Transfer berhasil dicatat')

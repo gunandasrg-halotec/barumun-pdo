@@ -24,8 +24,7 @@ const schemaEdit = schemaCreate.extend({
   password: z.string().min(8).optional().or(z.literal('')),
 })
 
-type FormCreate = z.infer<typeof schemaCreate>
-type FormEdit   = z.infer<typeof schemaEdit>
+type FormEdit = z.infer<typeof schemaEdit>
 
 export function UserFormPage() {
   const { id }   = useParams<{ id: string }>()

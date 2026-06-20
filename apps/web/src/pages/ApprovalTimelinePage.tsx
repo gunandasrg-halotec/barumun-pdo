@@ -77,21 +77,34 @@ export function ApprovalTimelinePage() {
           <Button variant="secondary" onClick={() => navigate('/pdo')}>
             <ArrowLeft className="w-4 h-4" /> Kembali
           </Button>
-          {userCanApprove && pdo && !['final', 'closed', 'draft'].includes(pdo.status) && (
-            <>
-              <Button
-                variant="danger"
-                onClick={() => { setModalType('reject'); setShowModal(true) }}
-              >
-                <XCircle className="w-4 h-4" /> Reject
-              </Button>
-              <Button
-                onClick={() => { setModalType('approve'); setShowModal(true) }}
-              >
-                <CheckCircle className="w-4 h-4" /> Approve
-              </Button>
-            </>
-          )}
+          {userCanApprove && pdo && !['final', 'closed', 'draft'].includes(pdo.status) && (() => {
+            // BR-APPR-002: Sembunyikan tombol Approve jika manajer ini sudah approve di tahap paralel
+            const isManagerStage = ['reviewed_asisten', 'in_review_manager'].includes(pdo.status)
+            const alreadyApproved = isManagerStage && (
+              (role === 'MANAJER_KEBUN'    && pdo.manager_kebun_approved === true) ||
+              (role === 'MANAJER_KEUANGAN' && pdo.manager_keuangan_approved === true)
+            )
+            return (
+              <>
+                <Button
+                  variant="danger"
+                  onClick={() => { setModalType('reject'); setShowModal(true) }}
+                >
+                  <XCircle className="w-4 h-4" /> Reject
+                </Button>
+                {!alreadyApproved && (
+                  <Button onClick={() => { setModalType('approve'); setShowModal(true) }}>
+                    <CheckCircle className="w-4 h-4" /> Approve
+                  </Button>
+                )}
+                {alreadyApproved && (
+                  <span className="text-sm text-green font-semibold flex items-center gap-1">
+                    <CheckCircle className="w-4 h-4" /> Sudah disetujui — menunggu manajer lain
+                  </span>
+                )}
+              </>
+            )
+          })()}
         </div>
       </div>
 
@@ -155,6 +168,30 @@ export function ApprovalTimelinePage() {
                     )}
                   </div>
                 ))}
+
+                {/* BR-APPR-002: Panel status per-manajer di tahap paralel */}
+                {stage.key === 'in_review_manager' && pdo && (isActive || isDone) && (
+                  <div className="mt-3 grid grid-cols-2 gap-2">
+                    {[
+                      { label: 'Manajer Kebun',    approved: pdo.manager_kebun_approved },
+                      { label: 'Manajer Keuangan', approved: pdo.manager_keuangan_approved },
+                    ].map(({ label, approved }) => (
+                      <div
+                        key={label}
+                        className={`flex items-center gap-2 text-xs px-2 py-1.5 rounded border ${
+                          approved === true  ? 'bg-[#ddf8e9] border-green text-green' :
+                          approved === false ? 'bg-[#fee2e2] border-red text-red' :
+                          'bg-[#f1f5f9] border-line text-muted'
+                        }`}
+                      >
+                        {approved === true  ? <CheckCircle className="w-3 h-3 shrink-0" /> :
+                         approved === false ? <XCircle className="w-3 h-3 shrink-0" /> :
+                         <Clock className="w-3 h-3 shrink-0" />}
+                        {label}: {approved === true ? 'Disetujui' : approved === false ? 'Ditolak' : 'Menunggu'}
+                      </div>
+                    ))}
+                  </div>
+                )}
 
                 {isPending && !hasReject && (
                   <div className="mt-2 text-xs text-muted flex items-center gap-1">

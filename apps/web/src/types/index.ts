@@ -100,7 +100,12 @@ export interface PdoHeader {
   closure_type: 'system' | 'manual' | null
   closed_at: string | null
   closure_notes: string | null
+  closer: { full_name: string } | null
   notes: string | null
+  grand_total_amount: number
+  // BR-APPR-002: parallel manager approval tracking
+  manager_kebun_approved: boolean | null
+  manager_keuangan_approved: boolean | null
   created_at: string
   updated_at: string
   // computed
@@ -178,7 +183,7 @@ export interface RealizationEntry {
   transaction_date: string
   amount: number
   payment_method: PaymentMethod
-  reference_number: string
+  proof_number: string
   funding_source: FundingSource
   explanation: string | null
   created_at: string

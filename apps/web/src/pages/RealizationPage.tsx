@@ -19,7 +19,7 @@ const schema = z.object({
   amount:           z.coerce.number().min(1, 'Jumlah harus > 0'),
   payment_method:   z.enum(['tunai', 'transfer', 'kas_kecil']),
   funding_source:   z.enum(['kas_kebun', 'rekening_kebun', 'rekening_utama']),
-  reference_number: z.string().min(1, 'No. referensi wajib diisi'),
+  proof_number: z.string().min(1, 'No. referensi wajib diisi'),
   explanation:      z.string().nullable().optional(),
 })
 
@@ -144,7 +144,7 @@ export function RealizationPage() {
               <tr><td colSpan={9} className="p-8"><EmptyState /></td></tr>
             ) : realizations.map((r) => (
               <tr key={r.id} className="border-t border-line hover:bg-[#fbfdfb]">
-                <td className="px-4 py-3 font-bold text-sm">{r.reference_number}</td>
+                <td className="px-4 py-3 font-bold text-sm">{r.proof_number}</td>
                 <td className="px-4 py-3 text-sm">{r.pdo_detail_id}</td>
                 <td className="px-4 py-3 text-sm">{fmtDate(r.transaction_date)}</td>
                 <td className="px-4 py-3 text-sm font-bold">{fmt(r.amount)}</td>
@@ -234,8 +234,8 @@ export function RealizationPage() {
 
           <div>
             <label className="label">No. Referensi / Kuitansi</label>
-            <input {...register('reference_number')} className="input-base" placeholder="KWT/2026/001" />
-            {errors.reference_number && <p className="field-error">{errors.reference_number.message}</p>}
+            <input {...register('proof_number')} className="input-base" placeholder="KWT/2026/001" />
+            {errors.proof_number && <p className="field-error">{errors.proof_number.message}</p>}
           </div>
 
           <div>

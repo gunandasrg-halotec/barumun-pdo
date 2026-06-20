@@ -34,10 +34,10 @@ interface ApprovalLog {
   created_at: string
 }
 
-const STATUS_BADGE: Record<string, 'draft' | 'approved' | 'rejected' | 'pending' | 'purple'> = {
-  draft: 'draft', submitted: 'pending', reviewed_asisten: 'pending',
-  in_review_manager: 'pending', in_review_direktur: 'pending',
-  final_merged: 'approved', rejected: 'rejected',
+const STATUS_BADGE: Record<string, 'draft' | 'approved' | 'reject' | 'review' | 'purple'> = {
+  draft: 'draft', submitted: 'review', reviewed_asisten: 'review',
+  in_review_manager: 'review', in_review_direktur: 'review',
+  final_merged: 'approved', rejected: 'reject',
 }
 
 export function PdoSupplementaryDetailPage() {

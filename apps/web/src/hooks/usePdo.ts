@@ -1,6 +1,21 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '@/lib/api'
-import type { PdoHeader, PdoDetail, PdoApprovalLog, ApiResponse, PaginatedResponse } from '@/types'
+import type { PdoHeader, PdoDetail, PdoApprovalLog, ApiResponse, PaginatedResponse, ExpenseCategory, ExpenseSubcategory } from '@/types'
+
+// Shape returned by GET /pdo/:id (hierarchical response from [E])
+export interface PdoGroupedResponse {
+  pdo: PdoHeader
+  categories: Array<{
+    category: Pick<ExpenseCategory, 'id' | 'code' | 'name' | 'display_order'> | null
+    subcategories: Array<{
+      subcategory: Pick<ExpenseSubcategory, 'id' | 'code' | 'name' | 'display_order'> | null
+      details: PdoDetail[]
+      subtotal_amount: number
+    }>
+    subtotal_amount: number
+  }>
+  grand_total: number
+}
 
 // ─── List ────────────────────────────────────────────────────────────────────
 
@@ -20,7 +35,19 @@ export function usePdo(id: string | undefined) {
   return useQuery({
     queryKey: ['pdo', id],
     queryFn: async () => {
-      const res = await api.get<ApiResponse<PdoHeader>>(`/pdo/${id}`)
+      const res = await api.get<ApiResponse<PdoGroupedResponse>>(`/pdo/${id}`)
+      // [E] show() returns {pdo, categories, grand_total} — extract pdo object
+      return res.data.data.pdo
+    },
+    enabled: !!id,
+  })
+}
+
+export function usePdoGrouped(id: string | undefined) {
+  return useQuery({
+    queryKey: ['pdo', id, 'grouped'],
+    queryFn: async () => {
+      const res = await api.get<ApiResponse<PdoGroupedResponse>>(`/pdo/${id}`)
       return res.data.data
     },
     enabled: !!id,

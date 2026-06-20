@@ -35,6 +35,9 @@ const schema = z.object({
 
 type Form = z.infer<typeof schema>
 
+// [F] Per-row cascade state: tracks category and subcategory selection per detail row
+type RowSelection = { categoryId: string; subcategoryId: string }
+
 const MONTHS = ['Januari','Februari','Maret','April','Mei','Juni','Juli','Agustus','September','Oktober','November','Desember']
 const YEARS  = Array.from({ length: 5 }, (_, i) => new Date().getFullYear() - i + 1)
 
@@ -45,6 +48,9 @@ export function PdoFormPage() {
   const qc       = useQueryClient()
   const user     = useAuthStore((s) => s.user)
   const isEdit   = !!id
+
+  // [F] Cascade selection state per row
+  const [rowSelections, setRowSelections] = useState<RowSelection[]>([])
 
   const { data: units } = useQuery({
     queryKey: ['plantation-units'],
@@ -74,8 +80,17 @@ export function PdoFormPage() {
   const { fields, append, remove } = useFieldArray({ control, name: 'details' })
 
   const detailValues = watch('details')
+  const totalAmount  = detailValues?.reduce((sum, d) => sum + (Number(d.amount) || 0), 0) ?? 0
 
-  const totalAmount = detailValues?.reduce((sum, d) => sum + (Number(d.amount) || 0), 0) ?? 0
+  // [F] Helper: resolve cascade selection for an existing item (when loading edit data)
+  const resolveRowSelection = (itemId: string): RowSelection => {
+    const item = items?.find((i) => i.id === itemId)
+    const sub  = subcategories?.find((s) => s.id === item?.subcategory_id)
+    return {
+      categoryId:    sub?.category_id ?? '',
+      subcategoryId: item?.subcategory_id ?? '',
+    }
+  }
 
   useEffect(() => {
     if (existing) {
@@ -86,10 +101,11 @@ export function PdoFormPage() {
         notes:        existing.notes ?? '',
         details: [],
       })
-      // load details from backend separately
       api.get<ApiResponse<unknown[]>>(`/pdo/${id}/details`).then((res) => {
         const details = res.data.data as Form['details']
         details.forEach((d) => append(d))
+        // Restore cascade selections for each loaded row
+        setRowSelections(details.map((d) => resolveRowSelection(d.expense_item_id)))
       })
     }
   }, [existing])
@@ -125,20 +141,62 @@ export function PdoFormPage() {
     onError: () => toast('Gagal mengajukan PDO', 'error'),
   })
 
+  // [F] Update cascade state for a row
+  const setRowSel = (idx: number, patch: Partial<RowSelection>) => {
+    setRowSelections((prev) => {
+      const next = [...prev]
+      next[idx]  = { ...next[idx], ...patch }
+      return next
+    })
+  }
+
+  // [F] When category changes: reset subcategory and item
+  const handleCategoryChange = (idx: number, categoryId: string) => {
+    setRowSel(idx, { categoryId, subcategoryId: '' })
+    setValue(`details.${idx}.expense_item_id`, '')
+    setValue(`details.${idx}.description`, '')
+    setValue(`details.${idx}.unit`, null)
+    setValue(`details.${idx}.rate`, null)
+  }
+
+  // [F] When subcategory changes: reset item
+  const handleSubcategoryChange = (idx: number, subcategoryId: string) => {
+    setRowSel(idx, { subcategoryId })
+    setValue(`details.${idx}.expense_item_id`, '')
+    setValue(`details.${idx}.description`, '')
+    setValue(`details.${idx}.unit`, null)
+    setValue(`details.${idx}.rate`, null)
+  }
+
+  // When item is selected: autofill description, unit, rate
   const handleItemChange = (idx: number, itemId: string) => {
     const item = items?.find((i) => i.id === itemId)
     if (!item) return
     setValue(`details.${idx}.description`, item.name)
     if (item.default_unit) setValue(`details.${idx}.unit`, item.default_unit)
     if (item.default_rate) setValue(`details.${idx}.rate`, item.default_rate)
+    // Also sync cascade state (for when item selected via keyboard without going through category first)
+    const sub = subcategories?.find((s) => s.id === item.subcategory_id)
+    setRowSel(idx, { categoryId: sub?.category_id ?? '', subcategoryId: item.subcategory_id ?? '' })
   }
 
-  const getItemLabel = (itemId: string) => {
-    const item = items?.find((i) => i.id === itemId)
-    if (!item) return ''
-    const sub = subcategories?.find((s) => s.id === item.subcategory_id)
-    const cat = categories?.find((c) => c.id === sub?.category_id)
-    return `${cat?.code ?? '?'} / ${sub?.code ?? '?'} / ${item.code}`
+  // Remove row + its cascade state
+  const handleRemove = (idx: number) => {
+    remove(idx)
+    setRowSelections((prev) => {
+      const next = [...prev]
+      next.splice(idx, 1)
+      return next
+    })
+  }
+
+  // Append row + empty cascade state
+  const handleAppend = () => {
+    append({
+      expense_item_id: '', description: '', quantity: null,
+      unit: null, rate: null, amount: 0, notes: null, display_order: fields.length,
+    })
+    setRowSelections((prev) => [...prev, { categoryId: '', subcategoryId: '' }])
   }
 
   return (
@@ -190,15 +248,7 @@ export function PdoFormPage() {
         <div className="card mb-4">
           <div className="flex items-center justify-between mb-4">
             <h3 className="text-[17px] font-[850]">Rencana Biaya</h3>
-            <Button
-              type="button"
-              size="sm"
-              variant="secondary"
-              onClick={() => append({
-                expense_item_id: '', description: '', quantity: null,
-                unit: null, rate: null, amount: 0, notes: null, display_order: fields.length,
-              })}
-            >
+            <Button type="button" size="sm" variant="secondary" onClick={handleAppend}>
               <Plus className="w-4 h-4" /> Tambah Item
             </Button>
           </div>
@@ -209,72 +259,119 @@ export function PdoFormPage() {
             </p>
           ) : (
             <div className="flex flex-col gap-3">
-              {fields.map((field, idx) => (
-                <div key={field.id} className="border border-line rounded-card p-4 relative">
-                  <button
-                    type="button"
-                    className="absolute top-3 right-3 text-muted hover:text-red"
-                    onClick={() => remove(idx)}
-                  >
-                    <Trash2 className="w-4 h-4" />
-                  </button>
+              {fields.map((field, idx) => {
+                const sel     = rowSelections[idx] ?? { categoryId: '', subcategoryId: '' }
+                const filteredSubs  = subcategories?.filter((s) => s.category_id === sel.categoryId) ?? []
+                const filteredItems = items?.filter((i) => i.subcategory_id === sel.subcategoryId) ?? []
 
-                  <div className="grid grid-cols-2 gap-3 mb-3">
-                    <div>
-                      <label className="label">Item Biaya</label>
-                      <select
-                        {...register(`details.${idx}.expense_item_id`)}
-                        className="input-base"
-                        onChange={(e) => {
-                          register(`details.${idx}.expense_item_id`).onChange(e)
-                          handleItemChange(idx, e.target.value)
-                        }}
-                      >
-                        <option value="">Pilih item...</option>
-                        {items?.map((item) => (
-                          <option key={item.id} value={item.id}>
-                            {getItemLabel(item.id)} — {item.name}
+                return (
+                  <div key={field.id} className="border border-line rounded-card p-4 relative">
+                    <button
+                      type="button"
+                      className="absolute top-3 right-3 text-muted hover:text-red"
+                      onClick={() => handleRemove(idx)}
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </button>
+
+                    {/* [F] Row: Cascading 3-level dropdown */}
+                    <div className="grid grid-cols-3 gap-3 mb-3">
+                      {/* Level 1: Kategori */}
+                      <div>
+                        <label className="label">Kategori</label>
+                        <select
+                          className="input-base"
+                          value={sel.categoryId}
+                          onChange={(e) => handleCategoryChange(idx, e.target.value)}
+                        >
+                          <option value="">Pilih kategori...</option>
+                          {categories?.map((c) => (
+                            <option key={c.id} value={c.id}>{c.code} — {c.name}</option>
+                          ))}
+                        </select>
+                      </div>
+
+                      {/* Level 2: Sub-Kategori (filtered by category) */}
+                      <div>
+                        <label className="label">Sub-Kategori</label>
+                        <select
+                          className="input-base"
+                          value={sel.subcategoryId}
+                          disabled={!sel.categoryId}
+                          onChange={(e) => handleSubcategoryChange(idx, e.target.value)}
+                        >
+                          <option value="">
+                            {sel.categoryId ? 'Pilih sub-kategori...' : '— Pilih kategori dulu —'}
                           </option>
-                        ))}
-                      </select>
-                      {errors.details?.[idx]?.expense_item_id && (
-                        <p className="field-error">{errors.details[idx]?.expense_item_id?.message}</p>
-                      )}
-                    </div>
-                    <div>
-                      <label className="label">Deskripsi</label>
-                      <input {...register(`details.${idx}.description`)} className="input-base" />
-                    </div>
-                  </div>
+                          {filteredSubs.map((s) => (
+                            <option key={s.id} value={s.id}>{s.code} — {s.name}</option>
+                          ))}
+                        </select>
+                      </div>
 
-                  <div className="grid grid-cols-4 gap-3">
-                    <div>
-                      <label className="label">Volume</label>
-                      <input type="number" {...register(`details.${idx}.quantity`)} className="input-base" step="0.01" />
+                      {/* Level 3: Item Biaya (filtered by subcategory) */}
+                      <div>
+                        <label className="label">Item Biaya</label>
+                        <select
+                          {...register(`details.${idx}.expense_item_id`)}
+                          className="input-base"
+                          disabled={!sel.subcategoryId}
+                          onChange={(e) => {
+                            register(`details.${idx}.expense_item_id`).onChange(e)
+                            handleItemChange(idx, e.target.value)
+                          }}
+                        >
+                          <option value="">
+                            {sel.subcategoryId ? 'Pilih item...' : '— Pilih sub-kategori dulu —'}
+                          </option>
+                          {filteredItems.map((item) => (
+                            <option key={item.id} value={item.id}>{item.code} — {item.name}</option>
+                          ))}
+                        </select>
+                        {errors.details?.[idx]?.expense_item_id && (
+                          <p className="field-error">{errors.details[idx]?.expense_item_id?.message}</p>
+                        )}
+                      </div>
                     </div>
-                    <div>
-                      <label className="label">Satuan</label>
-                      <input {...register(`details.${idx}.unit`)} className="input-base" />
-                    </div>
-                    <div>
-                      <label className="label">Harga Satuan</label>
-                      <input type="number" {...register(`details.${idx}.rate`)} className="input-base" />
-                    </div>
-                    <div>
-                      <label className="label">Jumlah (Rp)</label>
-                      <input type="number" {...register(`details.${idx}.amount`)} className="input-base font-bold" />
-                      {errors.details?.[idx]?.amount && (
-                        <p className="field-error">{errors.details[idx]?.amount?.message}</p>
-                      )}
-                    </div>
-                  </div>
 
-                  <div className="mt-3">
-                    <label className="label">Catatan Item</label>
-                    <input {...register(`details.${idx}.notes`)} className="input-base" />
+                    <div className="grid grid-cols-2 gap-3 mb-3">
+                      <div>
+                        <label className="label">Deskripsi</label>
+                        <input {...register(`details.${idx}.description`)} className="input-base" />
+                        {errors.details?.[idx]?.description && (
+                          <p className="field-error">{errors.details[idx]?.description?.message}</p>
+                        )}
+                      </div>
+                      <div>
+                        <label className="label">Catatan Item</label>
+                        <input {...register(`details.${idx}.notes`)} className="input-base" />
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-4 gap-3">
+                      <div>
+                        <label className="label">Volume</label>
+                        <input type="number" {...register(`details.${idx}.quantity`)} className="input-base" step="0.01" />
+                      </div>
+                      <div>
+                        <label className="label">Satuan</label>
+                        <input {...register(`details.${idx}.unit`)} className="input-base" />
+                      </div>
+                      <div>
+                        <label className="label">Harga Satuan</label>
+                        <input type="number" {...register(`details.${idx}.rate`)} className="input-base" />
+                      </div>
+                      <div>
+                        <label className="label">Jumlah (Rp)</label>
+                        <input type="number" {...register(`details.${idx}.amount`)} className="input-base font-bold" />
+                        {errors.details?.[idx]?.amount && (
+                          <p className="field-error">{errors.details[idx]?.amount?.message}</p>
+                        )}
+                      </div>
+                    </div>
                   </div>
-                </div>
-              ))}
+                )
+              })}
             </div>
           )}
 

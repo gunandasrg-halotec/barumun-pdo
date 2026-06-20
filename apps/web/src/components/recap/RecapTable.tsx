@@ -18,7 +18,6 @@ interface Props {
 }
 
 const COL_HEADERS = ['No', 'Kode', 'Uraian', 'Pengajuan', 'Total Transfer', 'Total Realisasi', 'Saldo']
-const COL_COUNT   = COL_HEADERS.length
 
 export function RecapTable({ data }: Props) {
   const allCodes = data.categories.map((c) => c.category_code)

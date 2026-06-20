@@ -29,7 +29,7 @@ export function RekapitulasiPage() {
   const [year,       setYear]       = useState(currentYear)
   const [month,      setMonth]      = useState(currentMonth)
   const [unitId,     setUnitId]     = useState(user?.plantation_unit?.id ?? '')
-  const [categoryId, setCategoryId] = useState('')
+  const [categoryId] = useState('')
 
   const { startExport, isExporting } = useReportExport()
 
