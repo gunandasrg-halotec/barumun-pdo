@@ -2,6 +2,7 @@
 
 namespace Tests\Unit\Services\Users;
 
+use App\Models\Company;
 use App\Models\PlantationUnit;
 use App\Models\Role;
 use App\Models\User;
@@ -26,7 +27,7 @@ class UserManagementServiceTest extends TestCase
         parent::setUp();
 
         $this->service = new UserManagementService();
-        $this->companyId = (string) \Illuminate\Support\Str::uuid();
+        $this->companyId = Company::factory()->create()->id;
 
         $this->adminRole   = Role::factory()->create(['code' => Role::ADMIN]);
         $this->keraniRole  = Role::factory()->create(['code' => Role::KERANI]);
@@ -74,7 +75,7 @@ class UserManagementServiceTest extends TestCase
 
     public function test_kerani_without_unit_is_rejected(): void
     {
-        $this->expectException(\Symfony\Component\HttpKernel\Exception\HttpException::class);
+        $this->expectException(\Illuminate\Http\Exceptions\HttpResponseException::class);
 
         $this->service->createUser([
             'role_id'            => $this->keraniRole->id,
@@ -119,7 +120,7 @@ class UserManagementServiceTest extends TestCase
 
     public function test_cannot_delete_self(): void
     {
-        $this->expectException(\Symfony\Component\HttpKernel\Exception\HttpException::class);
+        $this->expectException(\Illuminate\Http\Exceptions\HttpResponseException::class);
 
         $this->service->deleteUser($this->admin, $this->admin);
     }
@@ -180,7 +181,7 @@ class UserManagementServiceTest extends TestCase
             'plantation_unit_id' => null,
         ]);
 
-        $this->expectException(\Symfony\Component\HttpKernel\Exception\HttpException::class);
+        $this->expectException(\Illuminate\Http\Exceptions\HttpResponseException::class);
 
         $this->service->updateUser($target, [
             'role_id'            => $this->keraniRole->id,
@@ -204,7 +205,7 @@ class UserManagementServiceTest extends TestCase
         $this->assertDatabaseHas('audit_logs', [
             'entity_type' => 'users',
             'action'      => 'INSERT',
-            'actor_id'    => $this->admin->id,
+            'actor_user_id' => $this->admin->id,
         ]);
     }
 
@@ -220,7 +221,7 @@ class UserManagementServiceTest extends TestCase
         $this->assertDatabaseHas('audit_logs', [
             'entity_type' => 'users',
             'action'      => 'DELETE',
-            'actor_id'    => $this->admin->id,
+            'actor_user_id' => $this->admin->id,
         ]);
     }
 
@@ -230,7 +231,7 @@ class UserManagementServiceTest extends TestCase
 
     public function test_list_users_scoped_to_company(): void
     {
-        $otherCompanyId = (string) \Illuminate\Support\Str::uuid();
+        $otherCompanyId = Company::factory()->create()->id;
         User::factory()->create(['company_id' => $otherCompanyId, 'role_id' => $this->manajerRole->id]);
         User::factory()->create(['company_id' => $this->companyId, 'role_id' => $this->manajerRole->id]);
 

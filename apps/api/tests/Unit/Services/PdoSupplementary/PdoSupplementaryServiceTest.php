@@ -2,6 +2,7 @@
 
 namespace Tests\Unit\Services\PdoSupplementary;
 
+use App\Models\Company;
 use App\Models\ExpenseCategory;
 use App\Models\ExpenseItem;
 use App\Models\ExpenseSubcategory;
@@ -42,7 +43,7 @@ class PdoSupplementaryServiceTest extends TestCase
         $this->approvalService = new PdoSupplementaryApprovalService();
         $this->mergeService    = new PdoSupplementaryMergeService();
 
-        $this->companyId = (string) Str::uuid();
+        $this->companyId = Company::factory()->create()->id;
         $this->unit      = PlantationUnit::factory()->create(['company_id' => $this->companyId]);
 
         $roles = Role::factory()->createMany([
@@ -74,7 +75,7 @@ class PdoSupplementaryServiceTest extends TestCase
     {
         $parentPdo = $this->makeParentPdo(PdoHeader::STATUS_SUBMITTED);
 
-        $this->expectException(\Symfony\Component\HttpKernel\Exception\HttpException::class);
+        $this->expectException(\Illuminate\Http\Exceptions\HttpResponseException::class);
 
         $this->service->create(['parent_pdo_header_id' => $parentPdo->id], $this->kerani);
     }
@@ -99,7 +100,7 @@ class PdoSupplementaryServiceTest extends TestCase
         $parentPdo = $this->makeParentPdo(PdoHeader::STATUS_FINAL);
         $this->service->create(['parent_pdo_header_id' => $parentPdo->id], $this->kerani);
 
-        $this->expectException(\Symfony\Component\HttpKernel\Exception\HttpException::class);
+        $this->expectException(\Illuminate\Http\Exceptions\HttpResponseException::class);
 
         $this->service->create(['parent_pdo_header_id' => $parentPdo->id], $this->kerani);
     }
@@ -126,7 +127,7 @@ class PdoSupplementaryServiceTest extends TestCase
         $parentPdo = $this->makeParentPdo(PdoHeader::STATUS_FINAL);
         $supp      = $this->service->create(['parent_pdo_header_id' => $parentPdo->id], $this->kerani);
 
-        $this->expectException(\Symfony\Component\HttpKernel\Exception\HttpException::class);
+        $this->expectException(\Illuminate\Http\Exceptions\HttpResponseException::class);
 
         $this->approvalService->submit($supp, '2026-06-15', $this->kerani);
     }
@@ -210,7 +211,7 @@ class PdoSupplementaryServiceTest extends TestCase
         $parentPdo = $this->makeParentPdo(PdoHeader::STATUS_FINAL);
         $supp      = $this->makeSupplementaryWithDetail(PdoSupplementaryHeader::STATUS_IN_REVIEW_DIREKTUR, $parentPdo);
 
-        $this->expectException(\Symfony\Component\HttpKernel\Exception\HttpException::class);
+        $this->expectException(\Illuminate\Http\Exceptions\HttpResponseException::class);
 
         $this->mergeService->merge($supp, $this->manajerKeuangan);
     }
@@ -222,7 +223,7 @@ class PdoSupplementaryServiceTest extends TestCase
 
         $this->mergeService->merge($supp, $this->manajerKeuangan);
 
-        $this->expectException(\Symfony\Component\HttpKernel\Exception\HttpException::class);
+        $this->expectException(\Illuminate\Http\Exceptions\HttpResponseException::class);
 
         $this->mergeService->merge($supp->fresh(), $this->manajerKeuangan);
     }
@@ -232,7 +233,7 @@ class PdoSupplementaryServiceTest extends TestCase
         $parentPdo = $this->makeParentPdo(PdoHeader::STATUS_FINAL);
         $supp      = $this->makeSupplementaryWithDetail(PdoSupplementaryHeader::STATUS_FINAL_MERGED, $parentPdo);
 
-        $this->expectException(\Symfony\Component\HttpKernel\Exception\HttpException::class);
+        $this->expectException(\Illuminate\Http\Exceptions\HttpResponseException::class);
 
         $this->mergeService->merge($supp, $this->kerani);
     }

@@ -2,6 +2,7 @@
 
 namespace Tests\Unit\Services\Realization;
 
+use App\Models\Company;
 use App\Models\PdoDetail;
 use App\Models\PdoHeader;
 use App\Models\PlantationUnit;
@@ -28,7 +29,7 @@ class RealizationEntryServiceTest extends TestCase
         parent::setUp();
 
         $this->service   = new RealizationEntryService();
-        $this->companyId = (string) Str::uuid();
+        $this->companyId = Company::factory()->create()->id;
         $this->unit      = PlantationUnit::factory()->create(['company_id' => $this->companyId]);
 
         $role         = Role::factory()->create(['code' => Role::KERANI]);
@@ -47,14 +48,14 @@ class RealizationEntryServiceTest extends TestCase
     {
         $detail = $this->makeDetail(PdoHeader::STATUS_SUBMITTED, budget: 1000000, transferred: 0);
 
-        $this->expectException(\Symfony\Component\HttpKernel\Exception\HttpException::class);
+        $this->expectException(\Illuminate\Http\Exceptions\HttpResponseException::class);
 
         $this->service->store([
             'pdo_detail_id'    => $detail->id,
             'transaction_date' => '2026-06-20',
             'amount'           => 500000,
             'payment_method'   => RealizationEntry::PAYMENT_TUNAI,
-            'reference_number' => 'KW-001',
+            'proof_number' => 'KW-001',
             'funding_source'   => RealizationEntry::FUNDING_KAS_KEBUN,
         ], $this->kerani);
     }
@@ -68,14 +69,14 @@ class RealizationEntryServiceTest extends TestCase
         // budget 1jt, tapi transfer baru 400rb
         $detail = $this->makeDetail(PdoHeader::STATUS_FINAL, budget: 1000000, transferred: 400000);
 
-        $this->expectException(\Symfony\Component\HttpKernel\Exception\HttpException::class);
+        $this->expectException(\Illuminate\Http\Exceptions\HttpResponseException::class);
 
         $this->service->store([
             'pdo_detail_id'    => $detail->id,
             'transaction_date' => '2026-06-20',
             'amount'           => 500000, // lebih dari 400.000 yang sudah ditransfer
             'payment_method'   => RealizationEntry::PAYMENT_TUNAI,
-            'reference_number' => 'KW-001',
+            'proof_number' => 'KW-001',
             'funding_source'   => RealizationEntry::FUNDING_KAS_KEBUN,
         ], $this->kerani);
     }
@@ -90,14 +91,14 @@ class RealizationEntryServiceTest extends TestCase
         // tapi kita tetap validasi di sisi realisasi)
         $detail = $this->makeDetail(PdoHeader::STATUS_FINAL, budget: 500000, transferred: 800000);
 
-        $this->expectException(\Symfony\Component\HttpKernel\Exception\HttpException::class);
+        $this->expectException(\Illuminate\Http\Exceptions\HttpResponseException::class);
 
         $this->service->store([
             'pdo_detail_id'    => $detail->id,
             'transaction_date' => '2026-06-20',
             'amount'           => 600000, // melebihi budget 500.000
             'payment_method'   => RealizationEntry::PAYMENT_TUNAI,
-            'reference_number' => 'KW-001',
+            'proof_number' => 'KW-001',
             'funding_source'   => RealizationEntry::FUNDING_KAS_KEBUN,
         ], $this->kerani);
     }
@@ -111,7 +112,7 @@ class RealizationEntryServiceTest extends TestCase
             'transaction_date' => '2026-06-20',
             'amount'           => 800000,
             'payment_method'   => RealizationEntry::PAYMENT_TRANSFER,
-            'reference_number' => 'KW-001',
+            'proof_number' => 'KW-001',
             'funding_source'   => RealizationEntry::FUNDING_REKENING_KEBUN,
         ], $this->kerani);
 
@@ -129,7 +130,7 @@ class RealizationEntryServiceTest extends TestCase
         $detail = $this->makeDetail(PdoHeader::STATUS_CLOSED, budget: 1000000, transferred: 1000000);
         $entry  = RealizationEntry::factory()->create(['pdo_detail_id' => $detail->id]);
 
-        $this->expectException(\Symfony\Component\HttpKernel\Exception\HttpException::class);
+        $this->expectException(\Illuminate\Http\Exceptions\HttpResponseException::class);
 
         $this->service->update($entry, ['amount' => 500000], $this->kerani);
     }
@@ -139,7 +140,7 @@ class RealizationEntryServiceTest extends TestCase
         $detail = $this->makeDetail(PdoHeader::STATUS_CLOSED, budget: 1000000, transferred: 1000000);
         $entry  = RealizationEntry::factory()->create(['pdo_detail_id' => $detail->id]);
 
-        $this->expectException(\Symfony\Component\HttpKernel\Exception\HttpException::class);
+        $this->expectException(\Illuminate\Http\Exceptions\HttpResponseException::class);
 
         $this->service->destroy($entry, $this->kerani);
     }
@@ -167,14 +168,14 @@ class RealizationEntryServiceTest extends TestCase
             'transaction_date' => '2026-06-20',
             'amount'           => 500000,
             'payment_method'   => RealizationEntry::PAYMENT_TUNAI,
-            'reference_number' => 'KW-999',
+            'proof_number' => 'KW-999',
             'funding_source'   => RealizationEntry::FUNDING_KAS_KEBUN,
         ], $this->kerani);
 
         $this->assertDatabaseHas('audit_logs', [
             'entity_type' => 'realization_entries',
             'action'      => 'INSERT',
-            'actor_id'    => $this->kerani->id,
+            'actor_user_id'    => $this->kerani->id,
         ]);
     }
 

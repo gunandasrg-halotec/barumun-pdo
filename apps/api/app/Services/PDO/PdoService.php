@@ -34,6 +34,61 @@ class PdoService
     }
 
     /**
+     * [E] Detail PDO dikelompokkan by Kategori → Sub-Kategori → Item.
+     * Digunakan oleh show() untuk response hierarkis ke frontend.
+     */
+    public function findPdoGrouped(string $id): array
+    {
+        $pdo = PdoHeader::with([
+            'plantationUnit',
+            'creator',
+            'details.expenseItem.subcategory.category',
+        ])->findOrFail($id);
+
+        // Group details by kategori → sub-kategori
+        $grouped = [];
+        foreach ($pdo->details as $detail) {
+            $sub = $detail->expenseItem?->subcategory;
+            $cat = $sub?->category;
+
+            $catKey = $cat?->id ?? 'uncategorized';
+            $subKey = $sub?->id ?? 'uncategorized';
+
+            if (! isset($grouped[$catKey])) {
+                $grouped[$catKey] = [
+                    'category'       => $cat ? $cat->only(['id', 'code', 'name', 'display_order']) : null,
+                    'subcategories'  => [],
+                    'subtotal_amount'=> 0,
+                ];
+            }
+            if (! isset($grouped[$catKey]['subcategories'][$subKey])) {
+                $grouped[$catKey]['subcategories'][$subKey] = [
+                    'subcategory'    => $sub ? $sub->only(['id', 'code', 'name', 'display_order']) : null,
+                    'details'        => [],
+                    'subtotal_amount'=> 0,
+                ];
+            }
+
+            $grouped[$catKey]['subcategories'][$subKey]['details'][]        = $detail;
+            $grouped[$catKey]['subcategories'][$subKey]['subtotal_amount'] += $detail->amount;
+            $grouped[$catKey]['subtotal_amount']                           += $detail->amount;
+        }
+
+        // Re-index dan urutkan by display_order
+        $categoriesArray = collect(array_values($grouped))
+            ->map(fn ($c) => array_merge($c, ['subcategories' => array_values($c['subcategories'])]))
+            ->sortBy(fn ($c) => $c['category']['display_order'] ?? 999)
+            ->values()
+            ->all();
+
+        return [
+            'pdo'         => $pdo->makeHidden('details'),
+            'categories'  => $categoriesArray,
+            'grand_total' => $pdo->details->sum('amount'),
+        ];
+    }
+
+    /**
      * Buat PDO Bulanan baru + otomatis isi baris dari item rutin.
      * BR-PDO-001: Satu PDO per unit per bulan/tahun.
      * BR-PDO-002: Template otomatis dari expense_items is_routine=true.
@@ -159,6 +214,8 @@ class PdoService
             newValues: $detail->toArray()
         );
 
+        $this->syncGrandTotal($pdo);
+
         return $detail->load('expenseItem');
     }
 
@@ -178,6 +235,8 @@ class PdoService
             newValues: $detail->fresh()->toArray()
         );
 
+        $this->syncGrandTotal($pdo);
+
         return $detail->fresh()->load('expenseItem');
     }
 
@@ -196,6 +255,8 @@ class PdoService
             oldValues: $old,
             newValues: null
         );
+
+        $this->syncGrandTotal($pdo);
     }
 
     // ─────────────────────────────────────────────────────
@@ -243,5 +304,12 @@ class PdoService
     private function nextDisplayOrder(PdoHeader $pdo): int
     {
         return ($pdo->details()->max('display_order') ?? 0) + 1;
+    }
+
+    private function syncGrandTotal(PdoHeader $pdo): void
+    {
+        $pdo->updateQuietly([
+            'grand_total_amount' => $pdo->details()->sum('amount'),
+        ]);
     }
 }

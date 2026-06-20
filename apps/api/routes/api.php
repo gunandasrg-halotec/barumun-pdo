@@ -87,7 +87,8 @@ Route::prefix('v1')->middleware(['auth:sanctum', 'ensure.unit.access'])->group(f
         Route::get('transfers',  [TransferEntryController::class, 'index']);
         Route::post('transfers', [TransferEntryController::class, 'store'])->middleware('check.pdo.status');
     });
-    Route::put('transfer-entries/{entry}', [TransferEntryController::class, 'update'])->middleware('check.pdo.status'); // koreksi
+    Route::get('transfer-entries',         [TransferEntryController::class, 'all']);
+    Route::put('transfer-entries/{entry}', [TransferEntryController::class, 'update'])->middleware('check.pdo.status');
 
     // ── Realisasi Dana ────────────────────────────────
     Route::get('realization-entries',         [RealizationEntryController::class, 'index']);
@@ -107,6 +108,7 @@ Route::prefix('v1')->middleware(['auth:sanctum', 'ensure.unit.access'])->group(f
         Route::put('details/{detail}',    [PdoSupplementaryController::class, 'updateDetail']);
         Route::delete('details/{detail}', [PdoSupplementaryController::class, 'destroyDetail']);
 
+        Route::get('approval-logs', [PdoApprovalController::class, 'historySupplementary']);
         Route::post('submit',  [PdoApprovalController::class, 'submitSupplementary']);
         Route::post('approve', [PdoApprovalController::class, 'approveSupplementary']);
         Route::post('reject',  [PdoApprovalController::class, 'rejectSupplementary']);

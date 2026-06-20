@@ -2,6 +2,7 @@
 
 namespace Tests\Unit\Services\Transfer;
 
+use App\Models\Company;
 use App\Models\PdoDetail;
 use App\Models\PdoHeader;
 use App\Models\PlantationUnit;
@@ -27,7 +28,7 @@ class TransferEntryServiceTest extends TestCase
         parent::setUp();
 
         $this->service   = new TransferEntryService();
-        $this->companyId = (string) Str::uuid();
+        $this->companyId = Company::factory()->create()->id;
         $this->unit      = PlantationUnit::factory()->create(['company_id' => $this->companyId]);
 
         $role                 = Role::factory()->create(['code' => Role::MANAJER_KEUANGAN]);
@@ -45,7 +46,7 @@ class TransferEntryServiceTest extends TestCase
     {
         $detail = $this->makeDetailWithStatus(PdoHeader::STATUS_SUBMITTED, 1000000);
 
-        $this->expectException(\Symfony\Component\HttpKernel\Exception\HttpException::class);
+        $this->expectException(\Illuminate\Http\Exceptions\HttpResponseException::class);
 
         $this->service->store($detail, [
             'transfer_date'    => '2026-06-15',
@@ -77,7 +78,7 @@ class TransferEntryServiceTest extends TestCase
     {
         $detail = $this->makeDetailWithStatus(PdoHeader::STATUS_FINAL, 1000000);
 
-        $this->expectException(\Symfony\Component\HttpKernel\Exception\HttpException::class);
+        $this->expectException(\Illuminate\Http\Exceptions\HttpResponseException::class);
 
         $this->service->store($detail, [
             'transfer_date'    => '2026-06-15',
@@ -92,7 +93,7 @@ class TransferEntryServiceTest extends TestCase
 
         $this->service->store($detail, ['transfer_date' => '2026-06-01', 'amount' => 700000, 'reference_number' => 'TRF-001'], $this->manajerKeuangan);
 
-        $this->expectException(\Symfony\Component\HttpKernel\Exception\HttpException::class);
+        $this->expectException(\Illuminate\Http\Exceptions\HttpResponseException::class);
 
         // 700.000 + 400.000 = 1.100.000 > 1.000.000
         $this->service->store($detail, ['transfer_date' => '2026-06-15', 'amount' => 400000, 'reference_number' => 'TRF-002'], $this->manajerKeuangan);
@@ -123,7 +124,7 @@ class TransferEntryServiceTest extends TestCase
             'amount'           => 1000000,
         ]);
 
-        $this->expectException(\Symfony\Component\HttpKernel\Exception\HttpException::class);
+        $this->expectException(\Illuminate\Http\Exceptions\HttpResponseException::class);
 
         $this->service->update($entry, ['amount' => 500000], $this->manajerKeuangan);
     }
@@ -160,7 +161,7 @@ class TransferEntryServiceTest extends TestCase
         $this->assertDatabaseHas('audit_logs', [
             'entity_type' => 'transfer_entries',
             'action'      => 'INSERT',
-            'actor_id'    => $this->manajerKeuangan->id,
+            'actor_user_id'    => $this->manajerKeuangan->id,
         ]);
     }
 

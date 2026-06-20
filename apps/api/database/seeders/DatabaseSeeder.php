@@ -56,12 +56,14 @@ class DatabaseSeeder extends Seeder
 
         // 4. Admin user default (GANTI PASSWORD sebelum production!)
         $adminRoleId = DB::table('roles')->where('code', 'ADMIN')->value('id');
+        $companyIdForAdmin = DB::table('companies')->value('id');
         DB::table('users')->updateOrInsert(
             ['email' => 'admin@barumunpalma.co.id'],
             [
                 'id'                 => (string) Str::uuid(),
                 'role_id'            => $adminRoleId,
                 'plantation_unit_id' => null,
+                'company_id'         => $companyIdForAdmin,
                 'full_name'          => 'System Administrator',
                 'email'              => 'admin@barumunpalma.co.id',
                 'password_hash'      => Hash::make('ChangeMe123!'),  // ⚠️ WAJIB GANTI
@@ -79,13 +81,16 @@ class DatabaseSeeder extends Seeder
         // 6. Notification Templates
         $this->call(NotificationTemplateSeeder::class);
 
+        // 7. Master Data Biaya (Kategori → Sub-Kategori → Item Biaya)
+        $this->call(ExpenseDataSeeder::class);
+
         $this->command->newLine();
         $this->command->info('🎉 Database seeding selesai!');
         $this->command->newLine();
         $this->command->warn('⚠️  LANGKAH SELANJUTNYA:');
         $this->command->line('   1. Ganti password admin via: php artisan tinker');
         $this->command->line('   2. Update nomor WhatsApp admin di tabel users');
-        $this->command->line('   3. Import master data dari Finance (Kategori, Sub-Kategori, Item Biaya)');
+        $this->command->line('   3. Sesuaikan item biaya dengan data Finance aktual (ExpenseDataSeeder hanya template)');
         $this->command->line('   4. Buat user accounts untuk setiap kebun');
         $this->command->line('   5. Konfigurasi WhatsApp Gateway di halaman Pengaturan');
     }

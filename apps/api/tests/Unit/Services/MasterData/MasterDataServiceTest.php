@@ -2,7 +2,10 @@
 
 namespace Tests\Unit\Services\MasterData;
 
+use App\Models\Company;
 use App\Models\AuditLog;
+use App\Models\PlantationUnit;
+use App\Models\PdoHeader;
 use App\Models\ExpenseCategory;
 use App\Models\ExpenseItem;
 use App\Models\ExpenseSubcategory;
@@ -24,7 +27,7 @@ class MasterDataServiceTest extends TestCase
     {
         parent::setUp();
         $this->service   = new MasterDataService();
-        $this->companyId = (string) \Illuminate\Support\Str::uuid();
+        $this->companyId = Company::factory()->create()->id;
         $this->adminUser = User::factory()->create(['company_id' => $this->companyId]);
     }
 
@@ -67,7 +70,7 @@ class MasterDataServiceTest extends TestCase
         $category = ExpenseCategory::factory()->create(['company_id' => $this->companyId]);
         ExpenseSubcategory::factory()->create(['category_id' => $category->id, 'is_active' => true]);
 
-        $this->expectException(\Symfony\Component\HttpKernel\Exception\HttpException::class);
+        $this->expectException(\Illuminate\Http\Exceptions\HttpResponseException::class);
 
         $this->service->deleteCategory($category, $this->adminUser);
     }
@@ -78,7 +81,7 @@ class MasterDataServiceTest extends TestCase
         $sub      = ExpenseSubcategory::factory()->create(['category_id' => $category->id]);
         ExpenseItem::factory()->create(['subcategory_id' => $sub->id, 'is_active' => true]);
 
-        $this->expectException(\Symfony\Component\HttpKernel\Exception\HttpException::class);
+        $this->expectException(\Illuminate\Http\Exceptions\HttpResponseException::class);
 
         $this->service->deleteSubcategory($sub, $this->adminUser);
     }
@@ -103,7 +106,7 @@ class MasterDataServiceTest extends TestCase
     {
         ExpenseCategory::factory()->create(['company_id' => $this->companyId, 'code' => 'A']);
 
-        $this->expectException(\Symfony\Component\HttpKernel\Exception\HttpException::class);
+        $this->expectException(\Illuminate\Http\Exceptions\HttpResponseException::class);
 
         $this->service->createCategory([
             'company_id' => $this->companyId,
@@ -117,7 +120,7 @@ class MasterDataServiceTest extends TestCase
         $category = ExpenseCategory::factory()->create(['company_id' => $this->companyId]);
         ExpenseSubcategory::factory()->create(['category_id' => $category->id, 'code' => 'A1']);
 
-        $this->expectException(\Symfony\Component\HttpKernel\Exception\HttpException::class);
+        $this->expectException(\Illuminate\Http\Exceptions\HttpResponseException::class);
 
         $this->service->createSubcategory([
             'category_id' => $category->id,
@@ -147,7 +150,7 @@ class MasterDataServiceTest extends TestCase
         $sub      = ExpenseSubcategory::factory()->create(['category_id' => $category->id]);
         ExpenseItem::factory()->create(['subcategory_id' => $sub->id, 'code' => 'A1-001']);
 
-        $this->expectException(\Symfony\Component\HttpKernel\Exception\HttpException::class);
+        $this->expectException(\Illuminate\Http\Exceptions\HttpResponseException::class);
 
         $this->service->createItem([
             'subcategory_id' => $sub->id,
@@ -178,10 +181,15 @@ class MasterDataServiceTest extends TestCase
         $item     = ExpenseItem::factory()->create(['subcategory_id' => $sub->id]);
 
         // Simulasi item sudah pernah dipakai di PDO
+        $unit = PlantationUnit::factory()->create(['company_id' => $this->companyId]);
+        $pdo  = PdoHeader::factory()->create(['company_id' => $this->companyId, 'plantation_unit_id' => $unit->id]);
         DB::table('pdo_details')->insert([
             'id'              => (string) \Illuminate\Support\Str::uuid(),
-            'pdo_header_id'   => (string) \Illuminate\Support\Str::uuid(),
+            'pdo_header_id'   => $pdo->id,
             'expense_item_id' => $item->id,
+            'description'     => 'Test detail',
+            'amount'          => 0,
+            'display_order'   => 1,
             'created_at'      => now(),
             'updated_at'      => now(),
         ]);
@@ -257,7 +265,7 @@ class MasterDataServiceTest extends TestCase
         $this->assertDatabaseHas('audit_logs', [
             'entity_type' => 'expense_categories',
             'action'      => 'INSERT',
-            'actor_id'    => $this->adminUser->id,
+            'actor_user_id'    => $this->adminUser->id,
         ]);
     }
 
@@ -272,7 +280,7 @@ class MasterDataServiceTest extends TestCase
         $this->assertDatabaseHas('audit_logs', [
             'entity_type' => 'expense_items',
             'action'      => 'DELETE',
-            'actor_id'    => $this->adminUser->id,
+            'actor_user_id'    => $this->adminUser->id,
         ]);
     }
 }

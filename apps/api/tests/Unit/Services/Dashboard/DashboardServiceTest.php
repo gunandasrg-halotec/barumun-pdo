@@ -2,6 +2,7 @@
 
 namespace Tests\Unit\Services\Dashboard;
 
+use App\Models\Company;
 use App\Models\PdoDetail;
 use App\Models\PdoHeader;
 use App\Models\PlantationUnit;
@@ -27,7 +28,7 @@ class DashboardServiceTest extends TestCase
         parent::setUp();
 
         $this->service   = new DashboardService();
-        $this->companyId = (string) Str::uuid();
+        $this->companyId = Company::factory()->create()->id;
         $this->unit      = PlantationUnit::factory()->create(['company_id' => $this->companyId]);
 
         $role          = Role::factory()->create(['code' => Role::MANAJER_KEUANGAN]);
@@ -96,7 +97,7 @@ class DashboardServiceTest extends TestCase
 
         $summary = $this->service->summary($this->manajer);
 
-        $this->assertEquals(1, $summary['pending_approval']);
+        $this->assertEquals(1, $summary['pending_pdo_count']);
     }
 
     public function test_summary_period_is_current_month(): void

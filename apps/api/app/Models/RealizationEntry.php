@@ -30,7 +30,7 @@ class RealizationEntry extends Model
         'transaction_date',
         'amount',
         'payment_method',
-        'reference_number',
+        'proof_number',
         'funding_source',
         'explanation',
     ];

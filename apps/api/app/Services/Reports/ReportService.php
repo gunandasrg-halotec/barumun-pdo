@@ -129,7 +129,7 @@ class ReportService
                 re.transaction_date,
                 re.amount,
                 re.payment_method,
-                re.reference_number,
+                re.proof_number,
                 COUNT(ra.id)     AS attachment_count
             FROM realization_entries re
             JOIN pdo_details pd ON pd.id = re.pdo_detail_id
@@ -143,7 +143,7 @@ class ReportService
               AND re.amount >= ?
               {$where}
             GROUP BY pu.code, ph.pdo_number, ei.name,
-                     re.transaction_date, re.amount, re.payment_method, re.reference_number
+                     re.transaction_date, re.amount, re.payment_method, re.proof_number
             HAVING COUNT(ra.id) = 0
             ORDER BY re.amount DESC
         ", $params);

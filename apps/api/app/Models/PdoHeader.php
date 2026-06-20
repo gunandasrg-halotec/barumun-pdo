@@ -40,15 +40,21 @@ class PdoHeader extends Model
         'closed_at',
         'closure_notes',
         'notes',
+        'grand_total_amount',
+        'manager_kebun_approved',
+        'manager_keuangan_approved',
     ];
 
     protected function casts(): array
     {
         return [
-            'period_month'    => 'integer',
-            'period_year'     => 'integer',
-            'submission_date' => 'date',
-            'closed_at'       => 'date',
+            'period_month'             => 'integer',
+            'period_year'              => 'integer',
+            'submission_date'          => 'date',
+            'closed_at'                => 'date',
+            'grand_total_amount'       => 'integer',
+            'manager_kebun_approved'   => 'boolean',
+            'manager_keuangan_approved'=> 'boolean',
         ];
     }
 

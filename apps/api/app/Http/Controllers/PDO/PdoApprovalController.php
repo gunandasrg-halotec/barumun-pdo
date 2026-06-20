@@ -78,4 +78,14 @@ class PdoApprovalController extends Controller
 
         return response()->json(['success' => true, 'data' => $updated, 'message' => 'PDO Tambahan ditolak. KERANI dapat merevisi dan resubmit.']);
     }
+
+    public function historySupplementary(PdoSupplementaryHeader $supplementary): JsonResponse
+    {
+        $logs = $supplementary->approvalLogs()
+            ->with('actor:id,full_name')
+            ->orderBy('sequence_number')
+            ->get();
+
+        return response()->json(['success' => true, 'data' => $logs]);
+    }
 }

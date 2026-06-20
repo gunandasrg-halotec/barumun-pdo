@@ -49,7 +49,7 @@ class PdoCloseTest extends TestCase
         $response->assertStatus(200)
             ->assertJsonPath('success', true)
             ->assertJsonPath('data.status', 'closed')
-            ->assertJsonPath('data.closure_type', 'MANUAL');
+            ->assertJsonPath('data.closure_type', 'manual');
     }
 
     public function test_kerani_cannot_close_pdo(): void

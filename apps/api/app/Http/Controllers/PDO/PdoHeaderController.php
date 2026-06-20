@@ -40,9 +40,10 @@ class PdoHeaderController extends Controller
 
     public function show(string $id): JsonResponse
     {
-        $pdo = $this->service->findPdo($id);
+        // [E] Response hierarkis: Kategori → Sub-Kategori → Item
+        $data = $this->service->findPdoGrouped($id);
 
-        return response()->json(['success' => true, 'data' => $pdo]);
+        return response()->json(['success' => true, 'data' => $data]);
     }
 
     public function update(UpdatePdoRequest $request, string $id): JsonResponse

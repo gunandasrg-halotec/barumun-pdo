@@ -74,6 +74,14 @@ class RealizationEntryService
             ], 409));
         }
 
+        // BR-REAL-004: STAFF_PURCHASING tidak boleh menggunakan kas_kebun sebagai sumber dana
+        if (($actor->role?->code === 'STAFF_PURCHASING') && (($data['funding_source'] ?? '') === 'kas_kebun')) {
+            abort(response()->json([
+                'success' => false,
+                'error'   => ['code' => 'FUNDING_SOURCE_FORBIDDEN', 'message' => 'Role STAFF_PURCHASING tidak diizinkan menggunakan sumber dana kas_kebun.'],
+            ], 403));
+        }
+
         return DB::transaction(function () use ($detail, $data, $actor) {
             $totalRealized    = $detail->realizationEntries()->sum('amount');
             $totalTransferred = $detail->transferEntries()->sum('amount');
@@ -107,7 +115,7 @@ class RealizationEntryService
                 'transaction_date' => $data['transaction_date'],
                 'amount'           => $data['amount'],
                 'payment_method'   => $data['payment_method'],
-                'reference_number' => $data['reference_number'],
+                'proof_number'     => $data['proof_number'],
                 'funding_source'   => $data['funding_source'],
                 'explanation'      => $data['explanation'] ?? null,
             ]);
@@ -138,6 +146,14 @@ class RealizationEntryService
                 'success' => false,
                 'error'   => ['code' => 'PDO_CLOSED', 'message' => 'Realisasi tidak bisa diubah setelah PDO ditutup.'],
             ], 409));
+        }
+
+        // BR-REAL-004: STAFF_PURCHASING tidak boleh menggunakan kas_kebun sebagai sumber dana
+        if (isset($data['funding_source']) && ($actor->role?->code === 'STAFF_PURCHASING') && $data['funding_source'] === 'kas_kebun') {
+            abort(response()->json([
+                'success' => false,
+                'error'   => ['code' => 'FUNDING_SOURCE_FORBIDDEN', 'message' => 'Role STAFF_PURCHASING tidak diizinkan menggunakan sumber dana kas_kebun.'],
+            ], 403));
         }
 
         $detail = $entry->pdoDetail;

@@ -13,6 +13,17 @@ use Illuminate\Support\Facades\DB;
 class TransferEntryService
 {
     /**
+     * Daftar semua transfer dalam perusahaan (untuk halaman Transfer Dana).
+     */
+    public function listAll(User $actor): Collection
+    {
+        return TransferEntry::with(['pdoDetail.expenseItem', 'pdoDetail.pdoHeader.plantationUnit', 'recorder'])
+            ->whereHas('pdoDetail.pdoHeader', fn ($q) => $q->where('company_id', $actor->company_id))
+            ->orderByDesc('transfer_date')
+            ->get();
+    }
+
+    /**
      * Daftar transfer per pdo_detail, diurutkan tanggal.
      */
     public function listByDetail(PdoDetail $detail): Collection

@@ -10,10 +10,19 @@ use App\Models\PdoHeader;
 use App\Models\TransferEntry;
 use App\Services\Transfer\TransferEntryService;
 use Illuminate\Http\JsonResponse;
+use Illuminate\Http\Request;
 
 class TransferEntryController extends Controller
 {
     public function __construct(private readonly TransferEntryService $service) {}
+
+    /** GET /transfer-entries — semua transfer dalam perusahaan */
+    public function all(Request $request): JsonResponse
+    {
+        $entries = $this->service->listAll($request->user());
+
+        return response()->json(['success' => true, 'data' => $entries]);
+    }
 
     /** GET /pdo-details/{detail}/transfers */
     public function index(PdoDetail $detail): JsonResponse

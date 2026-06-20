@@ -96,6 +96,12 @@ class MasterDataService
             $category->delete(); // soft delete
             $action = 'STATUS_CHANGE';
         } else {
+            // Force-delete semua subcategories (incl. soft-deleted) sebelum menghapus category
+            // agar FK constraint tidak gagal.
+            $category->subcategories()->withTrashed()->get()->each(function ($sub) {
+                $sub->items()->withTrashed()->forceDelete();
+                $sub->forceDelete();
+            });
             $category->forceDelete();
             $action = 'DELETE';
         }
@@ -241,7 +247,7 @@ class MasterDataService
         // BR-MASTER-003: Kode unik per subcategory
         $this->assertNoDuplicateItemCode($data['code'], $data['subcategory_id']);
 
-        $item = ExpenseItem::create($data);
+        $item = ExpenseItem::create(array_merge(['mode_input' => ExpenseItem::MODE_MANUAL], $data));
 
         AuditLog::record(
             actor: $actor,

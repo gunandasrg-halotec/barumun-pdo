@@ -2,6 +2,7 @@
 
 namespace Tests\Unit\Services\PDO;
 
+use App\Models\Company;
 use App\Models\ExpenseCategory;
 use App\Models\ExpenseItem;
 use App\Models\ExpenseSubcategory;
@@ -29,7 +30,7 @@ class PdoServiceTest extends TestCase
         parent::setUp();
 
         $this->service   = new PdoService();
-        $this->companyId = (string) Str::uuid();
+        $this->companyId = Company::factory()->create()->id;
 
         $keraniRole   = Role::factory()->create(['code' => Role::KERANI]);
         $this->unit   = PlantationUnit::factory()->create(['company_id' => $this->companyId]);
@@ -52,7 +53,7 @@ class PdoServiceTest extends TestCase
             'period_year'        => 2026,
         ], $this->kerani);
 
-        $this->expectException(\Symfony\Component\HttpKernel\Exception\HttpException::class);
+        $this->expectException(\Illuminate\Http\Exceptions\HttpResponseException::class);
 
         $this->service->createPdo([
             'plantation_unit_id' => $this->unit->id,
@@ -160,7 +161,7 @@ class PdoServiceTest extends TestCase
             'status'             => PdoHeader::STATUS_SUBMITTED,
         ]);
 
-        $this->expectException(\Symfony\Component\HttpKernel\Exception\HttpException::class);
+        $this->expectException(\Illuminate\Http\Exceptions\HttpResponseException::class);
 
         $this->service->updatePdo($pdo, ['notes' => 'coba ubah'], $this->kerani);
     }
@@ -174,7 +175,7 @@ class PdoServiceTest extends TestCase
             'status'             => PdoHeader::STATUS_SUBMITTED,
         ]);
 
-        $this->expectException(\Symfony\Component\HttpKernel\Exception\HttpException::class);
+        $this->expectException(\Illuminate\Http\Exceptions\HttpResponseException::class);
 
         $this->service->deletePdo($pdo, $this->kerani);
     }

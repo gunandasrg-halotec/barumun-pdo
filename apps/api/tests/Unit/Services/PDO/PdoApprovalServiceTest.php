@@ -2,6 +2,8 @@
 
 namespace Tests\Unit\Services\PDO;
 
+use App\Models\Company;
+use App\Models\PdoApprovalLog;
 use App\Models\PdoDetail;
 use App\Models\PdoHeader;
 use App\Models\PlantationUnit;
@@ -32,7 +34,7 @@ class PdoApprovalServiceTest extends TestCase
         parent::setUp();
 
         $this->service   = new PdoApprovalService();
-        $this->companyId = (string) Str::uuid();
+        $this->companyId = Company::factory()->create()->id;
         $this->unit      = PlantationUnit::factory()->create(['company_id' => $this->companyId]);
 
         $roles = Role::factory()->createMany([
@@ -74,7 +76,7 @@ class PdoApprovalServiceTest extends TestCase
     {
         $pdo = $this->makePdoWithDetail(PdoHeader::STATUS_DRAFT, amount: 0);
 
-        $this->expectException(\Symfony\Component\HttpKernel\Exception\HttpException::class);
+        $this->expectException(\Illuminate\Http\Exceptions\HttpResponseException::class);
 
         $this->service->submit($pdo, '2026-06-01', $this->kerani);
     }
@@ -83,7 +85,7 @@ class PdoApprovalServiceTest extends TestCase
     {
         $pdo = $this->makePdoWithDetail(PdoHeader::STATUS_DRAFT);
 
-        $this->expectException(\Symfony\Component\HttpKernel\Exception\HttpException::class);
+        $this->expectException(\Illuminate\Http\Exceptions\HttpResponseException::class);
 
         $this->service->submit($pdo, '2026-06-01', $this->asisten);
     }
@@ -110,8 +112,13 @@ class PdoApprovalServiceTest extends TestCase
 
     public function test_manajer_keuangan_approves_in_review_manager(): void
     {
-        $pdo     = $this->makePdoWithDetail(PdoHeader::STATUS_IN_REVIEW_MANAGER);
-        $updated = $this->service->approve($pdo, null, $this->manajerKeuangan);
+        // BR-APPR-002: Kedua manajer harus approve sebelum lanjut ke direktur.
+        // Simulasi: Manajer Kebun sudah approve (manager_kebun_approved=true, status=in_review_manager)
+        $pdo = $this->makePdoWithDetail(PdoHeader::STATUS_IN_REVIEW_MANAGER);
+        $pdo->update(['manager_kebun_approved' => true]);
+
+        // Manajer Keuangan approve sekarang → keduanya sudah approve → advance ke direktur
+        $updated = $this->service->approve($pdo->fresh(), null, $this->manajerKeuangan);
 
         $this->assertEquals(PdoHeader::STATUS_IN_REVIEW_DIREKTUR, $updated->status);
     }
@@ -136,7 +143,7 @@ class PdoApprovalServiceTest extends TestCase
     {
         $pdo = $this->makePdoWithDetail(PdoHeader::STATUS_SUBMITTED);
 
-        $this->expectException(\Symfony\Component\HttpKernel\Exception\HttpException::class);
+        $this->expectException(\Illuminate\Http\Exceptions\HttpResponseException::class);
 
         // KERANI bukan approver
         $this->service->approve($pdo, null, $this->kerani);
@@ -156,14 +163,17 @@ class PdoApprovalServiceTest extends TestCase
 
     public function test_reject_from_any_review_stage_goes_to_draft(): void
     {
-        foreach ([
-            PdoHeader::STATUS_SUBMITTED,
-            PdoHeader::STATUS_REVIEWED_ASISTEN,
-            PdoHeader::STATUS_IN_REVIEW_MANAGER,
-            PdoHeader::STATUS_IN_REVIEW_DIREKTUR,
-        ] as $status) {
+        // Setiap stage memiliki approver yang berwenang reject
+        $cases = [
+            [PdoHeader::STATUS_SUBMITTED,          $this->asisten],
+            [PdoHeader::STATUS_REVIEWED_ASISTEN,   $this->manajerKebun],
+            [PdoHeader::STATUS_IN_REVIEW_MANAGER,  $this->manajerKeuangan],
+            [PdoHeader::STATUS_IN_REVIEW_DIREKTUR, $this->direktur],
+        ];
+
+        foreach ($cases as [$status, $actor]) {
             $pdo     = $this->makePdoWithDetail($status);
-            $updated = $this->service->reject($pdo, 'Perlu revisi', $this->asisten);
+            $updated = $this->service->reject($pdo, 'Perlu revisi', $actor);
 
             $this->assertEquals(PdoHeader::STATUS_DRAFT, $updated->status, "Gagal dari status: {$status}");
         }
@@ -215,9 +225,11 @@ class PdoApprovalServiceTest extends TestCase
 
     private function makePdoWithDetail(string $status, int $amount = 1000000): PdoHeader
     {
-        $pdo = PdoHeader::factory()->create([
+        // Buat unit baru per panggilan untuk menghindari unique constraint (unit+period)
+        $unit = PlantationUnit::factory()->create(['company_id' => $this->companyId]);
+        $pdo  = PdoHeader::factory()->create([
             'company_id'         => $this->companyId,
-            'plantation_unit_id' => $this->unit->id,
+            'plantation_unit_id' => $unit->id,
             'created_by'         => $this->kerani->id,
             'status'             => $status,
         ]);
