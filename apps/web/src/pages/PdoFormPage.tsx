@@ -142,7 +142,7 @@ export function PdoFormPage() {
         ? await api.put(`/pdo/${id}`, data)
         : await api.post('/pdo', { plantation_unit_id: data.plantation_unit_id, period_month: data.period_month, period_year: data.period_year, notes: data.notes })
       const header = (res.data as ApiResponse<PdoHeader>).data
-      await api.post(`/pdo/${header.id}/submit`)
+      await api.post(`/pdo/${header.id}/submit`, { submission_date: new Date().toISOString().split('T')[0] })
       return header
     },
     onSuccess: (header) => {

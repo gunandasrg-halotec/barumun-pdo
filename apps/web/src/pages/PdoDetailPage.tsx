@@ -36,7 +36,9 @@ export function PdoDetailPage() {
   })
 
   const submitMut = useMutation({
-    mutationFn: () => api.post(`/pdo/${id}/submit`),
+    mutationFn: () => api.post(`/pdo/${id}/submit`, {
+      submission_date: new Date().toISOString().split('T')[0],
+    }),
     onSuccess: () => {
       toast('PDO berhasil diajukan')
       qc.invalidateQueries({ queryKey: ['pdo', id] })
