@@ -4,7 +4,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '@/lib/api'
 import { Button } from '@/components/ui/Button'
 import { useToastStore } from '@/store/toast.store'
-import { fmt, fmtDate } from '@/lib/format'
+import { fmt } from '@/lib/format'
 import { ArrowLeft } from 'lucide-react'
 import type { ApiResponse } from '@/types'
 
