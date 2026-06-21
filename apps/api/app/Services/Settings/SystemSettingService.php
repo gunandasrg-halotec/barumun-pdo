@@ -77,7 +77,10 @@ class SystemSettingService
             // Jika tidak terenkripsi, pakai langsung
         }
 
-        $endpoint = rtrim($baseUrl, '/') . '/send/message';
+        $normalizedUrl = rtrim($baseUrl, '/');
+        $endpoint = str_ends_with($normalizedUrl, '/send/message')
+            ? $normalizedUrl
+            : $normalizedUrl . '/send/message';
 
         try {
             $response = Http::withBasicAuth($username, $password)

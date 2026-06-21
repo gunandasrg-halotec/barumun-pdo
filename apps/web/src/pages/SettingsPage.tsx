@@ -139,7 +139,7 @@ export function SettingsPage() {
               onChange={(e) => setGateway((g) => ({ ...g, url: e.target.value }))}
               placeholder="https://wa.gateway.barumunpalma.co.id"
             />
-            <p className="text-[11px] text-muted mt-1">Jangan tambahkan /send/message — sistem menambahkannya otomatis.</p>
+            <p className="text-[11px] text-muted mt-1">Boleh dengan atau tanpa <code>/send/message</code> — sistem menyesuaikan otomatis.</p>
           </div>
           <div>
             <label className="block text-[12px] font-[850] text-muted mb-1.5">Username</label>

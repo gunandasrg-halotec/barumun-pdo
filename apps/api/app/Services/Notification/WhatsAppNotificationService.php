@@ -163,7 +163,11 @@ class WhatsAppNotificationService
             // Nilai mungkin belum terenkripsi (dev environment)
         }
 
-        $endpoint = rtrim($baseUrl, '/') . '/send/message';
+        // Jika URL sudah include /send/message, gunakan langsung
+        $normalizedUrl = rtrim($baseUrl, '/');
+        $endpoint = str_ends_with($normalizedUrl, '/send/message')
+            ? $normalizedUrl
+            : $normalizedUrl . '/send/message';
 
         foreach ($recipients as $user) {
             if (! $user->whatsapp_number) {
