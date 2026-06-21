@@ -218,12 +218,12 @@ class WhatsAppNotificationService
             ? $normalizedUrl
             : $normalizedUrl . '/send/message';
 
-        $seen = [];
+        $sentUserIds = [];
         foreach ($recipients as $user) {
             if (! $user->whatsapp_number) continue;
-            // Deduplicate: jangan kirim dua kali ke nomor yang sama
-            if (in_array($user->whatsapp_number, $seen)) continue;
-            $seen[] = $user->whatsapp_number;
+            // Deduplicate by user ID (bukan nomor) — satu user tidak perlu terima dua kali
+            if (in_array($user->id, $sentUserIds)) continue;
+            $sentUserIds[] = $user->id;
 
             $message = $template->render(array_merge($variables, ['nama_user' => $user->full_name]));
             $phone   = $this->toInternationalFormat($user->whatsapp_number);
