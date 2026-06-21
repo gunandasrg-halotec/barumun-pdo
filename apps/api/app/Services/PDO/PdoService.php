@@ -183,7 +183,7 @@ class PdoService
 
     public function listDetails(PdoHeader $pdo)
     {
-        return $pdo->details()->with('expenseItem.subcategory.category')->get();
+        return $pdo->details()->with(['expenseItem.subcategory.category', 'transferEntries', 'realizationEntries'])->get();
     }
 
     public function addDetail(PdoHeader $pdo, array $data, User $actor): PdoDetail

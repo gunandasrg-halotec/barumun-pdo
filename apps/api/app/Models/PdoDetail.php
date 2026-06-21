@@ -16,6 +16,8 @@ class PdoDetail extends Model
     public $incrementing = false;
     protected $keyType = 'string';
 
+    protected $appends = ['total_transferred', 'total_realized'];
+
     protected $fillable = [
         'pdo_header_id',
         'expense_item_id',
@@ -63,12 +65,18 @@ class PdoDetail extends Model
     /** Total transfer yang sudah masuk ke item ini. */
     public function getTotalTransferredAttribute(): int
     {
+        if ($this->relationLoaded('transferEntries')) {
+            return (int) $this->transferEntries->sum('amount');
+        }
         return (int) $this->transferEntries()->sum('amount');
     }
 
     /** Total realisasi yang sudah dicatat untuk item ini. */
     public function getTotalRealizedAttribute(): int
     {
+        if ($this->relationLoaded('realizationEntries')) {
+            return (int) $this->realizationEntries->sum('amount');
+        }
         return (int) $this->realizationEntries()->sum('amount');
     }
 }
