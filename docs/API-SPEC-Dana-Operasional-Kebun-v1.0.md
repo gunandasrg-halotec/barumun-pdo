@@ -363,8 +363,8 @@ Pengecualian: `POST /api/v1/auth/login`
 **Validasi:**
 - `email` harus unik di sistem
 - `whatsapp_number` wajib diisi, format: 628xxxxxxxxx (tanpa +, tanpa spasi)
-- `plantation_unit_id` wajib untuk role KERANI dan ASISTEN_KEBUN
-- `plantation_unit_id` harus null untuk role lintas unit (MANAJER_KEBUN, MANAJER_KEUANGAN, dll.)
+- `plantation_unit_id` wajib untuk role KERANI dan ASISTEN_KEBUN, dan tidak boleh berupa unit HO
+- `plantation_unit_id` di-assign ke unit HO untuk role lintas unit (MANAJER_KEBUN, MANAJER_KEUANGAN, dll.)
 - `password` minimal 8 karakter
 
 **Response 201:**
@@ -455,6 +455,36 @@ Pengecualian: `POST /api/v1/auth/login`
   "message": "User berhasil dinonaktifkan"
 }
 ```
+
+---
+
+### GET /api/v1/plantation-units
+
+**Deskripsi:** Daftar unit kebun dan unit HO yang aktif. Digunakan untuk mengisi dropdown Unit Kebun pada form User.
+
+**Authorization:** Bearer Token (semua role terautentikasi)
+
+**Query Parameters:**
+
+| Parameter | Tipe | Wajib | Deskripsi |
+|-----------|------|-------|-----------|
+| `exclude_ho` | boolean | Tidak | Jika `1`, unit HO tidak disertakan (untuk dropdown PDO yang hanya butuh unit kebun fisik) |
+
+**Response 200:**
+```json
+{
+  "success": true,
+  "data": [
+    { "id": "ho-uuid", "code": "HO", "name": "Head Office" },
+    { "id": "unit-uuid-bn", "code": "BN", "name": "Binanga" },
+    { "id": "unit-uuid-jm", "code": "JM", "name": "Janji Matogu" },
+    { "id": "unit-uuid-kp", "code": "KP", "name": "Kota Pinang" },
+    { "id": "unit-uuid-ss", "code": "SS", "name": "Sosa" }
+  ]
+}
+```
+
+> Unit HO selalu muncul di urutan pertama. Kerani dan Asisten Kebun tidak dapat di-assign ke HO (divalidasi di backend).
 
 ---
 
@@ -2281,8 +2311,9 @@ Saat item dipilih, backend mengisi snapshot `account_number`, `unit`, `rate` dar
   "data": [
     { "key": "threshold_proof_amount", "value": "1000000", "description": "Nominal minimum wajib upload bukti (Rupiah)" },
     { "key": "threshold_explanation_amount", "value": "500000", "description": "Batas selisih transfer-realisasi yang wajib penjelasan (Rupiah)" },
-    { "key": "wa_gateway_url", "value": "https://wa.gateway.barumunpalma.co.id/send", "description": "URL endpoint WhatsApp gateway" },
-    { "key": "wa_gateway_api_key", "value": "***REDACTED***", "description": "API Key WhatsApp gateway (terenkripsi)" },
+    { "key": "wa_gateway_url", "value": "https://wa.gateway.barumunpalma.co.id", "description": "Base URL WhatsApp gateway. Sistem menambahkan /send/message otomatis." },
+    { "key": "wa_gateway_username", "value": "myusername", "description": "Username Basic Auth WhatsApp gateway" },
+    { "key": "wa_gateway_password", "value": "••••••••", "description": "Password Basic Auth WhatsApp gateway (terenkripsi, tidak ditampilkan plaintext)" },
     { "key": "reminder_day_of_month", "value": "1", "description": "Tanggal pengiriman reminder PDO bulanan" },
     { "key": "reminder_hour", "value": "8", "description": "Jam pengiriman reminder (WIB)" }
   ]
@@ -2319,7 +2350,7 @@ Saat item dipilih, backend mengisi snapshot `account_number`, `unit`, `rate` dar
 
 ### POST /api/v1/settings/wa-test
 
-**Deskripsi:** Test koneksi WhatsApp gateway dengan mengirim pesan ke nomor Admin yang login.
+**Deskripsi:** Test koneksi WhatsApp gateway dengan mengirim pesan ke nomor WhatsApp Admin yang sedang login. Sistem menggunakan Basic Auth dan mengirim ke endpoint `{wa_gateway_url}/send/message`.
 
 **Authorization:** `ADMIN`
 
@@ -2328,23 +2359,23 @@ Saat item dipilih, backend mengisi snapshot `account_number`, `unit`, `rate` dar
 {
   "success": true,
   "data": {
-    "status": "sent",
-    "recipient": "628123456789",
-    "message": "Test koneksi WhatsApp gateway berhasil"
+    "success": true,
+    "status": 200,
+    "message": "Koneksi berhasil. Pesan test terkirim ke 6281397101041",
+    "gateway_response": { "message": "Message sent successfully" }
   }
 }
 ```
 
-**Response 422 (gateway error):**
+**Response 502 (gateway error):**
 ```json
 {
   "success": false,
-  "error": {
-    "code": "VALIDATION_ERROR",
-    "message": "Koneksi ke WhatsApp gateway gagal. Periksa URL dan API Key.",
-    "details": [
-      { "field": "wa_gateway_url", "message": "Connection refused: https://wa.gateway.barumunpalma.co.id/send" }
-    ]
+  "data": {
+    "success": false,
+    "status": 400,
+    "message": "Gateway merespons dengan error 400",
+    "gateway_response": { "error": "Invalid phone number format" }
   }
 }
 ```
@@ -2485,6 +2516,7 @@ Saat item dipilih, backend mengisi snapshot `account_number`, `unit`, `rate` dar
 | 74 | POST | /api/v1/settings/wa-test | ADMIN | Test koneksi WhatsApp gateway |
 | 75 | GET | /api/v1/notification-templates | ADMIN | Daftar template notifikasi |
 | 76 | PUT | /api/v1/notification-templates/{id} | ADMIN | Update template notifikasi |
+| 77 | GET | /api/v1/plantation-units | Semua | Daftar unit kebun + HO (mendukung ?exclude_ho=1) |
 
-**Total: 76 endpoint**
+**Total: 77 endpoint**
 

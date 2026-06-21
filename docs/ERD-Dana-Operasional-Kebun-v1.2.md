@@ -308,13 +308,13 @@ Menyimpan data perusahaan. Pada implementasi awal hanya ada satu perusahaan (PT 
 
 ### 2.2 Tabel: `plantation_units`
 
-Menyimpan data unit kebun. Setiap unit kebun terhubung ke satu perusahaan.
+Menyimpan data unit kebun dan unit kantor pusat. Setiap unit terhubung ke satu perusahaan. Unit dengan kode `HO` (Head Office) adalah unit khusus untuk pengguna lintas unit.
 
 | Nama Kolom | Tipe Data | Nullable | Default | Constraint | Deskripsi |
 |---|---|---|---|---|---|
-| id | UUID | NO | gen_random_uuid() | PK | Identifikasi unik unit kebun |
-| company_id | UUID | NO | — | FK → companies.id, NOT NULL | Perusahaan pemilik unit kebun |
-| code | VARCHAR(10) | NO | — | UNIQUE, NOT NULL | Kode unit resmi (KP, BN, JM, SS) |
+| id | UUID | NO | gen_random_uuid() | PK | Identifikasi unik unit |
+| company_id | UUID | NO | — | FK → companies.id, NOT NULL | Perusahaan pemilik unit |
+| code | VARCHAR(10) | NO | — | UNIQUE, NOT NULL | Kode unit resmi (HO, KP, BN, JM, SS). `HO` = Head Office (lintas unit) |
 | name | VARCHAR(255) | NO | — | NOT NULL | Nama unit kebun |
 | is_active | BOOLEAN | NO | TRUE | NOT NULL | Status aktif unit |
 | created_at | TIMESTAMPTZ | NO | now() | NOT NULL | Waktu dibuat |
@@ -340,13 +340,13 @@ Menyimpan daftar peran yang tersedia dalam sistem. Data bersifat statis (seeded 
 
 ### 2.4 Tabel: `users`
 
-Menyimpan akun pengguna sistem. Setiap user memiliki tepat satu role. Kerani dan Asisten Kebun wajib terhubung ke satu plantation_unit; role lain dibiarkan NULL (lintas unit).
+Menyimpan akun pengguna sistem. Setiap user memiliki tepat satu role. Kerani dan Asisten Kebun wajib terhubung ke satu unit kebun; role lintas unit (Manajer Kebun, Manajer Keuangan, dll.) di-assign ke unit HO (Head Office).
 
 | Nama Kolom | Tipe Data | Nullable | Default | Constraint | Deskripsi |
 |---|---|---|---|---|---|
 | id | UUID | NO | gen_random_uuid() | PK | Identifikasi unik user |
 | role_id | UUID | NO | — | FK → roles.id, NOT NULL | Role yang dipegang user |
-| plantation_unit_id | UUID | YES | NULL | FK → plantation_units.id | Unit kebun tempat user bertugas. NULL untuk role lintas unit (Manajer Kebun, dst.) |
+| plantation_unit_id | UUID | YES | NULL | FK → plantation_units.id | Unit tempat user bertugas. Kerani/Asisten wajib ke unit kebun; role lintas unit di-assign ke unit HO |
 | full_name | VARCHAR(255) | NO | — | NOT NULL | Nama lengkap user |
 | email | VARCHAR(255) | NO | — | UNIQUE, NOT NULL | Email untuk login |
 | password_hash | VARCHAR(255) | NO | — | NOT NULL | Hasil bcrypt/Argon2 dari password |
@@ -439,7 +439,8 @@ Menyimpan konfigurasi sistem yang dapat diubah Admin tanpa deployment ulang, ter
 - `threshold_proof_amount` — nominal threshold wajib bukti (default: 1000000)
 - `threshold_explanation_amount` — nominal threshold wajib penjelasan selisih (default: 500000)
 - `wa_gateway_url` — URL endpoint WhatsApp gateway
-- `wa_gateway_api_key` — API Key (disimpan terenkripsi di level aplikasi)
+- `wa_gateway_username` — Username Basic Auth WhatsApp gateway
+- `wa_gateway_password` — Password Basic Auth (disimpan terenkripsi di level aplikasi)
 - `reminder_day_of_month` — tanggal pengiriman reminder bulanan (default: 1)
 - `reminder_hour` — jam pengiriman reminder (default: 8)
 
@@ -678,8 +679,8 @@ CREATE TABLE plantation_units (
     CONSTRAINT uq_plantation_units_code UNIQUE (code)
 );
 
-COMMENT ON TABLE  plantation_units              IS 'Unit kebun (KP, BN, JM, SS). Setiap unit milik satu perusahaan.';
-COMMENT ON COLUMN plantation_units.code         IS 'Kode resmi unit: KP, BN, JM, SS.';
+COMMENT ON TABLE  plantation_units              IS 'Unit kebun dan HO (Head Office). HO adalah unit lintas unit untuk Manajer, Direktur, Staff. Setiap unit milik satu perusahaan.';
+COMMENT ON COLUMN plantation_units.code         IS 'Kode resmi unit: HO (Head Office/lintas unit), KP, BN, JM, SS.';
 COMMENT ON COLUMN plantation_units.company_id   IS 'FK ke perusahaan pemilik unit kebun.';
 
 
@@ -720,7 +721,7 @@ CREATE TABLE users (
 );
 
 COMMENT ON TABLE  users                        IS 'Akun pengguna sistem. Satu role per user.';
-COMMENT ON COLUMN users.plantation_unit_id     IS 'NULL untuk role lintas unit (Manajer Kebun, Manajer Keuangan, dll.). Wajib diisi untuk Kerani dan Asisten Kebun.';
+COMMENT ON COLUMN users.plantation_unit_id     IS 'Unit HO untuk role lintas unit (Manajer Kebun, dll.). Wajib ke unit kebun (bukan HO) untuk Kerani dan Asisten Kebun.';
 COMMENT ON COLUMN users.whatsapp_number        IS 'Format internasional tanpa +, contoh: 628123456789. Digunakan untuk notifikasi WhatsApp.';
 COMMENT ON COLUMN users.deleted_at             IS 'Soft delete. NULL = aktif atau nonaktif (is_active=false). Terisi = dihapus permanen.';
 
@@ -813,7 +814,7 @@ CREATE TABLE system_settings (
 );
 
 COMMENT ON TABLE  system_settings             IS 'Konfigurasi sistem yang dapat diubah Admin tanpa deploy ulang.';
-COMMENT ON COLUMN system_settings.key         IS 'Kunci setting. Contoh: threshold_proof_amount, wa_gateway_url, wa_gateway_api_key.';
+COMMENT ON COLUMN system_settings.key         IS 'Kunci setting. Contoh: threshold_proof_amount, wa_gateway_url, wa_gateway_username, wa_gateway_password.';
 COMMENT ON COLUMN system_settings.value       IS 'Nilai disimpan sebagai TEXT. Casting ke tipe yang tepat dilakukan di lapisan aplikasi. API key disimpan terenkripsi.';
 
 

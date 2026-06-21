@@ -62,14 +62,16 @@
 
 | Role | Terikat Unit Kebun | Akses Data |
 |------|--------------------|------------|
-| Kerani | Ya — tepat 1 unit | Hanya unit sendiri |
-| Asisten Kebun | Ya — tepat 1 unit | Hanya unit sendiri |
-| Manajer Kebun | Tidak (HO) | Semua unit |
-| Manajer Keuangan | Tidak (HO) | Semua unit |
-| Staff Keuangan | Tidak (HO) | Semua unit |
-| Direktur Keuangan | Tidak (HO) | Semua unit |
-| Staff Purchasing | Tidak (HO) | Semua unit |
-| Admin | Tidak (HO) | Semua unit |
+| Kerani | Ya — tepat 1 unit kebun | Hanya unit sendiri |
+| Asisten Kebun | Ya — tepat 1 unit kebun | Hanya unit sendiri |
+| Manajer Kebun | Unit HO (lintas unit) | Semua unit |
+| Manajer Keuangan | Unit HO (lintas unit) | Semua unit |
+| Staff Keuangan | Unit HO (lintas unit) | Semua unit |
+| Direktur Keuangan | Unit HO (lintas unit) | Semua unit |
+| Staff Purchasing | Unit HO (lintas unit) | Semua unit |
+| Admin | Unit HO (lintas unit) | Semua unit |
+
+> **Unit HO (Head Office):** Unit khusus yang merepresentasikan kantor pusat. User yang di-assign ke unit HO diperlakukan sebagai pengguna lintas unit dan dapat mengakses data seluruh unit kebun. Kerani dan Asisten Kebun tidak dapat di-assign ke unit HO.
 
 ### 2.2 Matriks Akses Fungsional
 
@@ -1396,13 +1398,16 @@ Total Realisasi (per item) > Total Transfer (per item) → Badge "Over Budget"
 
 | Field | Tipe | Keterangan |
 |-------|------|-----------|
-| URL Endpoint Gateway | String (URL) | Endpoint API WhatsApp gateway perusahaan |
-| API Key / Token | String (enkripsi) | Disimpan terenkripsi, tidak ditampilkan dalam plaintext |
+| URL Endpoint Gateway | String (URL) | Base URL WhatsApp gateway. Sistem menambahkan `/send/message` secara otomatis. Mendukung URL dengan atau tanpa path tersebut. |
+| Username | String | Username untuk autentikasi Basic Auth ke WhatsApp gateway |
+| Password | String (enkripsi) | Password Basic Auth. Disimpan terenkripsi, tidak ditampilkan dalam plaintext |
 | Status Koneksi | Read-only | Hasil test connection |
 
 **Aturan:**
 - Konfigurasi dapat diubah tanpa deployment ulang.
-- Tombol "Test Connection" mengirim pesan test ke nomor Admin yang sedang login.
+- Sistem menggunakan HTTP Basic Auth (Authorization: Basic base64(username:password)) saat memanggil gateway.
+- Request body ke gateway: `{ "phone": "628xxx", "message": "..." }`. Nomor WhatsApp user dikonversi otomatis ke format internasional (628xx) jika disimpan dalam format lokal (08xx).
+- Tombol "Test Koneksi" mengirim pesan test ke nomor WhatsApp Admin yang sedang login.
 - Jika konfigurasi tidak valid, sistem menampilkan error dan notifikasi WhatsApp tidak terkirim (in-system tetap berjalan).
 
 ---

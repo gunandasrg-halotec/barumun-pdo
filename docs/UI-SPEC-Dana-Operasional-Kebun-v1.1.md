@@ -945,7 +945,45 @@ Preview update real-time saat user mengisi field di kiri.
 
 ---
 
-### 4.14 Laporan (`laporan`)
+### 4.14 Form Tambah / Edit User (`master/user/buat`, `master/user/:id/edit`)
+
+**Akses:** ADMIN only.
+
+**Navigasi:** Tombol "+ Tambah User" di tab User & Role pada halaman Master Data.
+
+**Field Form:**
+
+| Field | Tipe | Wajib | Keterangan |
+|-------|------|-------|-----------|
+| Nama Lengkap | Text input | Ya | — |
+| Email | Email input | Ya | Harus unik |
+| Password | Password input | Ya (buat) / Tidak (edit) | Edit: hint "kosongkan jika tidak diubah" |
+| Nomor WhatsApp | Text input | Ya | Format 628xxx atau 08xxx (sistem konversi otomatis ke internasional) |
+| Role | Select dropdown | Ya | Daftar dari `GET /roles` |
+| Unit Kebun | Select dropdown | Kondisional | Label berubah dinamis: tanda `*` merah jika role = Kerani/Asisten Kebun; teks "(HO untuk lintas unit)" jika role lain. Opsi HO di-disable jika role = Kerani/Asisten Kebun |
+| Aktif | Checkbox | Ya | Default: centang |
+
+**Opsi dropdown Unit Kebun:**
+- HO — Head Office *(lintas unit)* — tampil di urutan pertama; di-disable untuk Kerani/Asisten Kebun
+- BN — Binanga
+- JM — Janji Matogu
+- KP — Kota Pinang
+- SS — Sosa
+
+**Behavior:**
+- Role = Kerani atau Asisten Kebun → field Unit Kebun wajib diisi dengan unit kebun (bukan HO)
+- Role lain → Unit Kebun opsional; disarankan HO untuk konsistensi
+- Tombol Simpan disabled saat loading
+
+**Error states:**
+- Unit Kebun kosong padahal role = Kerani/Asisten → "Unit Kebun wajib dipilih untuk role ini"
+- Unit Kebun = HO padahal role = Kerani/Asisten → error 422 dari backend
+
+Tombol: [Simpan] [Batal → /master]
+
+---
+
+### 4.15 Laporan (`laporan`)
 
 **Akses:** Semua role kecuali STAFF_PURCHASING.
 
@@ -971,7 +1009,7 @@ Preview update real-time saat user mengisi field di kiri.
 
 ---
 
-### 4.15 Pengaturan (`settings`)
+### 4.16 Pengaturan (`settings`)
 
 **Akses:** ADMIN saja.
 
@@ -991,8 +1029,9 @@ Tombol: [Simpan Threshold]
 
 | Field | Default | Tipe | Keterangan |
 |---|---|---|---|
-| URL Endpoint Gateway | — | Text input | URL lengkap endpoint kirim pesan |
-| API Key / Token | — | Password input (`type="password"`) | Tersembunyi, toggle show/hide via ikon mata |
+| Base URL Gateway | — | Text input | Base URL gateway. Sistem menambahkan `/send/message` otomatis. Mendukung URL dengan atau tanpa path tersebut. Hint: "Jangan tambahkan /send/message" |
+| Username | — | Text input | Username untuk Basic Auth gateway |
+| Password | — | Password input (`type="password"`) | Tersembunyi, toggle show/hide via ikon mata. Hint: "Kosongkan jika tidak ingin mengubah password" |
 
 Tombol: [Simpan Konfigurasi Gateway] [Test Koneksi]
 
