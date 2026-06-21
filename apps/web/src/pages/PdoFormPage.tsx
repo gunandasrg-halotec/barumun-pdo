@@ -77,7 +77,8 @@ export function PdoFormPage() {
 
   const now = new Date()
   const { register, control, handleSubmit, watch, reset, setValue, formState: { errors } } = useForm<Form>({
-    resolver: zodResolver(isEdit ? editSchema : createSchema) as Parameters<typeof useForm<Form>>[0]['resolver'],
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    resolver: zodResolver(isEdit ? editSchema : createSchema) as any,
     defaultValues: {
       plantation_unit_id: user?.plantation_unit?.id ?? '',
       period_month: now.getMonth() + 1,
