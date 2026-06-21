@@ -37,7 +37,7 @@ export function KategoriFormPage() {
     enabled: isEdit,
   })
 
-  const { register, handleSubmit, reset, formState: { errors } } = useForm<Form>({
+  const { register, handleSubmit, reset, setError, formState: { errors } } = useForm<Form>({
     resolver: zodResolver(schema),
     defaultValues: { display_order: 1, include_in_recap: true, is_active: true },
   })
@@ -56,7 +56,22 @@ export function KategoriFormPage() {
       qc.invalidateQueries({ queryKey: ['categories'] })
       navigate('/master')
     },
-    onError: () => toast('Gagal menyimpan kategori', 'error'),
+    onError: (err: unknown) => {
+      type ApiErr = { response?: { data?: { error?: { details?: { field: string; message: string }[] } } } }
+      const details = (err as ApiErr)?.response?.data?.error?.details
+      if (details?.length) {
+        const validFields = new Set<string>(['code', 'name', 'display_order', 'include_in_recap', 'is_active', 'notes'])
+        let handled = false
+        for (const { field, message } of details) {
+          if (validFields.has(field)) {
+            setError(field as keyof Form, { message })
+            handled = true
+          }
+        }
+        if (handled) return
+      }
+      toast('Gagal menyimpan kategori', 'error')
+    },
   })
 
   return (

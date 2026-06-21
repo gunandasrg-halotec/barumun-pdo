@@ -44,7 +44,7 @@ export function ItemFormPage() {
     enabled: isEdit,
   })
 
-  const { register, handleSubmit, reset, formState: { errors } } = useForm<Form>({
+  const { register, handleSubmit, reset, setError, formState: { errors } } = useForm<Form>({
     resolver: zodResolver(schema),
     defaultValues: { mode_input: 'manual', is_routine: true, is_active: true },
   })
@@ -63,7 +63,22 @@ export function ItemFormPage() {
       qc.invalidateQueries({ queryKey: ['items'] })
       navigate('/master')
     },
-    onError: () => toast('Gagal menyimpan item', 'error'),
+    onError: (err: unknown) => {
+      type ApiErr = { response?: { data?: { error?: { details?: { field: string; message: string }[] } } } }
+      const details = (err as ApiErr)?.response?.data?.error?.details
+      if (details?.length) {
+        const validFields = new Set<string>(['code', 'name', 'subcategory_id', 'default_account_number', 'default_unit', 'default_rate', 'mode_input', 'is_routine', 'is_active', 'notes'])
+        let handled = false
+        for (const { field, message } of details) {
+          if (validFields.has(field)) {
+            setError(field as keyof Form, { message })
+            handled = true
+          }
+        }
+        if (handled) return
+      }
+      toast('Gagal menyimpan item', 'error')
+    },
   })
 
   return (

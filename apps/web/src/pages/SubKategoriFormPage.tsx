@@ -40,7 +40,7 @@ export function SubKategoriFormPage() {
     enabled: isEdit,
   })
 
-  const { register, handleSubmit, reset, formState: { errors } } = useForm<Form>({
+  const { register, handleSubmit, reset, setError, formState: { errors } } = useForm<Form>({
     resolver: zodResolver(schema),
     defaultValues: { display_order: 1, is_active: true },
   })
@@ -59,7 +59,22 @@ export function SubKategoriFormPage() {
       qc.invalidateQueries({ queryKey: ['subcategories'] })
       navigate('/master')
     },
-    onError: () => toast('Gagal menyimpan sub-kategori', 'error'),
+    onError: (err: unknown) => {
+      type ApiErr = { response?: { data?: { error?: { details?: { field: string; message: string }[] } } } }
+      const details = (err as ApiErr)?.response?.data?.error?.details
+      if (details?.length) {
+        const validFields = new Set<string>(['code', 'name', 'category_id', 'display_order', 'is_active', 'notes'])
+        let handled = false
+        for (const { field, message } of details) {
+          if (validFields.has(field)) {
+            setError(field as keyof Form, { message })
+            handled = true
+          }
+        }
+        if (handled) return
+      }
+      toast('Gagal menyimpan sub-kategori', 'error')
+    },
   })
 
   return (
