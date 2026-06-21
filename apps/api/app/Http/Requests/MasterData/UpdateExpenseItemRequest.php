@@ -16,11 +16,12 @@ class UpdateExpenseItemRequest extends FormRequest
     public function rules(): array
     {
         $item          = $this->route('expense_item');
+        $itemId        = $item?->id;
         $subcategoryId = $this->input('subcategory_id', $item?->subcategory_id);
 
         return [
             'subcategory_id'         => ['sometimes', 'uuid', 'exists:expense_subcategories,id'],
-            'code'                   => ['sometimes', 'string', 'max:30', "unique:expense_items,code,{$item},id,subcategory_id,{$subcategoryId},deleted_at,NULL"],
+            'code'                   => ['sometimes', 'string', 'max:30', "unique:expense_items,code,{$itemId},id,subcategory_id,{$subcategoryId},deleted_at,NULL"],
             'name'                   => ['sometimes', 'string', 'max:255'],
             'default_account_number' => ['nullable', 'string', 'max:50'],
             'default_unit'           => ['nullable', 'string', 'max:50'],
