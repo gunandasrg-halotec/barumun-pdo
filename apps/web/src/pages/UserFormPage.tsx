@@ -10,6 +10,8 @@ import { useToastStore } from '@/store/toast.store'
 import { ArrowLeft } from 'lucide-react'
 import type { ApiResponse, AuthUser, Role, PlantationUnit } from '@/types'
 
+const ROLES_REQUIRING_UNIT = ['Asisten Kebun', 'Kerani']
+
 const schemaCreate = z.object({
   full_name:         z.string().min(1, 'Nama wajib diisi'),
   email:             z.string().email('Format email tidak valid'),
@@ -62,10 +64,14 @@ export function UserFormPage() {
   })
 
   const schema = isEdit ? schemaEdit : schemaCreate
-  const { register, handleSubmit, reset, formState: { errors } } = useForm<FormEdit>({
+  const { register, handleSubmit, reset, watch, setError, formState: { errors } } = useForm<FormEdit>({
     resolver: zodResolver(schema),
     defaultValues: { is_active: true },
   })
+
+  const watchRoleId = watch('role_id')
+  const selectedRole = roles?.find((r) => r.id === watchRoleId)
+  const unitRequired = ROLES_REQUIRING_UNIT.includes(selectedRole?.name ?? '')
 
   useEffect(() => {
     if (existing) {
@@ -95,6 +101,14 @@ export function UserFormPage() {
     onError: () => toast('Gagal menyimpan user', 'error'),
   })
 
+  const onSubmit = handleSubmit((data) => {
+    if (unitRequired && !data.plantation_unit_id) {
+      setError('plantation_unit_id', { message: 'Unit Kebun wajib dipilih untuk role ini' })
+      return
+    }
+    save.mutate(data)
+  })
+
   return (
     <div className="max-w-lg">
       <div className="flex items-center gap-3 mb-6">
@@ -106,7 +120,7 @@ export function UserFormPage() {
         </h2>
       </div>
 
-      <form onSubmit={handleSubmit((d) => save.mutate(d))} className="card flex flex-col gap-4">
+      <form onSubmit={onSubmit} className="card flex flex-col gap-4">
         <div>
           <label className="label">Nama Lengkap</label>
           <input {...register('full_name')} className="input-base" />
@@ -145,13 +159,16 @@ export function UserFormPage() {
         </div>
 
         <div>
-          <label className="label">Unit Kebun (opsional)</label>
+          <label className="label">
+            Unit Kebun {unitRequired ? <span className="text-red-500">*</span> : <span className="text-muted font-normal">(opsional)</span>}
+          </label>
           <select {...register('plantation_unit_id')} className="input-base">
             <option value="">— Tidak terikat unit —</option>
             {units?.map((u) => (
               <option key={u.id} value={u.id}>{u.code} — {u.name}</option>
             ))}
           </select>
+          {errors.plantation_unit_id && <p className="field-error">{errors.plantation_unit_id.message}</p>}
         </div>
 
         <label className="flex items-center gap-2 text-sm font-[700] cursor-pointer">

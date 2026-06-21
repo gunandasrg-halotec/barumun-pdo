@@ -41,7 +41,8 @@ Route::prefix('v1')->middleware(['auth:sanctum', 'ensure.unit.access'])->group(f
 
     // ── Users & Roles (ADMIN only) ────────────────────
     Route::apiResource('users', UserController::class);
-    Route::get('roles', [UserController::class, 'roles']);
+    Route::get('roles',            [UserController::class, 'roles']);
+    Route::get('plantation-units', [UserController::class, 'plantationUnits']);
 
     // ── Master Data — Kategori ────────────────────────
     Route::apiResource('expense-categories', ExpenseCategoryController::class);

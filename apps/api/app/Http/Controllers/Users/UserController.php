@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Users;
 use App\Http\Controllers\Controller;
 use App\Http\Requests\Users\StoreUserRequest;
 use App\Http\Requests\Users\UpdateUserRequest;
+use App\Models\PlantationUnit;
 use App\Models\Role;
 use App\Services\Users\UserManagementService;
 use Illuminate\Http\JsonResponse;
@@ -79,5 +80,15 @@ class UserController extends Controller
         $roles = $this->service->listRoles();
 
         return response()->json(['success' => true, 'data' => $roles]);
+    }
+
+    public function plantationUnits(Request $request): JsonResponse
+    {
+        $units = PlantationUnit::where('company_id', $request->user()->company_id)
+            ->where('is_active', true)
+            ->orderBy('code')
+            ->get(['id', 'code', 'name']);
+
+        return response()->json(['success' => true, 'data' => $units]);
     }
 }
