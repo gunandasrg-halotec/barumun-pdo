@@ -148,5 +148,16 @@ class UserManagementService
                 'error'   => ['code' => 'UNIT_REQUIRED', 'message' => "Role {$role->code} wajib memiliki unit kebun."],
             ], 422));
         }
+
+        // Kerani & Asisten tidak boleh di-assign ke HO
+        if ($isUnitBound && $unitId) {
+            $isHo = \App\Models\PlantationUnit::where('id', $unitId)->where('code', 'HO')->exists();
+            if ($isHo) {
+                abort(response()->json([
+                    'success' => false,
+                    'error'   => ['code' => 'INVALID_UNIT', 'message' => "Role {$role->code} harus terikat ke unit kebun, bukan Head Office."],
+                ], 422));
+            }
+        }
     }
 }

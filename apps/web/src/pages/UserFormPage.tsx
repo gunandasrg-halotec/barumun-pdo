@@ -160,12 +160,20 @@ export function UserFormPage() {
 
         <div>
           <label className="label">
-            Unit Kebun {unitRequired ? <span className="text-red-500">*</span> : <span className="text-muted font-normal">(opsional)</span>}
+            Unit Kebun {unitRequired
+              ? <span className="text-red-500">*</span>
+              : <span className="text-muted font-normal">(HO untuk lintas unit)</span>}
           </label>
           <select {...register('plantation_unit_id')} className="input-base">
             <option value="">— Tidak terikat unit —</option>
             {units?.map((u) => (
-              <option key={u.id} value={u.id}>{u.code} — {u.name}</option>
+              <option
+                key={u.id}
+                value={u.id}
+                disabled={unitRequired && u.code === 'HO'}
+              >
+                {u.code} — {u.name}{u.code === 'HO' ? ' (lintas unit)' : ''}
+              </option>
             ))}
           </select>
           {errors.plantation_unit_id && <p className="field-error">{errors.plantation_unit_id.message}</p>}

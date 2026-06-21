@@ -84,11 +84,16 @@ class UserController extends Controller
 
     public function plantationUnits(Request $request): JsonResponse
     {
-        $units = PlantationUnit::where('company_id', $request->user()->company_id)
+        $query = PlantationUnit::where('company_id', $request->user()->company_id)
             ->where('is_active', true)
-            ->orderBy('code')
-            ->get(['id', 'code', 'name']);
+            ->orderByRaw("CASE WHEN code = 'HO' THEN 1 ELSE 0 END")
+            ->orderBy('code');
 
-        return response()->json(['success' => true, 'data' => $units]);
+        // ?exclude_ho=1 → untuk dropdown PDO (kebun saja, tanpa HO)
+        if ($request->boolean('exclude_ho')) {
+            $query->where('code', '!=', 'HO');
+        }
+
+        return response()->json(['success' => true, 'data' => $query->get(['id', 'code', 'name'])]);
     }
 }
