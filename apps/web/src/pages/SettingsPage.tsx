@@ -9,9 +9,8 @@ import type { SystemSetting, NotificationTemplate, ApiResponse } from '@/types'
 export function SettingsPage() {
   const qc    = useQueryClient()
   const toast = useToastStore((s) => s.push)
-  const [showApiKey, setShowApiKey] = useState(false)
+  const [showPassword, setShowPassword] = useState(false)
 
-  // Fetch settings
   const { data: settings } = useQuery({
     queryKey: ['settings'],
     queryFn: async () => {
@@ -31,25 +30,25 @@ export function SettingsPage() {
   const settingMap = Object.fromEntries(settings?.map((s) => [s.key, s.value]) ?? [])
 
   const [threshold, setThreshold] = useState({ bukti: '', penjelasan: '' })
-  const [gateway, setGateway]     = useState({ url: '', api_key: '' })
+  const [gateway, setGateway]     = useState({ url: '', username: '', password: '' })
   const [reminder, setReminder]   = useState({ date: '1', hour: '8' })
   const [templateBodies, setTemplateBodies] = useState<Record<string, string>>({})
 
   useEffect(() => {
-    if (settingMap) {
-      setThreshold({
-        bukti:       settingMap['threshold_bukti']        ?? '1000000',
-        penjelasan:  settingMap['threshold_penjelasan']   ?? '500000',
-      })
-      setGateway({
-        url:      settingMap['wa_gateway_url']   ?? '',
-        api_key:  settingMap['wa_api_key']       ?? '',
-      })
-      setReminder({
-        date: settingMap['reminder_date'] ?? '1',
-        hour: settingMap['reminder_hour'] ?? '8',
-      })
-    }
+    if (!settings?.length) return
+    setThreshold({
+      bukti:      settingMap['threshold_proof_amount']      ?? '1000000',
+      penjelasan: settingMap['threshold_explanation_amount'] ?? '500000',
+    })
+    setGateway({
+      url:      settingMap['wa_gateway_url']      ?? '',
+      username: settingMap['wa_gateway_username'] ?? '',
+      password: settingMap['wa_gateway_password'] ?? '',
+    })
+    setReminder({
+      date: settingMap['reminder_day_of_month'] ?? '1',
+      hour: settingMap['reminder_hour']         ?? '8',
+    })
   }, [settings])
 
   useEffect(() => {
@@ -69,8 +68,8 @@ export function SettingsPage() {
 
   const testWa = useMutation({
     mutationFn: () => api.post('/settings/wa-test'),
-    onSuccess: () => toast('Test koneksi berhasil. Pesan terkirim.'),
-    onError: (e: unknown) => toast(`Koneksi gagal: ${(e as Error).message}`, 'error'),
+    onSuccess: (res) => toast((res.data as { data?: { message?: string } })?.data?.message ?? 'Test koneksi berhasil.'),
+    onError: () => toast('Koneksi gagal. Periksa konfigurasi gateway.', 'error'),
   })
 
   const updateTemplate = useMutation({
@@ -115,8 +114,8 @@ export function SettingsPage() {
           <Button
             loading={updateSettings.isPending}
             onClick={() => updateSettings.mutate({
-              threshold_bukti: threshold.bukti,
-              threshold_penjelasan: threshold.penjelasan,
+              threshold_proof_amount:      threshold.bukti,
+              threshold_explanation_amount: threshold.penjelasan,
             })}
           >
             Simpan Threshold
@@ -127,44 +126,68 @@ export function SettingsPage() {
       {/* Section 2: WhatsApp Gateway */}
       <div className="card mb-4">
         <h3 className="text-[17px] font-[850] mb-4">WhatsApp Gateway</h3>
+        <p className="text-[12px] text-muted mb-3">
+          Sistem akan mengirim pesan ke <code className="bg-gray-100 px-1 rounded">{'{baseUrl}'}/send/message</code> menggunakan Basic Auth.
+        </p>
         <div className="flex flex-col gap-3">
           <div>
-            <label className="block text-[12px] font-[850] text-muted mb-1.5">URL Endpoint Gateway</label>
+            <label className="block text-[12px] font-[850] text-muted mb-1.5">Base URL Gateway</label>
             <input
               type="text"
               className="input-base"
               value={gateway.url}
               onChange={(e) => setGateway((g) => ({ ...g, url: e.target.value }))}
-              placeholder="https://api.whatsapp-gateway.com/send"
+              placeholder="https://wa.gateway.barumunpalma.co.id"
+            />
+            <p className="text-[11px] text-muted mt-1">Jangan tambahkan /send/message — sistem menambahkannya otomatis.</p>
+          </div>
+          <div>
+            <label className="block text-[12px] font-[850] text-muted mb-1.5">Username</label>
+            <input
+              type="text"
+              className="input-base"
+              value={gateway.username}
+              onChange={(e) => setGateway((g) => ({ ...g, username: e.target.value }))}
+              placeholder="username"
+              autoComplete="off"
             />
           </div>
           <div>
-            <label className="block text-[12px] font-[850] text-muted mb-1.5">API Key / Token</label>
+            <label className="block text-[12px] font-[850] text-muted mb-1.5">Password</label>
             <div className="relative">
               <input
-                type={showApiKey ? 'text' : 'password'}
+                type={showPassword ? 'text' : 'password'}
                 className="input-base pr-10"
-                value={gateway.api_key}
-                onChange={(e) => setGateway((g) => ({ ...g, api_key: e.target.value }))}
+                value={gateway.password}
+                onChange={(e) => setGateway((g) => ({ ...g, password: e.target.value }))}
                 placeholder="••••••••"
+                autoComplete="new-password"
               />
               <button
                 className="absolute right-3 top-1/2 -translate-y-1/2 text-muted hover:text-ink"
-                onClick={() => setShowApiKey((v) => !v)}
+                onClick={() => setShowPassword((v) => !v)}
                 type="button"
               >
-                {showApiKey ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
               </button>
             </div>
+            <p className="text-[11px] text-muted mt-1">Disimpan terenkripsi. Kosongkan jika tidak ingin mengubah password.</p>
           </div>
         </div>
         <div className="flex gap-2 mt-4">
           <Button
             loading={updateSettings.isPending}
-            onClick={() => updateSettings.mutate({
-              wa_gateway_url: gateway.url,
-              wa_api_key: gateway.api_key,
-            })}
+            onClick={() => {
+              const payload: Record<string, string> = {
+                wa_gateway_url:      gateway.url,
+                wa_gateway_username: gateway.username,
+              }
+              // Jangan kirim password jika masih masked atau kosong
+              if (gateway.password && gateway.password !== '••••••••') {
+                payload['wa_gateway_password'] = gateway.password
+              }
+              updateSettings.mutate(payload)
+            }}
           >
             Simpan Konfigurasi Gateway
           </Button>
@@ -203,8 +226,8 @@ export function SettingsPage() {
           <Button
             loading={updateSettings.isPending}
             onClick={() => updateSettings.mutate({
-              reminder_date: reminder.date,
-              reminder_hour: reminder.hour,
+              reminder_day_of_month: reminder.date,
+              reminder_hour:         reminder.hour,
             })}
           >
             Simpan Jadwal
@@ -228,7 +251,7 @@ export function SettingsPage() {
                 onChange={(e) => setTemplateBodies((b) => ({ ...b, [tmpl.id]: e.target.value }))}
               />
               <p className="text-[11px] text-muted mt-1">
-                Variabel: {'{{nama_user}}'} {'{{nomor_pdo}}'} {'{{periode}}'} {'{{unit_kebun}}'} {'{{alasan_reject}}'} {'{{deadline}}'}
+                Variabel: {'{{nama_user}}'} {'{{nomor_pdo}}'} {'{{periode}}'} {'{{unit_kebun}}'} {'{{alasan_reject}}'}
               </p>
               <div className="mt-2">
                 <Button

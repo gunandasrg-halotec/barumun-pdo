@@ -34,12 +34,17 @@ class SystemSettingSeeder extends Seeder
             [
                 'key'         => 'wa_gateway_url',
                 'value'       => '',
-                'description' => 'URL endpoint WhatsApp gateway perusahaan. Contoh: https://wa.gateway.barumunpalma.co.id/send',
+                'description' => 'Base URL WhatsApp gateway. Contoh: https://wa.gateway.barumunpalma.co.id — sistem akan menambahkan /send/message secara otomatis.',
             ],
             [
-                'key'         => 'wa_gateway_api_key',
-                'value'       => '',  // Diisi Admin via UI, disimpan terenkripsi
-                'description' => 'API Key WhatsApp gateway. Disimpan terenkripsi (Laravel encrypt). Jangan edit langsung di database.',
+                'key'         => 'wa_gateway_username',
+                'value'       => '',
+                'description' => 'Username untuk Basic Auth WhatsApp gateway.',
+            ],
+            [
+                'key'         => 'wa_gateway_password',
+                'value'       => '',
+                'description' => 'Password untuk Basic Auth WhatsApp gateway. Disimpan terenkripsi.',
             ],
 
             // ── Jadwal reminder bulanan (BRD BR-NOTIF-004) ────────────────

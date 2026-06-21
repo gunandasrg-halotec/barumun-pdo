@@ -148,19 +148,22 @@ class WhatsAppNotificationService
             return;
         }
 
-        $url    = SystemSetting::getValue($companyId, SystemSetting::KEY_WA_GATEWAY_URL);
-        $apiKey = SystemSetting::getValue($companyId, SystemSetting::KEY_WA_GATEWAY_API_KEY);
+        $baseUrl  = SystemSetting::getValue($companyId, SystemSetting::KEY_WA_GATEWAY_URL);
+        $username = SystemSetting::getValue($companyId, SystemSetting::KEY_WA_GATEWAY_USERNAME);
+        $password = SystemSetting::getValue($companyId, SystemSetting::KEY_WA_GATEWAY_PASSWORD);
 
-        if (! $url) {
+        if (! $baseUrl) {
             Log::warning('WhatsApp gateway URL belum dikonfigurasi.');
             return;
         }
 
         try {
-            $apiKey = decrypt($apiKey);
+            $password = decrypt($password);
         } catch (\Exception) {
             // Nilai mungkin belum terenkripsi (dev environment)
         }
+
+        $endpoint = rtrim($baseUrl, '/') . '/send/message';
 
         foreach ($recipients as $user) {
             if (! $user->whatsapp_number) {
@@ -170,11 +173,10 @@ class WhatsAppNotificationService
             $message = $template->render(array_merge($variables, ['nama_user' => $user->full_name]));
 
             try {
-                Http::withHeaders(['X-Api-Key' => $apiKey])
+                Http::withBasicAuth($username, $password)
                     ->timeout(5)
-                    ->post($url, ['to' => $user->whatsapp_number, 'message' => $message]);
+                    ->post($endpoint, ['phone' => $user->whatsapp_number, 'message' => $message]);
             } catch (\Exception $e) {
-                // Log saja, jangan gagalkan request utama
                 Log::error("WhatsApp send failed for {$user->whatsapp_number}: " . $e->getMessage());
             }
         }

@@ -18,8 +18,7 @@ class SystemSettingService
             ->orderBy('key')
             ->get()
             ->map(function ($setting) {
-                // Jangan ekspos nilai API key
-                if ($setting->key === SystemSetting::KEY_WA_GATEWAY_API_KEY && $setting->value) {
+                if ($setting->key === SystemSetting::KEY_WA_GATEWAY_PASSWORD && $setting->value) {
                     $setting->value = '••••••••';
                 }
                 return $setting;
@@ -40,8 +39,8 @@ class SystemSettingService
 
             $old = $setting->toArray();
 
-            // Enkripsi API key sebelum disimpan
-            if ($key === SystemSetting::KEY_WA_GATEWAY_API_KEY && $value !== '••••••••') {
+            // Enkripsi password sebelum disimpan; abaikan jika masih masked
+            if ($key === SystemSetting::KEY_WA_GATEWAY_PASSWORD && $value !== '••••••••') {
                 $value = encrypt($value);
             }
 
@@ -64,31 +63,36 @@ class SystemSettingService
      */
     public function testWhatsApp(string $companyId, User $actor): array
     {
-        $url    = SystemSetting::getValue($companyId, SystemSetting::KEY_WA_GATEWAY_URL);
-        $apiKey = SystemSetting::getValue($companyId, SystemSetting::KEY_WA_GATEWAY_API_KEY);
+        $baseUrl  = SystemSetting::getValue($companyId, SystemSetting::KEY_WA_GATEWAY_URL);
+        $username = SystemSetting::getValue($companyId, SystemSetting::KEY_WA_GATEWAY_USERNAME);
+        $password = SystemSetting::getValue($companyId, SystemSetting::KEY_WA_GATEWAY_PASSWORD);
 
-        if (! $url) {
+        if (! $baseUrl) {
             return ['success' => false, 'message' => 'URL WhatsApp gateway belum dikonfigurasi.'];
         }
 
         try {
-            $apiKey = decrypt($apiKey);
+            $password = decrypt($password);
         } catch (\Exception) {
-            // Jika tidak terenkripsi (setting lama), pakai langsung
+            // Jika tidak terenkripsi, pakai langsung
         }
 
+        $endpoint = rtrim($baseUrl, '/') . '/send/message';
+
         try {
-            $response = Http::withHeaders(['X-Api-Key' => $apiKey])
+            $response = Http::withBasicAuth($username, $password)
                 ->timeout(10)
-                ->post($url, [
-                    'to'      => $actor->whatsapp_number ?? '628100000000',
+                ->post($endpoint, [
+                    'phone'   => $actor->whatsapp_number ?? '628100000000',
                     'message' => 'Test koneksi WhatsApp Gateway PDO System — ' . now()->toDateTimeString(),
                 ]);
 
             return [
                 'success' => $response->successful(),
                 'status'  => $response->status(),
-                'message' => $response->successful() ? 'Koneksi berhasil.' : 'Gateway merespons dengan error: ' . $response->status(),
+                'message' => $response->successful()
+                    ? 'Koneksi berhasil. Pesan test terkirim ke ' . ($actor->whatsapp_number ?? '628100000000')
+                    : 'Gateway merespons dengan error: ' . $response->status(),
             ];
         } catch (\Exception $e) {
             return ['success' => false, 'message' => 'Gagal terhubung ke gateway: ' . $e->getMessage()];
