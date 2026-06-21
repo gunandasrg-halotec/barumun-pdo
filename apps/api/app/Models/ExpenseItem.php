@@ -7,6 +7,7 @@ use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\SoftDeletes;
+use App\Models\PdoHeader;
 
 class ExpenseItem extends Model
 {
@@ -60,20 +61,15 @@ class ExpenseItem extends Model
     }
 
     /**
-     * Cek apakah item dipakai di PDO yang aktif (reviewed_asisten s/d final).
-     * draft dan submitted tidak termasuk "aktif" — jika true, item tidak boleh dihapus.
+     * Cek apakah item dipakai di PDO yang aktif (semua status kecuali closed).
+     * Jika true, item tidak boleh dihapus sama sekali.
      */
     public function isUsedInActivePdo(): bool
     {
         return \DB::table('pdo_details')
             ->join('pdo_headers', 'pdo_details.pdo_header_id', '=', 'pdo_headers.id')
             ->where('pdo_details.expense_item_id', $this->id)
-            ->whereIn('pdo_headers.status', [
-                PdoHeader::STATUS_REVIEWED_ASISTEN,
-                PdoHeader::STATUS_IN_REVIEW_MANAGER,
-                PdoHeader::STATUS_IN_REVIEW_DIREKTUR,
-                PdoHeader::STATUS_FINAL,
-            ])
+            ->where('pdo_headers.status', '!=', PdoHeader::STATUS_CLOSED)
             ->exists();
     }
 }
