@@ -68,14 +68,16 @@ class UserManagementService
         $role = Role::findOrFail($roleId);
         $this->assertUnitAssignment($role, $unitId);
 
+        // plantation_unit_id boleh null (melepas unit kebun) — tidak boleh difilter
         $payload = array_filter([
-            'role_id'            => $data['role_id'] ?? null,
-            'plantation_unit_id' => $unitId,
-            'full_name'          => $data['full_name'] ?? null,
-            'email'              => $data['email'] ?? null,
-            'whatsapp_number'    => $data['whatsapp_number'] ?? null,
-            'is_active'          => $data['is_active'] ?? null,
+            'role_id'         => $data['role_id'] ?? null,
+            'full_name'       => $data['full_name'] ?? null,
+            'email'           => $data['email'] ?? null,
+            'whatsapp_number' => $data['whatsapp_number'] ?? null,
+            'is_active'       => $data['is_active'] ?? null,
         ], fn ($v) => $v !== null);
+
+        $payload['plantation_unit_id'] = $unitId;
 
         // Password diupdate terpisah agar tidak masuk array_filter null check
         if (isset($data['password'])) {
