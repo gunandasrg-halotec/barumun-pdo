@@ -8,6 +8,7 @@ use App\Models\PdoHeader;
 use App\Models\TransferEntry;
 use App\Models\User;
 use Illuminate\Database\Eloquent\Collection;
+use Illuminate\Support\Collection as SupportCollection;
 use Illuminate\Support\Facades\DB;
 
 class TransferEntryService
@@ -38,7 +39,7 @@ class TransferEntryService
      * Summary transfer seluruh detail dalam satu PDO.
      * Digunakan di endpoint GET /pdo/{pdo}/transfers.
      */
-    public function summaryByPdo(PdoHeader $pdo): Collection
+    public function summaryByPdo(PdoHeader $pdo): SupportCollection
     {
         return $pdo->details()
             ->with(['expenseItem', 'transferEntries'])
