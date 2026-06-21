@@ -46,7 +46,8 @@ class NotificationTemplate extends Model
     {
         $body = $this->template_body;
         foreach ($variables as $key => $value) {
-            $body = str_replace("{{$key}}", $value, $body);
+            // Support both {{key}} and {key} placeholder formats
+            $body = str_replace(['{{' . $key . '}}', '{' . $key . '}'], $value, $body);
         }
         return $body;
     }
