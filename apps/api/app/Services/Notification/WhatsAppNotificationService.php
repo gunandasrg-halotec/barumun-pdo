@@ -175,15 +175,25 @@ class WhatsAppNotificationService
             }
 
             $message = $template->render(array_merge($variables, ['nama_user' => $user->full_name]));
+            $phone   = $this->toInternationalFormat($user->whatsapp_number);
 
             try {
                 Http::withBasicAuth($username, $password)
                     ->timeout(5)
-                    ->post($endpoint, ['phone' => $user->whatsapp_number, 'message' => $message]);
+                    ->post($endpoint, ['phone' => $phone, 'message' => $message]);
             } catch (\Exception $e) {
                 Log::error("WhatsApp send failed for {$user->whatsapp_number}: " . $e->getMessage());
             }
         }
+    }
+
+    private function toInternationalFormat(string $number): string
+    {
+        $number = preg_replace('/\D/', '', $number);
+        if (str_starts_with($number, '0')) {
+            $number = '62' . substr($number, 1);
+        }
+        return $number;
     }
 
     private function formatPeriod(PdoHeader $pdo): string

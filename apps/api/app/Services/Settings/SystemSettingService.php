@@ -82,24 +82,43 @@ class SystemSettingService
             ? $normalizedUrl
             : $normalizedUrl . '/send/message';
 
+        $phone = $this->toInternationalFormat($actor->whatsapp_number ?? '628100000000');
+
         try {
             $response = Http::withBasicAuth($username, $password)
                 ->timeout(10)
                 ->post($endpoint, [
-                    'phone'   => $actor->whatsapp_number ?? '628100000000',
+                    'phone'   => $phone,
                     'message' => 'Test koneksi WhatsApp Gateway PDO System — ' . now()->toDateTimeString(),
                 ]);
 
+            $gatewayBody = $response->json() ?? $response->body();
+
             return [
-                'success' => $response->successful(),
-                'status'  => $response->status(),
-                'message' => $response->successful()
-                    ? 'Koneksi berhasil. Pesan test terkirim ke ' . ($actor->whatsapp_number ?? '628100000000')
-                    : 'Gateway merespons dengan error: ' . $response->status(),
+                'success'       => $response->successful(),
+                'status'        => $response->status(),
+                'message'       => $response->successful()
+                    ? 'Koneksi berhasil. Pesan test terkirim ke ' . $phone
+                    : 'Gateway merespons dengan error ' . $response->status(),
+                'gateway_response' => $gatewayBody,
             ];
         } catch (\Exception $e) {
             return ['success' => false, 'message' => 'Gagal terhubung ke gateway: ' . $e->getMessage()];
         }
+    }
+
+    // ─────────────────────────────────────────────────────
+    // HELPERS
+    // ─────────────────────────────────────────────────────
+
+    /** Konversi nomor lokal (08xx) ke format internasional (628xx). */
+    private function toInternationalFormat(string $number): string
+    {
+        $number = preg_replace('/\D/', '', $number); // hapus non-digit
+        if (str_starts_with($number, '0')) {
+            $number = '62' . substr($number, 1);
+        }
+        return $number;
     }
 
     // ─────────────────────────────────────────────────────
