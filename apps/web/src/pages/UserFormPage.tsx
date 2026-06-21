@@ -99,21 +99,14 @@ export function UserFormPage() {
       navigate('/master')
     },
     onError: (err: unknown) => {
-      const res = (err as { response?: { data?: { errors?: Record<string, string[]> } } })?.response
-      const fieldErrors = res?.data?.errors
-      if (fieldErrors) {
-        const fieldMap: Record<string, keyof FormEdit> = {
-          email: 'email',
-          full_name: 'full_name',
-          password: 'password',
-          whatsapp_number: 'whatsapp_number',
-          role_id: 'role_id',
-          plantation_unit_id: 'plantation_unit_id',
-        }
+      type ApiErr = { response?: { data?: { error?: { details?: { field: string; message: string }[] } } } }
+      const details = (err as ApiErr)?.response?.data?.error?.details
+      if (details?.length) {
+        const validFields = new Set<string>(['email','full_name','password','whatsapp_number','role_id','plantation_unit_id'])
         let handled = false
-        for (const [key, field] of Object.entries(fieldMap)) {
-          if (fieldErrors[key]?.[0]) {
-            setError(field, { message: fieldErrors[key][0] })
+        for (const { field, message } of details) {
+          if (validFields.has(field)) {
+            setError(field as keyof FormEdit, { message })
             handled = true
           }
         }
