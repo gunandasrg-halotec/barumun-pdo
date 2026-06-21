@@ -51,8 +51,49 @@ class TransferEntryController extends Controller
     /** GET /pdo/{pdo}/transfers — summary semua detail dalam satu PDO */
     public function summaryByPdo(PdoHeader $pdo): JsonResponse
     {
-        $summary = $this->service->summaryByPdo($pdo);
+        $details = $this->service->summaryByPdo($pdo);
 
-        return response()->json(['success' => true, 'data' => $summary]);
+        return response()->json([
+            'success' => true,
+            'data'    => [
+                'pdo_number'       => $pdo->pdo_number,
+                'period_month'     => $pdo->period_month,
+                'period_year'      => $pdo->period_year,
+                'plantation_unit'  => $pdo->plantationUnit?->only(['id', 'code', 'name']),
+                'details'          => $details,
+            ],
+        ]);
+    }
+
+    /**
+     * POST /pdo/{pdo}/transfers/bulk — catat transfer untuk banyak item sekaligus
+     * Body: { entries: [{ pdo_detail_id, amount, transfer_date, reference_number?, notes? }] }
+     */
+    public function storeBulk(Request $request, PdoHeader $pdo): JsonResponse
+    {
+        $request->validate([
+            'entries'                       => ['required', 'array', 'min:1'],
+            'entries.*.pdo_detail_id'       => ['required', 'uuid'],
+            'entries.*.amount'              => ['required', 'integer', 'min:1'],
+            'entries.*.transfer_date'       => ['required', 'date'],
+            'entries.*.reference_number'    => ['nullable', 'string', 'max:100'],
+            'entries.*.notes'               => ['nullable', 'string'],
+        ]);
+
+        if (! $request->user()?->canRecordTransfer()) {
+            abort(response()->json(['success' => false, 'error' => ['code' => 'FORBIDDEN', 'message' => 'Anda tidak berhak mencatat transfer dana.']], 403));
+        }
+
+        $results = $this->service->storeBulk($pdo, $request->input('entries'), $request->user());
+
+        return response()->json(['success' => true, 'data' => $results, 'message' => 'Transfer berhasil dicatat.'], 201);
+    }
+
+    /** GET /transfer-entries/pdo-summary — list PDO final dengan ringkasan transfer */
+    public function pdoSummaryList(Request $request): JsonResponse
+    {
+        $data = $this->service->pdoSummaryList($request->user());
+
+        return response()->json(['success' => true, 'data' => $data]);
     }
 }

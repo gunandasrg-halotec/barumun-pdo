@@ -72,6 +72,7 @@ Route::prefix('v1')->middleware(['auth:sanctum', 'ensure.unit.access'])->group(f
 
         // Transfer summary per PDO
         Route::get('transfers',            [TransferEntryController::class, 'summaryByPdo']);
+        Route::post('transfers/bulk',      [TransferEntryController::class, 'storeBulk']);
 
         // Penutupan PDO — tidak perlu check.pdo.status karena endpoint ini yang menutup
         Route::post('close',               [PdoCloseController::class, 'close']);
@@ -88,7 +89,8 @@ Route::prefix('v1')->middleware(['auth:sanctum', 'ensure.unit.access'])->group(f
         Route::get('transfers',  [TransferEntryController::class, 'index']);
         Route::post('transfers', [TransferEntryController::class, 'store'])->middleware('check.pdo.status');
     });
-    Route::get('transfer-entries',         [TransferEntryController::class, 'all']);
+    Route::get('transfer-entries',              [TransferEntryController::class, 'all']);
+    Route::get('transfer-entries/pdo-summary', [TransferEntryController::class, 'pdoSummaryList']);
     Route::put('transfer-entries/{entry}', [TransferEntryController::class, 'update'])->middleware('check.pdo.status');
 
     // ── Realisasi Dana ────────────────────────────────

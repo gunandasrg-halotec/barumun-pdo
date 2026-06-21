@@ -111,6 +111,107 @@ class TransferEntryService
     }
 
     /**
+     * Catat transfer untuk banyak item sekaligus (bulk entry).
+     * Hanya simpan entry dengan amount > 0.
+     */
+    public function storeBulk(PdoHeader $pdo, array $entries, User $actor): array
+    {
+        if (! $pdo->isFinal()) {
+            abort(response()->json([
+                'success' => false,
+                'error'   => ['code' => 'PDO_NOT_FINAL', 'message' => 'Transfer hanya bisa dicatat saat PDO berstatus final.'],
+            ], 409));
+        }
+
+        $results = [];
+
+        DB::transaction(function () use ($pdo, $entries, $actor, &$results) {
+            foreach ($entries as $row) {
+                if (($row['amount'] ?? 0) <= 0) continue;
+
+                $detail = PdoDetail::where('pdo_header_id', $pdo->id)
+                    ->findOrFail($row['pdo_detail_id']);
+
+                $currentTotal = $detail->transferEntries()->sum('amount');
+                $newTotal     = $currentTotal + $row['amount'];
+
+                if ($newTotal > $detail->amount) {
+                    abort(response()->json([
+                        'success' => false,
+                        'error'   => [
+                            'code'    => 'TRANSFER_EXCEEDS_BUDGET',
+                            'message' => "Item '{$detail->description}': total transfer ({$newTotal}) melebihi jumlah disetujui ({$detail->amount}).",
+                        ],
+                    ], 422));
+                }
+
+                $entry = TransferEntry::create([
+                    'pdo_detail_id'    => $detail->id,
+                    'recorded_by'      => $actor->id,
+                    'entry_source'     => TransferEntry::SOURCE_MANUAL,
+                    'is_auto_generated'=> false,
+                    'transfer_date'    => $row['transfer_date'],
+                    'amount'           => $row['amount'],
+                    'reference_number' => $row['reference_number'] ?? null,
+                    'notes'            => $row['notes'] ?? null,
+                ]);
+
+                AuditLog::record(
+                    actor: $actor,
+                    entityType: 'transfer_entries',
+                    entityId: $entry->id,
+                    action: 'INSERT',
+                    oldValues: null,
+                    newValues: $entry->toArray()
+                );
+
+                $results[] = $entry->load('recorder');
+            }
+        });
+
+        return $results;
+    }
+
+    /**
+     * List semua PDO final dengan ringkasan transfer — untuk halaman list Transfer Dana.
+     */
+    public function pdoSummaryList(User $actor): array
+    {
+        $pdos = PdoHeader::with(['plantationUnit'])
+            ->where('company_id', $actor->company_id)
+            ->where('status', PdoHeader::STATUS_FINAL)
+            ->orderByDesc('period_year')
+            ->orderByDesc('period_month')
+            ->get();
+
+        return $pdos->map(function (PdoHeader $pdo) {
+            $details = $pdo->details()->get();
+
+            $totalAmount    = $details->sum('amount');
+            $totalTransfer  = $details->sum('total_transferred');
+
+            $lastTransfer = TransferEntry::whereHas('pdoDetail', fn ($q) => $q->where('pdo_header_id', $pdo->id))
+                ->where('entry_source', TransferEntry::SOURCE_MANUAL)
+                ->orderByDesc('transfer_date')
+                ->orderByDesc('created_at')
+                ->first();
+
+            return [
+                'pdo_id'                => $pdo->id,
+                'pdo_number'            => $pdo->pdo_number,
+                'plantation_unit'       => $pdo->plantationUnit?->only(['id', 'code', 'name']),
+                'period_month'          => $pdo->period_month,
+                'period_year'           => $pdo->period_year,
+                'notes'                 => $pdo->notes,
+                'total_amount'          => $totalAmount,
+                'total_transferred'     => $totalTransfer,
+                'remaining'             => $totalAmount - $totalTransfer,
+                'last_transfer_date'    => $lastTransfer?->transfer_date,
+            ];
+        })->values()->all();
+    }
+
+    /**
      * Koreksi entri transfer manual.
      * Tidak bisa mengedit entri otomatis sistem.
      */

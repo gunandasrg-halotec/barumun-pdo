@@ -106,7 +106,7 @@ class User extends Authenticatable
      */
     public function canRecordTransfer(): bool
     {
-        return $this->hasAnyRole(['MANAJER_KEUANGAN', 'STAFF_KEUANGAN']);
+        return $this->hasAnyRole(['MANAJER_KEUANGAN', 'STAFF_KEUANGAN', 'DIREKTUR_KEUANGAN']);
     }
 
     /**

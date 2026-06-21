@@ -17,7 +17,7 @@ class StoreTransferEntryRequest extends FormRequest
         return [
             'transfer_date'    => ['required', 'date'],
             'amount'           => ['required', 'integer', 'min:1'],
-            'reference_number' => ['required', 'string', 'max:100'],
+            'reference_number' => ['nullable', 'string', 'max:100'],
             'notes'            => ['nullable', 'string'],
         ];
     }
