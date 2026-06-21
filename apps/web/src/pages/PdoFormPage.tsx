@@ -20,7 +20,7 @@ const detailSchema = z.object({
   quantity:        z.coerce.number().nullable().optional(),
   unit:            z.string().nullable().optional(),
   rate:            z.coerce.number().nullable().optional(),
-  amount:          z.coerce.number().min(1, 'Jumlah harus > 0'),
+  amount:          z.coerce.number().min(0).default(0),
   notes:           z.string().nullable().optional(),
   display_order:   z.coerce.number().int().default(0),
 })
