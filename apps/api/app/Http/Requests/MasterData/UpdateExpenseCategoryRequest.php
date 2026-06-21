@@ -14,7 +14,8 @@ class UpdateExpenseCategoryRequest extends FormRequest
     public function rules(): array
     {
         $companyId  = $this->user()->company_id;
-        $categoryId = $this->route('expense_category')?->id;
+        $raw        = $this->route('expense_category');
+        $categoryId = is_string($raw) ? $raw : $raw?->id;
 
         return [
             'code'             => ['sometimes', 'string', 'max:20', "unique:expense_categories,code,{$categoryId},id,company_id,{$companyId},deleted_at,NULL"],

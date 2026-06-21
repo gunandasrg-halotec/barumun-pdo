@@ -13,9 +13,10 @@ class UpdateExpenseSubcategoryRequest extends FormRequest
 
     public function rules(): array
     {
-        $subcategory   = $this->route('expense_subcategory');
-        $subcategoryId = $subcategory?->id;
-        $categoryId    = $this->input('category_id', $subcategory?->category_id);
+        $raw           = $this->route('expense_subcategory');
+        $subcategoryId = is_string($raw) ? $raw : $raw?->id;
+        $resolved      = is_string($raw) ? \App\Models\ExpenseSubcategory::find($raw) : $raw;
+        $categoryId    = $this->input('category_id', $resolved?->category_id);
 
         return [
             'category_id'   => ['sometimes', 'uuid', 'exists:expense_categories,id'],

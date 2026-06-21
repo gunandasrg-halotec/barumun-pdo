@@ -16,8 +16,9 @@ class UpdateExpenseItemRequest extends FormRequest
     public function rules(): array
     {
         $item          = $this->route('expense_item');
-        $itemId        = $item?->id;
-        $subcategoryId = $this->input('subcategory_id', $item?->subcategory_id);
+        $itemId        = is_string($item) ? $item : $item?->id;
+        $resolved      = is_string($item) ? \App\Models\ExpenseItem::find($item) : $item;
+        $subcategoryId = $this->input('subcategory_id', $resolved?->subcategory_id);
 
         return [
             'subcategory_id'         => ['sometimes', 'uuid', 'exists:expense_subcategories,id'],
