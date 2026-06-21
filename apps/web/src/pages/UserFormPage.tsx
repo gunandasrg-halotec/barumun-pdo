@@ -98,7 +98,29 @@ export function UserFormPage() {
       qc.invalidateQueries({ queryKey: ['users'] })
       navigate('/master')
     },
-    onError: () => toast('Gagal menyimpan user', 'error'),
+    onError: (err: unknown) => {
+      const res = (err as { response?: { data?: { errors?: Record<string, string[]> } } })?.response
+      const fieldErrors = res?.data?.errors
+      if (fieldErrors) {
+        const fieldMap: Record<string, keyof FormEdit> = {
+          email: 'email',
+          full_name: 'full_name',
+          password: 'password',
+          whatsapp_number: 'whatsapp_number',
+          role_id: 'role_id',
+          plantation_unit_id: 'plantation_unit_id',
+        }
+        let handled = false
+        for (const [key, field] of Object.entries(fieldMap)) {
+          if (fieldErrors[key]?.[0]) {
+            setError(field, { message: fieldErrors[key][0] })
+            handled = true
+          }
+        }
+        if (handled) return
+      }
+      toast('Gagal menyimpan user', 'error')
+    },
   })
 
   const onSubmit = handleSubmit((data) => {
