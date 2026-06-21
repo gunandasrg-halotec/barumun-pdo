@@ -15,14 +15,17 @@ class NotificationTemplate extends Model
     protected $keyType = 'string';
 
     // Event types
-    const EVENT_PDO_SUBMITTED        = 'pdo_submitted';
-    const EVENT_PDO_APPROVED_ASISTEN = 'pdo_approved_asisten';
-    const EVENT_PDO_APPROVED_MANAGER = 'pdo_approved_manager';
-    const EVENT_PDO_REJECTED         = 'pdo_rejected';
-    const EVENT_PDO_FINAL            = 'pdo_final';
-    const EVENT_PDO_CLOSED           = 'pdo_closed';
-    const EVENT_SLA_REMINDER         = 'sla_reminder';
-    const EVENT_MONTHLY_REMINDER     = 'monthly_reminder';
+    const EVENT_PDO_SUBMITTED           = 'pdo_submitted';
+    const EVENT_PDO_APPROVED_ASISTEN    = 'pdo_approved_asisten';
+    const EVENT_PDO_REJECTED_ASISTEN    = 'pdo_rejected';           // Asisten reject → Kerani
+    const EVENT_PDO_APPROVED_MANAGER    = 'pdo_approved_manager';
+    const EVENT_PDO_REJECTED_MANAGER    = 'pdo_rejected_manager';   // Manajer reject → Asisten + Kerani
+    const EVENT_PDO_APPROVED_DIREKTUR   = 'pdo_approved_direktur';  // Dirkeu approve → semua
+    const EVENT_PDO_REJECTED_DIREKTUR   = 'pdo_rejected_direktur';  // Dirkeu reject → semua
+    const EVENT_PDO_FINAL               = 'pdo_final';
+    const EVENT_PDO_CLOSED              = 'pdo_closed';
+    const EVENT_SLA_REMINDER            = 'sla_reminder';
+    const EVENT_MONTHLY_REMINDER        = 'monthly_reminder';
 
     const CHANNEL_WHATSAPP = 'whatsapp';
     const CHANNEL_SYSTEM   = 'in_system';

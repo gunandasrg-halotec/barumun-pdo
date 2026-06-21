@@ -4,110 +4,122 @@ namespace App\Services\Notification;
 
 use App\Models\NotificationTemplate;
 use App\Models\PdoHeader;
+use App\Models\Role;
 use App\Models\SystemSetting;
 use App\Models\User;
+use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 
 class WhatsAppNotificationService
 {
-    /**
-     * Kirim notifikasi saat PDO disubmit → ke ASISTEN_KEBUN unit tersebut.
-     * BR-NOTIF-001
-     */
+    // ─────────────────────────────────────────────────────
+    // PUBLIC NOTIFICATION METHODS
+    // ─────────────────────────────────────────────────────
+
+    /** Kerani submit → Asisten Kebun (unit kebun sama) */
     public function notifySubmitted(PdoHeader $pdo): void
     {
-        $recipients = User::with('role')
-            ->where('company_id', $pdo->company_id)
-            ->where('plantation_unit_id', $pdo->plantation_unit_id)
-            ->whereHas('role', fn ($q) => $q->where('code', 'ASISTEN_KEBUN'))
-            ->where('is_active', true)
-            ->get();
-
-        $this->send($pdo->company_id, NotificationTemplate::EVENT_PDO_SUBMITTED, $recipients, [
-            'nomor_pdo'   => $pdo->pdo_number,
-            'periode'     => $this->formatPeriod($pdo),
-            'unit_kebun'  => $pdo->plantationUnit?->name ?? '',
-        ]);
+        $this->send(
+            $pdo->company_id,
+            NotificationTemplate::EVENT_PDO_SUBMITTED,
+            $this->asistenByUnit($pdo),
+            $this->baseVars($pdo)
+        );
     }
 
-    /**
-     * Kirim notifikasi setelah Asisten approve → ke MANAJER_KEBUN.
-     * BR-NOTIF-002
-     */
+    /** Asisten reject → Kerani (creator) */
+    public function notifyRejectedByAsisten(PdoHeader $pdo, string $reason): void
+    {
+        $this->send(
+            $pdo->company_id,
+            NotificationTemplate::EVENT_PDO_REJECTED_ASISTEN,
+            $this->creator($pdo),
+            array_merge($this->baseVars($pdo), ['alasan_reject' => $reason, 'penolak' => 'Asisten Kebun'])
+        );
+    }
+
+    /** Asisten approve → Kerani (creator) + Manajer Kebun + Manajer Keuangan */
     public function notifyApprovedByAsisten(PdoHeader $pdo): void
     {
-        $recipients = User::with('role')
-            ->where('company_id', $pdo->company_id)
-            ->whereHas('role', fn ($q) => $q->where('code', 'MANAJER_KEBUN'))
-            ->where('is_active', true)
-            ->get();
+        $recipients = $this->creator($pdo)
+            ->merge($this->byRole($pdo, Role::MANAJER_KEBUN))
+            ->merge($this->byRole($pdo, Role::MANAJER_KEUANGAN));
 
-        $this->send($pdo->company_id, NotificationTemplate::EVENT_PDO_APPROVED_ASISTEN, $recipients, [
-            'nomor_pdo' => $pdo->pdo_number,
-            'periode'   => $this->formatPeriod($pdo),
-        ]);
+        $this->send(
+            $pdo->company_id,
+            NotificationTemplate::EVENT_PDO_APPROVED_ASISTEN,
+            $recipients,
+            $this->baseVars($pdo)
+        );
+    }
+
+    /** Manajer reject → Asisten Kebun (unit kebun sama) + Kerani (creator) */
+    public function notifyRejectedByManager(PdoHeader $pdo, string $reason): void
+    {
+        $recipients = $this->asistenByUnit($pdo)->merge($this->creator($pdo));
+
+        $this->send(
+            $pdo->company_id,
+            NotificationTemplate::EVENT_PDO_REJECTED_MANAGER,
+            $recipients,
+            array_merge($this->baseVars($pdo), ['alasan_reject' => $reason, 'penolak' => 'Manajer'])
+        );
     }
 
     /**
-     * Kirim notifikasi setelah Manajer Kebun approve → ke MANAJER_KEUANGAN.
-     * BR-NOTIF-002
+     * Kedua Manajer approve (status → in_review_direktur)
+     * → Kerani (creator) + Asisten Kebun (unit kebun sama) + Direktur Keuangan
      */
     public function notifyApprovedByManager(PdoHeader $pdo): void
     {
-        $recipients = User::with('role')
-            ->where('company_id', $pdo->company_id)
-            ->whereHas('role', fn ($q) => $q->where('code', 'MANAJER_KEUANGAN'))
-            ->where('is_active', true)
-            ->get();
+        $recipients = $this->creator($pdo)
+            ->merge($this->asistenByUnit($pdo))
+            ->merge($this->byRole($pdo, Role::DIREKTUR_KEUANGAN));
 
-        $this->send($pdo->company_id, NotificationTemplate::EVENT_PDO_APPROVED_MANAGER, $recipients, [
-            'nomor_pdo' => $pdo->pdo_number,
-            'periode'   => $this->formatPeriod($pdo),
-        ]);
+        $this->send(
+            $pdo->company_id,
+            NotificationTemplate::EVENT_PDO_APPROVED_MANAGER,
+            $recipients,
+            $this->baseVars($pdo)
+        );
     }
 
-    /**
-     * Kirim notifikasi ke KERANI saat PDO ditolak.
-     * BR-NOTIF-003
-     */
-    public function notifyRejected(PdoHeader $pdo, string $reason): void
+    /** Direktur reject → Manajer Keuangan + Manajer Kebun + Asisten Kebun (unit sama) + Kerani (creator) */
+    public function notifyRejectedByDirektur(PdoHeader $pdo, string $reason): void
     {
-        $creator = $pdo->creator;
-        if (! $creator) {
-            return;
-        }
+        $recipients = $this->byRole($pdo, Role::MANAJER_KEUANGAN)
+            ->merge($this->byRole($pdo, Role::MANAJER_KEBUN))
+            ->merge($this->asistenByUnit($pdo))
+            ->merge($this->creator($pdo));
 
-        $this->send($pdo->company_id, NotificationTemplate::EVENT_PDO_REJECTED, collect([$creator]), [
-            'nomor_pdo'    => $pdo->pdo_number,
-            'periode'      => $this->formatPeriod($pdo),
-            'alasan_reject'=> $reason,
-        ]);
+        $this->send(
+            $pdo->company_id,
+            NotificationTemplate::EVENT_PDO_REJECTED_DIREKTUR,
+            $recipients,
+            array_merge($this->baseVars($pdo), ['alasan_reject' => $reason, 'penolak' => 'Direktur Keuangan'])
+        );
     }
 
-    /**
-     * Kirim notifikasi ke KERANI saat PDO Final.
-     */
+    /** Direktur approve (→ Final) → Manajer Keuangan + Manajer Kebun + Asisten Kebun (unit sama) + Kerani (creator) */
     public function notifyFinal(PdoHeader $pdo): void
     {
-        $creator = $pdo->creator;
-        if (! $creator) {
-            return;
-        }
+        $recipients = $this->byRole($pdo, Role::MANAJER_KEUANGAN)
+            ->merge($this->byRole($pdo, Role::MANAJER_KEBUN))
+            ->merge($this->asistenByUnit($pdo))
+            ->merge($this->creator($pdo));
 
-        $this->send($pdo->company_id, NotificationTemplate::EVENT_PDO_FINAL, collect([$creator]), [
-            'nomor_pdo' => $pdo->pdo_number,
-            'periode'   => $this->formatPeriod($pdo),
-        ]);
+        $this->send(
+            $pdo->company_id,
+            NotificationTemplate::EVENT_PDO_FINAL,
+            $recipients,
+            $this->baseVars($pdo)
+        );
     }
 
-    /**
-     * Reminder bulanan: KERANI yang belum buat PDO bulan ini.
-     * BR-NOTIF-004 — dipanggil dari scheduled job.
-     */
+    /** Reminder bulanan: KERANI yang belum buat PDO bulan ini. */
     public function sendMonthlyReminders(string $companyId, int $month, int $year): void
     {
-        // Temukan unit yang belum punya PDO bulan ini
         $unitsWithPdo = \App\Models\PdoHeader::withoutGlobalScopes()
             ->where('company_id', $companyId)
             ->where('period_month', $month)
@@ -132,7 +144,45 @@ class WhatsAppNotificationService
     }
 
     // ─────────────────────────────────────────────────────
-    // PRIVATE
+    // RECIPIENT HELPERS
+    // ─────────────────────────────────────────────────────
+
+    private function creator(PdoHeader $pdo): Collection
+    {
+        $user = $pdo->creator;
+        return $user ? collect([$user]) : collect();
+    }
+
+    private function asistenByUnit(PdoHeader $pdo): Collection
+    {
+        return User::with('role')
+            ->where('company_id', $pdo->company_id)
+            ->where('plantation_unit_id', $pdo->plantation_unit_id)
+            ->whereHas('role', fn ($q) => $q->where('code', Role::ASISTEN_KEBUN))
+            ->where('is_active', true)
+            ->get();
+    }
+
+    private function byRole(PdoHeader $pdo, string $roleCode): Collection
+    {
+        return User::with('role')
+            ->where('company_id', $pdo->company_id)
+            ->whereHas('role', fn ($q) => $q->where('code', $roleCode))
+            ->where('is_active', true)
+            ->get();
+    }
+
+    private function baseVars(PdoHeader $pdo): array
+    {
+        return [
+            'nomor_pdo'  => $pdo->pdo_number,
+            'periode'    => $this->formatPeriod($pdo),
+            'unit_kebun' => $pdo->plantationUnit?->name ?? '',
+        ];
+    }
+
+    // ─────────────────────────────────────────────────────
+    // SEND ENGINE
     // ─────────────────────────────────────────────────────
 
     private function send(string $companyId, string $eventType, iterable $recipients, array $variables): void
@@ -163,16 +213,17 @@ class WhatsAppNotificationService
             // Nilai mungkin belum terenkripsi (dev environment)
         }
 
-        // Jika URL sudah include /send/message, gunakan langsung
         $normalizedUrl = rtrim($baseUrl, '/');
         $endpoint = str_ends_with($normalizedUrl, '/send/message')
             ? $normalizedUrl
             : $normalizedUrl . '/send/message';
 
+        $seen = [];
         foreach ($recipients as $user) {
-            if (! $user->whatsapp_number) {
-                continue;
-            }
+            if (! $user->whatsapp_number) continue;
+            // Deduplicate: jangan kirim dua kali ke nomor yang sama
+            if (in_array($user->whatsapp_number, $seen)) continue;
+            $seen[] = $user->whatsapp_number;
 
             $message = $template->render(array_merge($variables, ['nama_user' => $user->full_name]));
             $phone   = $this->toInternationalFormat($user->whatsapp_number);

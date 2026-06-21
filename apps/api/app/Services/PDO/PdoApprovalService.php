@@ -160,8 +160,13 @@ class PdoApprovalService
 
             $this->appendLog($pdo, $actor, $currentStatus, PdoApprovalLog::ACTION_REJECT, $reason);
 
-            // BR-NOTIF-003: notifikasi penolakan ke KERANI
-            $this->wa->notifyRejected($pdo->fresh()->load('creator'), $reason);
+            $fresh = $pdo->fresh()->load(['creator', 'plantationUnit']);
+            match (true) {
+                $actor->hasRole(Role::ASISTEN_KEBUN)                                      => $this->wa->notifyRejectedByAsisten($fresh, $reason),
+                $actor->hasAnyRole([Role::MANAJER_KEBUN, Role::MANAJER_KEUANGAN])         => $this->wa->notifyRejectedByManager($fresh, $reason),
+                $actor->hasRole(Role::DIREKTUR_KEUANGAN)                                  => $this->wa->notifyRejectedByDirektur($fresh, $reason),
+                default                                                                    => null,
+            };
 
             return $pdo->fresh();
         });
@@ -198,11 +203,12 @@ class PdoApprovalService
         $pdo->update(['status' => $nextStatus]);
         $this->appendLog($pdo, $actor, $stage, PdoApprovalLog::ACTION_APPROVE, $reason);
 
+        $fresh = $pdo->fresh()->load(['creator', 'plantationUnit']);
         if ($nextStatus === PdoHeader::STATUS_FINAL) {
             $this->autoGenerateTransferEntries($pdo);
-            $this->wa->notifyFinal($pdo->fresh()->load('creator'));
+            $this->wa->notifyFinal($fresh);
         } elseif ($nextStatus === PdoHeader::STATUS_REVIEWED_ASISTEN) {
-            $this->wa->notifyApprovedByAsisten($pdo->fresh());
+            $this->wa->notifyApprovedByAsisten($fresh);
         }
 
         return $pdo->fresh();
@@ -258,7 +264,7 @@ class PdoApprovalService
         // Cek apakah keduanya sudah approve
         if ($pdo->manager_kebun_approved === true && $pdo->manager_keuangan_approved === true) {
             $pdo->update(['status' => PdoHeader::STATUS_IN_REVIEW_DIREKTUR]);
-            $this->wa->notifyApprovedByManager($pdo->fresh());
+            $this->wa->notifyApprovedByManager($pdo->fresh()->load(['creator', 'plantationUnit']));
         }
 
         return $pdo->fresh();
