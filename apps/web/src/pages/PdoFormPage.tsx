@@ -25,13 +25,22 @@ const detailSchema = z.object({
   display_order:   z.coerce.number().int().default(0),
 })
 
-const schema = z.object({
+const createSchema = z.object({
+  plantation_unit_id: z.string().uuid('Pilih unit kebun'),
+  period_month:       z.coerce.number().int().min(1).max(12),
+  period_year:        z.coerce.number().int().min(2020),
+  notes:              z.string().nullable().optional(),
+})
+
+const editSchema = z.object({
   plantation_unit_id: z.string().uuid('Pilih unit kebun'),
   period_month:       z.coerce.number().int().min(1).max(12),
   period_year:        z.coerce.number().int().min(2020),
   notes:              z.string().nullable().optional(),
   details:            z.array(detailSchema).min(1, 'Minimal 1 item biaya'),
 })
+
+const schema = editSchema
 
 type Form = z.infer<typeof schema>
 
@@ -68,7 +77,7 @@ export function PdoFormPage() {
 
   const now = new Date()
   const { register, control, handleSubmit, watch, reset, setValue, formState: { errors } } = useForm<Form>({
-    resolver: zodResolver(schema),
+    resolver: zodResolver(isEdit ? editSchema : createSchema) as Parameters<typeof useForm<Form>>[0]['resolver'],
     defaultValues: {
       plantation_unit_id: user?.plantation_unit?.id ?? '',
       period_month: now.getMonth() + 1,
@@ -111,13 +120,15 @@ export function PdoFormPage() {
   }, [existing])
 
   const save = useMutation({
-    mutationFn: (data: Form) =>
-      isEdit
-        ? api.put(`/pdo/${id}`, data)
-        : api.post('/pdo', data),
+    mutationFn: (data: Form) => {
+      if (isEdit) return api.put(`/pdo/${id}`, data)
+      // Create: backend auto-generates routine items — kirim header saja
+      const { plantation_unit_id, period_month, period_year, notes } = data
+      return api.post('/pdo', { plantation_unit_id, period_month, period_year, notes })
+    },
     onSuccess: (res) => {
       const created = (res.data as ApiResponse<PdoHeader>).data
-      toast(isEdit ? 'PDO berhasil diperbarui' : 'PDO berhasil dibuat')
+      toast(isEdit ? 'PDO berhasil diperbarui' : 'PDO berhasil dibuat — item rutin telah disisipkan otomatis')
       qc.invalidateQueries({ queryKey: ['pdo'] })
       navigate(`/pdo/${created.id}`)
     },
@@ -128,7 +139,7 @@ export function PdoFormPage() {
     mutationFn: async (data: Form) => {
       const res = isEdit
         ? await api.put(`/pdo/${id}`, data)
-        : await api.post('/pdo', data)
+        : await api.post('/pdo', { plantation_unit_id: data.plantation_unit_id, period_month: data.period_month, period_year: data.period_year, notes: data.notes })
       const header = (res.data as ApiResponse<PdoHeader>).data
       await api.post(`/pdo/${header.id}/submit`)
       return header
@@ -244,8 +255,15 @@ export function PdoFormPage() {
           </div>
         </div>
 
-        {/* Detail Items */}
-        <div className="card mb-4">
+        {/* Detail Items — hanya tampil saat edit; create auto-generate dari backend */}
+        {!isEdit && (
+          <div className="card mb-4 bg-[#f7faf7] border border-dashed border-[#b8d4b8]">
+            <p className="text-sm text-muted text-center py-3">
+              Item biaya akan disisipkan otomatis dari daftar item rutin setelah PDO disimpan.
+            </p>
+          </div>
+        )}
+        {isEdit && <div className="card mb-4">
           <div className="flex items-center justify-between mb-4">
             <h3 className="text-[17px] font-[850]">Rencana Biaya</h3>
             <Button type="button" size="sm" variant="secondary" onClick={handleAppend}>
@@ -385,19 +403,21 @@ export function PdoFormPage() {
               <span className="text-[20px] font-[950] text-green">{fmt(totalAmount)}</span>
             </div>
           )}
-        </div>
+        </div>}
 
         {/* Actions */}
         <div className="flex gap-2">
           <Button type="submit" loading={save.isPending}>Simpan Draft</Button>
-          <Button
-            type="button"
-            variant="secondary"
-            loading={submit.isPending}
-            onClick={handleSubmit((d) => submit.mutate(d))}
-          >
-            Simpan & Ajukan
-          </Button>
+          {isEdit && (
+            <Button
+              type="button"
+              variant="secondary"
+              loading={submit.isPending}
+              onClick={handleSubmit((d) => submit.mutate(d))}
+            >
+              Simpan & Ajukan
+            </Button>
+          )}
           <Button type="button" variant="secondary" onClick={() => navigate('/pdo')}>Batal</Button>
         </div>
       </form>

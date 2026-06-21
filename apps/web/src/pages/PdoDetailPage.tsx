@@ -12,7 +12,7 @@ import { fmt, fmtDate, fmtPeriode } from '@/lib/format'
 import { isKerani } from '@/lib/auth'
 import { api } from '@/lib/api'
 import type { PdoDetail, ApiResponse, RoleCode } from '@/types'
-import { ArrowLeft, GitBranch, Lock } from 'lucide-react'
+import { ArrowLeft, GitBranch, Lock, CloudDownload } from 'lucide-react'
 
 export function PdoDetailPage() {
   const { id }   = useParams<{ id: string }>()
@@ -131,7 +131,21 @@ export function PdoDetailPage() {
               <tbody>
                 {details.map((d) => (
                   <tr key={d.id} className="border-t border-line hover:bg-[#fbfdfb]">
-                    <td className="px-3 py-2.5 text-sm font-bold">{d.expense_item?.name ?? '—'}</td>
+                    <td className="px-3 py-2.5 text-sm font-bold">
+                      <div className="flex items-center gap-2">
+                        <span>{d.expense_item?.name ?? d.description ?? '—'}</span>
+                        {d.expense_item?.mode_input === 'auto_external' && (
+                          <button
+                            type="button"
+                            title="Ambil dari Sistem Lain"
+                            className="inline-flex items-center gap-1 text-[11px] font-[700] px-2 py-0.5 rounded bg-blue-50 text-blue-700 border border-blue-200 hover:bg-blue-100 transition-colors"
+                            onClick={() => toast('Fitur ambil data eksternal belum tersedia', 'error')}
+                          >
+                            <CloudDownload className="w-3 h-3" /> Ambil Eksternal
+                          </button>
+                        )}
+                      </div>
+                    </td>
                     <td className="px-3 py-2.5 text-sm">{d.description}</td>
                     <td className="px-3 py-2.5 text-sm">{d.quantity ?? '—'}</td>
                     <td className="px-3 py-2.5 text-sm">{d.unit ?? '—'}</td>
