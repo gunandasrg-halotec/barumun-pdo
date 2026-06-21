@@ -49,13 +49,26 @@ class ExpenseItem extends Model
     }
 
     /**
-     * Cek apakah item ini sudah pernah dipakai di PDO (pdo_details).
+     * Cek apakah item ini sudah pernah dipakai di PDO mana pun (termasuk closed).
      * Dipakai untuk BR-MASTER-004.
      */
     public function isUsedInPdo(): bool
     {
         return \DB::table('pdo_details')
             ->where('expense_item_id', $this->id)
+            ->exists();
+    }
+
+    /**
+     * Cek apakah item dipakai di PDO yang masih aktif (status != closed).
+     * Jika true, item tidak boleh dihapus sama sekali.
+     */
+    public function isUsedInActivePdo(): bool
+    {
+        return \DB::table('pdo_details')
+            ->join('pdo_headers', 'pdo_details.pdo_header_id', '=', 'pdo_headers.id')
+            ->where('pdo_details.expense_item_id', $this->id)
+            ->where('pdo_headers.status', '!=', 'closed')
             ->exists();
     }
 }

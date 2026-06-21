@@ -289,7 +289,15 @@ class MasterDataService
 
     public function deleteItem(ExpenseItem $item, User $actor): void
     {
-        // BR-MASTER-004: Jika sudah pernah dipakai di PDO → hanya soft delete
+        // BR-MASTER-004a: Jika dipakai di PDO aktif/final → dilarang hapus sama sekali
+        if ($item->isUsedInActivePdo()) {
+            abort(response()->json([
+                'success' => false,
+                'error'   => ['code' => 'ITEM_IN_USE', 'message' => 'Item biaya sedang digunakan pada PDO yang aktif atau final. Nonaktifkan item melalui menu edit jika diperlukan.'],
+            ], 409));
+        }
+
+        // BR-MASTER-004b: Jika hanya dipakai di PDO closed → soft delete + nonaktifkan
         if ($item->isUsedInPdo()) {
             $item->update(['is_active' => false]);
             $item->delete(); // soft delete
@@ -306,7 +314,7 @@ class MasterDataService
             return;
         }
 
-        // Belum dipakai → hard delete
+        // Belum dipakai di PDO mana pun → hard delete
         $old = $item->toArray();
         $item->forceDelete();
 
