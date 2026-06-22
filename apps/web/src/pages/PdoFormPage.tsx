@@ -11,7 +11,7 @@ import { useAuthStore } from '@/store/auth.store'
 import { useItems, useSubcategories, useCategories } from '@/hooks/useMasterData'
 import { usePdo } from '@/hooks/usePdo'
 import { fmt } from '@/lib/format'
-import { ArrowLeft, Plus, Trash2 } from 'lucide-react'
+import { ArrowLeft, Plus, Trash2, CloudDownload } from 'lucide-react'
 import type { ApiResponse, PdoHeader, PlantationUnit } from '@/types'
 
 const detailSchema = z.object({
@@ -187,10 +187,28 @@ export function PdoFormPage() {
     setValue(`details.${idx}.description`, item.name)
     if (item.default_unit) setValue(`details.${idx}.unit`, item.default_unit)
     if (item.default_rate) setValue(`details.${idx}.rate`, item.default_rate)
+    // Reset amount dan quantity saat item berubah
+    setValue(`details.${idx}.quantity`, null)
+    setValue(`details.${idx}.amount`, 0)
     // Also sync cascade state (for when item selected via keyboard without going through category first)
     const sub = subcategories?.find((s) => s.id === item.subcategory_id)
     setRowSel(idx, { categoryId: sub?.category_id ?? '', subcategoryId: item.subcategory_id ?? '' })
   }
+
+  // Auto-calculate amount = quantity * rate
+  useEffect(() => {
+    if (detailValues) {
+      detailValues.forEach((detail, idx) => {
+        const qty = Number(detail.quantity) || 0
+        const rate = Number(detail.rate) || 0
+        const calculated = qty * rate
+        // Only update if calculated value differs (avoid infinite loop)
+        if (calculated !== Number(detail.amount)) {
+          setValue(`details.${idx}.amount`, calculated)
+        }
+      })
+    }
+  }, [detailValues, setValue])
 
   // Remove row + its cascade state
   const handleRemove = (idx: number) => {
@@ -367,27 +385,72 @@ export function PdoFormPage() {
                       </div>
                     </div>
 
-                    <div className="grid grid-cols-2 desk:grid-cols-4 gap-3">
-                      <div>
-                        <label className="label">Volume</label>
-                        <input type="number" {...register(`details.${idx}.quantity`)} className="input-base" step="0.01" />
-                      </div>
-                      <div>
-                        <label className="label">Satuan</label>
-                        <input {...register(`details.${idx}.unit`)} className="input-base" />
-                      </div>
-                      <div>
-                        <label className="label">Harga Satuan</label>
-                        <input type="number" {...register(`details.${idx}.rate`)} className="input-base" />
-                      </div>
-                      <div>
-                        <label className="label">Jumlah (Rp)</label>
-                        <input type="number" {...register(`details.${idx}.amount`)} className="input-base font-bold" />
-                        {errors.details?.[idx]?.amount && (
-                          <p className="field-error">{errors.details[idx]?.amount?.message}</p>
-                        )}
-                      </div>
-                    </div>
+                    {(() => {
+                      const itemId = fields[idx].expense_item_id as string
+                      const item = items?.find((i) => i.id === itemId)
+                      const isAutoExternal = item?.mode_input === 'auto_external'
+
+                      return (
+                        <>
+                          <div className="grid grid-cols-2 desk:grid-cols-4 gap-3">
+                            <div>
+                              <label className="label">Volume</label>
+                              <input
+                                type="number"
+                                {...register(`details.${idx}.quantity`)}
+                                className="input-base"
+                                step="0.01"
+                                disabled={isAutoExternal}
+                              />
+                            </div>
+                            <div>
+                              <label className="label">Satuan</label>
+                              <input
+                                {...register(`details.${idx}.unit`)}
+                                className="input-base"
+                                disabled={isAutoExternal}
+                              />
+                            </div>
+                            <div>
+                              <label className="label">Harga Satuan</label>
+                              <input
+                                type="number"
+                                {...register(`details.${idx}.rate`)}
+                                className="input-base"
+                                disabled={isAutoExternal}
+                              />
+                            </div>
+                            <div>
+                              <label className="label">Jumlah (Rp)</label>
+                              <input
+                                type="number"
+                                {...register(`details.${idx}.amount`)}
+                                className="input-base font-bold"
+                                disabled={true}
+                              />
+                              {errors.details?.[idx]?.amount && (
+                                <p className="field-error">{errors.details[idx]?.amount?.message}</p>
+                              )}
+                            </div>
+                          </div>
+
+                          {isAutoExternal && (
+                            <div className="mt-3 p-3 bg-blue-50 border border-blue-200 rounded flex items-center justify-between">
+                              <p className="text-sm text-blue-700">
+                                <strong>Auto External:</strong> Data volume, satuan, harga, dan jumlah akan diambil dari sistem eksternal.
+                              </p>
+                              <button
+                                type="button"
+                                className="inline-flex items-center gap-1 text-sm font-bold px-3 py-1 rounded bg-blue-600 text-white hover:bg-blue-700 transition-colors whitespace-nowrap"
+                                onClick={() => toast('Fitur ambil data eksternal belum tersedia', 'error')}
+                              >
+                                <CloudDownload className="w-4 h-4" /> Ambil Data
+                              </button>
+                            </div>
+                          )}
+                        </>
+                      )
+                    })()}
                   </div>
                 )
               })}
