@@ -30,6 +30,7 @@ class ExpenseItem extends Model
         'default_rate',
         'mode_input',
         'split_transfer',
+        'split_transfer_plantation_unit_ids',
         'is_routine',
         'routine_plantation_unit_ids',
         'is_active',
@@ -40,10 +41,11 @@ class ExpenseItem extends Model
     {
         return [
             'default_rate'                => 'integer',
-            'split_transfer'              => 'boolean',
-            'is_routine'                  => 'boolean',
-            'is_active'                   => 'boolean',
-            'routine_plantation_unit_ids' => 'array',
+            'split_transfer'                      => 'boolean',
+            'split_transfer_plantation_unit_ids'  => 'array',
+            'is_routine'                          => 'boolean',
+            'is_active'                           => 'boolean',
+            'routine_plantation_unit_ids'         => 'array',
             'deleted_at'                  => 'datetime',
         ];
     }

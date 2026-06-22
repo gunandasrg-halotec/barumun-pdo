@@ -22,8 +22,9 @@ const schema = z.object({
     z.number().nullable().optional(),
   ),
   mode_input:                   z.enum(['manual', 'auto_external']),
-  split_transfer:               z.boolean(),
-  is_routine:                   z.boolean(),
+  split_transfer:                      z.boolean(),
+  split_transfer_plantation_unit_ids:  z.array(z.string().uuid()).nullable().optional(),
+  is_routine:                          z.boolean(),
   routine_plantation_unit_ids:  z.array(z.string().uuid()).nullable().optional(),
   is_active:                    z.boolean(),
   notes:                        z.string().nullable().optional(),
@@ -59,22 +60,38 @@ export function ItemFormPage() {
 
   const { register, handleSubmit, reset, setError, control, setValue, formState: { errors } } = useForm<Form>({
     resolver: zodResolver(schema),
-    defaultValues: { mode_input: 'manual', split_transfer: false, is_routine: true, is_active: true, routine_plantation_unit_ids: null },
+    defaultValues: { mode_input: 'manual', split_transfer: false, split_transfer_plantation_unit_ids: null, is_routine: true, is_active: true, routine_plantation_unit_ids: null },
   })
 
-  const isRoutine   = useWatch({ control, name: 'is_routine' })
+  const isRoutine      = useWatch({ control, name: 'is_routine' })
+  const isSplit        = useWatch({ control, name: 'split_transfer' })
   const routineUnitIds = useWatch({ control, name: 'routine_plantation_unit_ids' })
+  const splitUnitIds   = useWatch({ control, name: 'split_transfer_plantation_unit_ids' })
 
   useEffect(() => {
     if (existing) {
+      const ext = existing as unknown as {
+        split_transfer?: boolean
+        split_transfer_plantation_unit_ids?: string[] | null
+        routine_plantation_unit_ids?: string[] | null
+      }
       reset({
         ...existing,
         notes: existing.notes ?? '',
-        split_transfer: (existing as unknown as { split_transfer?: boolean }).split_transfer ?? false,
-        routine_plantation_unit_ids: (existing as unknown as { routine_plantation_unit_ids?: string[] | null }).routine_plantation_unit_ids ?? null,
+        split_transfer:                     ext.split_transfer ?? false,
+        split_transfer_plantation_unit_ids: ext.split_transfer_plantation_unit_ids ?? null,
+        routine_plantation_unit_ids:        ext.routine_plantation_unit_ids ?? null,
       })
     }
   }, [existing, reset])
+
+  const toggleSplitUnit = (id: string) => {
+    const current = splitUnitIds ?? []
+    const next = current.includes(id)
+      ? current.filter((x) => x !== id)
+      : [...current, id]
+    setValue('split_transfer_plantation_unit_ids', next.length > 0 ? next : null)
+  }
 
   const toggleRoutineUnit = (id: string) => {
     const current = routineUnitIds ?? []
@@ -193,6 +210,41 @@ export function ItemFormPage() {
             Aktif
           </label>
         </div>
+
+        {/* Split transfer scope — hanya muncul jika split_transfer = true */}
+        {isSplit && units && units.length > 1 && (
+          <div className="border border-line rounded-card p-4 bg-[#f0f7ff]">
+            <p className="text-sm font-[850] mb-2">Split Transfer Berlaku Untuk:</p>
+            <label className="flex items-center gap-2 text-sm cursor-pointer mb-2">
+              <input
+                type="checkbox"
+                checked={!splitUnitIds || splitUnitIds.length === 0}
+                onChange={() => setValue('split_transfer_plantation_unit_ids', null)}
+                className="checkbox"
+              />
+              <span className="font-bold">Semua Kebun</span>
+            </label>
+            <div className="border-t border-line my-2" />
+            <div className="flex flex-col gap-1.5">
+              {units.map((unit) => (
+                <label key={unit.id} className="flex items-center gap-2 text-sm cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={(splitUnitIds ?? []).includes(unit.id)}
+                    onChange={() => toggleSplitUnit(unit.id)}
+                    className="checkbox"
+                  />
+                  <span>{unit.code} — {unit.name}</span>
+                </label>
+              ))}
+            </div>
+            {splitUnitIds && splitUnitIds.length > 0 && (
+              <p className="text-xs text-muted mt-2">
+                Mode split hanya akan tampil di halaman transfer untuk {splitUnitIds.length} kebun yang dipilih.
+              </p>
+            )}
+          </div>
+        )}
 
         {/* Routine scope — hanya muncul jika is_routine = true */}
         {isRoutine && units && units.length > 1 && (

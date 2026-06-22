@@ -49,7 +49,10 @@ class TransferEntryService
                 'expense_item'     => $detail->expenseItem
                     ? array_merge(
                         $detail->expenseItem->only(['id', 'code', 'name']),
-                        ['split_transfer' => (bool) $detail->expenseItem->split_transfer]
+                        [
+                            'split_transfer'                     => (bool) $detail->expenseItem->split_transfer,
+                            'split_transfer_plantation_unit_ids' => $detail->expenseItem->split_transfer_plantation_unit_ids,
+                        ]
                     )
                     : null,
                 'description'      => $detail->description,
