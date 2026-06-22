@@ -10,7 +10,7 @@ class UpdateExpenseItemRequest extends FormRequest
 {
     public function authorize(): bool
     {
-        return $this->user()?->hasRole('ADMIN') ?? false;
+        return $this->user()?->hasAnyRole(['ADMIN', 'STAFF_KEUANGAN']) ?? false;
     }
 
     public function rules(): array

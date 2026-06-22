@@ -45,7 +45,7 @@ class ExpenseSubcategoryController extends Controller
 
     public function destroy(Request $request, string $id): JsonResponse
     {
-        if (! $request->user()->hasRole('ADMIN')) {
+        if (! $request->user()->hasAnyRole(['ADMIN', 'STAFF_KEUANGAN'])) {
             return response()->json([
                 'success' => false,
                 'error'   => ['code' => 'FORBIDDEN', 'message' => 'Anda tidak memiliki akses untuk menghapus data ini.'],

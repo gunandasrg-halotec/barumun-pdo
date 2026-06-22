@@ -11,14 +11,15 @@ export const ROLES_CROSS_UNIT: RoleCode[] = [
   'DIREKTUR_KEUANGAN', 'STAFF_PURCHASING',
 ]
 
-export const canApprove    = (role: RoleCode) => ROLES_APPROVER.includes(role)
-export const canTransfer   = (role: RoleCode) => ROLES_FINANCE.includes(role)
-export const canRecordReal = (role: RoleCode) => role === 'KERANI' || role === 'STAFF_PURCHASING'
-export const isCrossUnit   = (role: RoleCode) => ROLES_CROSS_UNIT.includes(role)
-export const isAdmin       = (role: RoleCode) => role === 'ADMIN'
-export const isKerani      = (role: RoleCode) => role === 'KERANI'
-export const isMgrKeu      = (role: RoleCode) => role === 'MANAJER_KEUANGAN'
-export const isPurchasing  = (role: RoleCode) => role === 'STAFF_PURCHASING'
+export const canApprove       = (role: RoleCode) => ROLES_APPROVER.includes(role)
+export const canTransfer      = (role: RoleCode) => ROLES_FINANCE.includes(role)
+export const canRecordReal    = (role: RoleCode) => role === 'KERANI' || role === 'STAFF_PURCHASING'
+export const isCrossUnit      = (role: RoleCode) => ROLES_CROSS_UNIT.includes(role)
+export const isAdmin          = (role: RoleCode) => role === 'ADMIN'
+export const isKerani         = (role: RoleCode) => role === 'KERANI'
+export const isMgrKeu         = (role: RoleCode) => role === 'MANAJER_KEUANGAN'
+export const isPurchasing     = (role: RoleCode) => role === 'STAFF_PURCHASING'
+export const canEditMasterData = (role: RoleCode) => role === 'ADMIN' || role === 'STAFF_KEUANGAN'
 
 // Label role untuk tampilan
 export const ROLE_LABELS: Record<RoleCode, string> = {

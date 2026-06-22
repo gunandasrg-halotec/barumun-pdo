@@ -6,7 +6,7 @@ import { Badge } from '@/components/ui/Badge'
 import { Button } from '@/components/ui/Button'
 import { EmptyState } from '@/components/ui/EmptyState'
 import { fmt } from '@/lib/format'
-import { isAdmin } from '@/lib/auth'
+import { isAdmin, canEditMasterData } from '@/lib/auth'
 import type { RoleCode } from '@/types'
 import { ChevronDown, ChevronRight } from 'lucide-react'
 
@@ -17,6 +17,7 @@ export function MasterDataPage() {
   const navigate = useNavigate()
   const role     = user?.role.code as RoleCode | undefined
   const admin    = role ? isAdmin(role) : false
+  const canEdit  = role ? canEditMasterData(role) : false
 
   const [tab, setTab]                   = useState<Tab>('hierarki')
   const [expandedCats, setExpandedCats] = useState<Set<string>>(new Set())
@@ -44,7 +45,7 @@ export function MasterDataPage() {
         <div>
           <h2 className="text-[28px] font-[950] text-ink">Master Data</h2>
         </div>
-        {admin && (
+        {canEdit && (
           <div className="flex gap-2">
             <Button onClick={() => navigate('/master/kategori/buat')}>+ Kategori</Button>
             <Button variant="secondary" onClick={() => navigate('/master/sub-kategori/buat')}>+ Sub-Kategori</Button>
@@ -105,7 +106,7 @@ export function MasterDataPage() {
                         </Badge>
                       </td>
                       <td className="px-4 py-3">
-                        {admin && (
+                        {canEdit && (
                           <button className="text-sm text-green hover:underline font-bold"
                             onClick={() => navigate(`/master/kategori/${cat.id}/edit`)}>
                             Edit
@@ -134,7 +135,7 @@ export function MasterDataPage() {
                             </Badge>
                           </td>
                           <td className="px-4 py-3">
-                            {admin && (
+                            {canEdit && (
                               <button className="text-sm text-green hover:underline font-bold"
                                 onClick={() => navigate(`/master/sub-kategori/${sub.id}/edit`)}>
                                 Edit
@@ -154,7 +155,7 @@ export function MasterDataPage() {
                               </Badge>
                             </td>
                             <td className="px-4 py-2.5">
-                              {admin && (
+                              {canEdit && (
                                 <button className="text-sm text-green hover:underline font-bold"
                                   onClick={() => navigate(`/master/item/${item.id}/edit`)}>
                                   Edit
@@ -187,7 +188,7 @@ export function MasterDataPage() {
                   <div className="flex-1">
                     <div className="font-[850] text-sm">{step.title}</div>
                     <div className="text-xs text-muted">{step.desc}</div>
-                    {admin && (
+                    {canEdit && (
                       <button
                         className="text-xs text-green hover:underline font-bold mt-1"
                         onClick={() => navigate(step.to)}
@@ -246,7 +247,7 @@ export function MasterDataPage() {
                       </Badge>
                     </td>
                     <td className="px-4 py-3">
-                      {admin && (
+                      {canEdit && (
                         <button className="text-sm text-green hover:underline font-bold"
                           onClick={() => navigate(`/master/item/${item.id}/edit`)}>
                           Edit
