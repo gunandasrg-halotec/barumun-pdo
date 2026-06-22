@@ -18,6 +18,10 @@ class TransferEntry extends Model
     const SOURCE_SYSTEM = 'system';
     const SOURCE_MANUAL = 'manual';
 
+    const DEST_REK_KEBUN = 'rek_kebun';
+    const DEST_PRIBADI   = 'pribadi';
+    const DEST_VENDOR    = 'vendor';
+
     protected $fillable = [
         'pdo_detail_id',
         'recorded_by',
@@ -27,6 +31,7 @@ class TransferEntry extends Model
         'amount',
         'reference_number',
         'notes',
+        'transfer_destination',
     ];
 
     protected function casts(): array

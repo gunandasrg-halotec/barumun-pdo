@@ -29,7 +29,9 @@ class ExpenseItem extends Model
         'default_unit',
         'default_rate',
         'mode_input',
+        'split_transfer',
         'is_routine',
+        'routine_plantation_unit_ids',
         'is_active',
         'notes',
     ];
@@ -37,10 +39,12 @@ class ExpenseItem extends Model
     protected function casts(): array
     {
         return [
-            'default_rate' => 'integer',
-            'is_routine'   => 'boolean',
-            'is_active'    => 'boolean',
-            'deleted_at'   => 'datetime',
+            'default_rate'                => 'integer',
+            'split_transfer'              => 'boolean',
+            'is_routine'                  => 'boolean',
+            'is_active'                   => 'boolean',
+            'routine_plantation_unit_ids' => 'array',
+            'deleted_at'                  => 'datetime',
         ];
     }
 

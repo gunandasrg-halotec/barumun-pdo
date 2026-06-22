@@ -45,13 +45,18 @@ class TransferEntryService
             ->with(['expenseItem', 'transferEntries'])
             ->get()
             ->map(fn ($detail) => [
-                'pdo_detail_id'   => $detail->id,
-                'expense_item'    => $detail->expenseItem?->only(['id', 'code', 'name']),
-                'description'     => $detail->description,
-                'amount_approved' => $detail->amount,
+                'pdo_detail_id'    => $detail->id,
+                'expense_item'     => $detail->expenseItem
+                    ? array_merge(
+                        $detail->expenseItem->only(['id', 'code', 'name']),
+                        ['split_transfer' => (bool) $detail->expenseItem->split_transfer]
+                    )
+                    : null,
+                'description'      => $detail->description,
+                'amount_approved'  => $detail->amount,
                 'total_transferred'=> $detail->total_transferred,
-                'remaining'       => $detail->amount - $detail->total_transferred,
-                'entries'         => $detail->transferEntries,
+                'remaining'        => $detail->amount - $detail->total_transferred,
+                'entries'          => $detail->transferEntries,
             ]);
     }
 
@@ -88,14 +93,15 @@ class TransferEntryService
             }
 
             $entry = TransferEntry::create([
-                'pdo_detail_id'    => $detail->id,
-                'recorded_by'      => $actor->id,
-                'entry_source'     => TransferEntry::SOURCE_MANUAL,
-                'is_auto_generated'=> false,
-                'transfer_date'    => $data['transfer_date'],
-                'amount'           => $data['amount'],
-                'reference_number' => $data['reference_number'],
-                'notes'            => $data['notes'] ?? null,
+                'pdo_detail_id'        => $detail->id,
+                'recorded_by'          => $actor->id,
+                'entry_source'         => TransferEntry::SOURCE_MANUAL,
+                'is_auto_generated'    => false,
+                'transfer_date'        => $data['transfer_date'],
+                'amount'               => $data['amount'],
+                'reference_number'     => $data['reference_number'],
+                'notes'                => $data['notes'] ?? null,
+                'transfer_destination' => $data['transfer_destination'] ?? TransferEntry::DEST_REK_KEBUN,
             ]);
 
             AuditLog::record(
@@ -147,14 +153,15 @@ class TransferEntryService
                 }
 
                 $entry = TransferEntry::create([
-                    'pdo_detail_id'    => $detail->id,
-                    'recorded_by'      => $actor->id,
-                    'entry_source'     => TransferEntry::SOURCE_MANUAL,
-                    'is_auto_generated'=> false,
-                    'transfer_date'    => $row['transfer_date'],
-                    'amount'           => $row['amount'],
-                    'reference_number' => $row['reference_number'] ?? null,
-                    'notes'            => $row['notes'] ?? null,
+                    'pdo_detail_id'        => $detail->id,
+                    'recorded_by'          => $actor->id,
+                    'entry_source'         => TransferEntry::SOURCE_MANUAL,
+                    'is_auto_generated'    => false,
+                    'transfer_date'        => $row['transfer_date'],
+                    'amount'               => $row['amount'],
+                    'reference_number'     => $row['reference_number'] ?? null,
+                    'notes'                => $row['notes'] ?? null,
+                    'transfer_destination' => $row['transfer_destination'] ?? TransferEntry::DEST_REK_KEBUN,
                 ]);
 
                 AuditLog::record(

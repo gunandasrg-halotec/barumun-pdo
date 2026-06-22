@@ -271,10 +271,17 @@ class PdoService
      */
     private function fillRoutineTemplate(PdoHeader $pdo): void
     {
+        $unitId = $pdo->plantation_unit_id;
+
         $routineItems = ExpenseItem::with('subcategory')
             ->where('is_routine', true)
             ->where('is_active', true)
             ->whereNull('deleted_at')
+            ->where(function ($q) use ($unitId) {
+                // NULL = berlaku untuk semua kebun; atau unit ada di dalam array
+                $q->whereNull('routine_plantation_unit_ids')
+                  ->orWhereRaw("routine_plantation_unit_ids @> ARRAY[?]::uuid[]", [$unitId]);
+            })
             ->orderBy('code')
             ->get();
 

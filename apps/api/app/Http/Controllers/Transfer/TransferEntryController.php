@@ -72,12 +72,13 @@ class TransferEntryController extends Controller
     public function storeBulk(Request $request, PdoHeader $pdo): JsonResponse
     {
         $request->validate([
-            'entries'                       => ['required', 'array', 'min:1'],
-            'entries.*.pdo_detail_id'       => ['required', 'uuid'],
-            'entries.*.amount'              => ['required', 'integer', 'min:1'],
-            'entries.*.transfer_date'       => ['required', 'date'],
-            'entries.*.reference_number'    => ['nullable', 'string', 'max:100'],
-            'entries.*.notes'               => ['nullable', 'string'],
+            'entries'                            => ['required', 'array', 'min:1'],
+            'entries.*.pdo_detail_id'            => ['required', 'uuid'],
+            'entries.*.amount'                   => ['required', 'integer', 'min:1'],
+            'entries.*.transfer_date'            => ['required', 'date'],
+            'entries.*.reference_number'         => ['nullable', 'string', 'max:100'],
+            'entries.*.notes'                    => ['nullable', 'string'],
+            'entries.*.transfer_destination'     => ['nullable', 'string', 'in:rek_kebun,pribadi,vendor'],
         ]);
 
         if (! $request->user()?->canRecordTransfer()) {

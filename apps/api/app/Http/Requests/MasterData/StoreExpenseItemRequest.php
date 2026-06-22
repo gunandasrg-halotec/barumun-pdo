@@ -24,10 +24,13 @@ class StoreExpenseItemRequest extends FormRequest
             'default_account_number' => ['nullable', 'string', 'max:50'],
             'default_unit'           => ['nullable', 'string', 'max:50'],
             'default_rate'           => ['sometimes', 'integer', 'min:0'],
-            'mode_input'             => ['sometimes', Rule::in([ExpenseItem::MODE_MANUAL, ExpenseItem::MODE_AUTO_EXTERNAL])],
-            'is_routine'             => ['sometimes', 'boolean'],
-            'is_active'              => ['sometimes', 'boolean'],
-            'notes'                  => ['nullable', 'string'],
+            'mode_input'                    => ['sometimes', Rule::in([ExpenseItem::MODE_MANUAL, ExpenseItem::MODE_AUTO_EXTERNAL])],
+            'split_transfer'               => ['sometimes', 'boolean'],
+            'is_routine'                   => ['sometimes', 'boolean'],
+            'routine_plantation_unit_ids'  => ['nullable', 'array'],
+            'routine_plantation_unit_ids.*'=> ['uuid', 'exists:plantation_units,id'],
+            'is_active'                    => ['sometimes', 'boolean'],
+            'notes'                        => ['nullable', 'string'],
         ];
     }
 }

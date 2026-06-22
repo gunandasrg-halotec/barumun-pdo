@@ -1,6 +1,6 @@
 import { useEffect } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
-import { useForm } from 'react-hook-form'
+import { useForm, useWatch } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
@@ -9,19 +9,21 @@ import { Button } from '@/components/ui/Button'
 import { useToastStore } from '@/store/toast.store'
 import { useSubcategories } from '@/hooks/useMasterData'
 import { ArrowLeft } from 'lucide-react'
-import type { ApiResponse, ExpenseItem } from '@/types'
+import type { ApiResponse, ExpenseItem, PlantationUnit } from '@/types'
 
 const schema = z.object({
-  subcategory_id:         z.string().uuid('Pilih sub-kategori'),
-  code:                   z.string().min(1, 'Kode wajib diisi'),
-  name:                   z.string().min(1, 'Nama wajib diisi'),
-  default_account_number: z.string().nullable().optional(),
-  default_unit:           z.string().nullable().optional(),
-  default_rate:           z.coerce.number().nullable().optional(),
-  mode_input:             z.enum(['manual', 'auto_external']),
-  is_routine:             z.boolean(),
-  is_active:              z.boolean(),
-  notes:                  z.string().nullable().optional(),
+  subcategory_id:               z.string().uuid('Pilih sub-kategori'),
+  code:                         z.string().min(1, 'Kode wajib diisi'),
+  name:                         z.string().min(1, 'Nama wajib diisi'),
+  default_account_number:       z.string().nullable().optional(),
+  default_unit:                 z.string().nullable().optional(),
+  default_rate:                 z.coerce.number().nullable().optional(),
+  mode_input:                   z.enum(['manual', 'auto_external']),
+  split_transfer:               z.boolean(),
+  is_routine:                   z.boolean(),
+  routine_plantation_unit_ids:  z.array(z.string().uuid()).nullable().optional(),
+  is_active:                    z.boolean(),
+  notes:                        z.string().nullable().optional(),
 })
 
 type Form = z.infer<typeof schema>
@@ -35,6 +37,14 @@ export function ItemFormPage() {
 
   const { data: subcategories } = useSubcategories({ is_active: true })
 
+  const { data: units } = useQuery({
+    queryKey: ['plantation-units'],
+    queryFn: async () => {
+      const res = await api.get<ApiResponse<PlantationUnit[]>>('/plantation-units')
+      return res.data.data
+    },
+  })
+
   const { data: existing } = useQuery({
     queryKey: ['item', id],
     queryFn: async () => {
@@ -44,14 +54,32 @@ export function ItemFormPage() {
     enabled: isEdit,
   })
 
-  const { register, handleSubmit, reset, setError, formState: { errors } } = useForm<Form>({
+  const { register, handleSubmit, reset, setError, control, setValue, formState: { errors } } = useForm<Form>({
     resolver: zodResolver(schema),
-    defaultValues: { mode_input: 'manual', is_routine: true, is_active: true },
+    defaultValues: { mode_input: 'manual', split_transfer: false, is_routine: true, is_active: true, routine_plantation_unit_ids: null },
   })
 
+  const isRoutine   = useWatch({ control, name: 'is_routine' })
+  const routineUnitIds = useWatch({ control, name: 'routine_plantation_unit_ids' })
+
   useEffect(() => {
-    if (existing) reset({ ...existing, notes: existing.notes ?? '' })
+    if (existing) {
+      reset({
+        ...existing,
+        notes: existing.notes ?? '',
+        split_transfer: (existing as unknown as { split_transfer?: boolean }).split_transfer ?? false,
+        routine_plantation_unit_ids: (existing as unknown as { routine_plantation_unit_ids?: string[] | null }).routine_plantation_unit_ids ?? null,
+      })
+    }
   }, [existing, reset])
+
+  const toggleRoutineUnit = (id: string) => {
+    const current = routineUnitIds ?? []
+    const next = current.includes(id)
+      ? current.filter((x) => x !== id)
+      : [...current, id]
+    setValue('routine_plantation_unit_ids', next.length > 0 ? next : null)
+  }
 
   const save = useMutation({
     mutationFn: (data: Form) =>
@@ -67,7 +95,7 @@ export function ItemFormPage() {
       type ApiErr = { response?: { data?: { error?: { details?: { field: string; message: string }[] } } } }
       const details = (err as ApiErr)?.response?.data?.error?.details
       if (details?.length) {
-        const validFields = new Set<string>(['code', 'name', 'subcategory_id', 'default_account_number', 'default_unit', 'default_rate', 'mode_input', 'is_routine', 'is_active', 'notes'])
+        const validFields = new Set<string>(['code', 'name', 'subcategory_id', 'default_account_number', 'default_unit', 'default_rate', 'mode_input', 'split_transfer', 'is_routine', 'is_active', 'notes'])
         let handled = false
         for (const { field, message } of details) {
           if (validFields.has(field)) {
@@ -146,16 +174,57 @@ export function ItemFormPage() {
           <textarea {...register('notes')} className="input-base resize-none" rows={3} />
         </div>
 
-        <div className="flex gap-6">
+        {/* Checkboxes */}
+        <div className="flex flex-wrap gap-6">
           <label className="flex items-center gap-2 text-sm font-[700] cursor-pointer">
             <input type="checkbox" {...register('is_routine')} className="checkbox" />
             Item Rutin
+          </label>
+          <label className="flex items-center gap-2 text-sm font-[700] cursor-pointer">
+            <input type="checkbox" {...register('split_transfer')} className="checkbox" />
+            Split Transfer
+            <span className="text-xs text-muted font-normal">(transfer ke 2 tujuan berbeda)</span>
           </label>
           <label className="flex items-center gap-2 text-sm font-[700] cursor-pointer">
             <input type="checkbox" {...register('is_active')} className="checkbox" />
             Aktif
           </label>
         </div>
+
+        {/* Routine scope — hanya muncul jika is_routine = true */}
+        {isRoutine && units && units.length > 1 && (
+          <div className="border border-line rounded-card p-4 bg-[#f7faf7]">
+            <p className="text-sm font-[850] mb-2">Item Rutin Berlaku Untuk:</p>
+            <label className="flex items-center gap-2 text-sm cursor-pointer mb-2">
+              <input
+                type="checkbox"
+                checked={!routineUnitIds || routineUnitIds.length === 0}
+                onChange={() => setValue('routine_plantation_unit_ids', null)}
+                className="checkbox"
+              />
+              <span className="font-bold">Semua Kebun</span>
+            </label>
+            <div className="border-t border-line my-2" />
+            <div className="flex flex-col gap-1.5">
+              {units.map((unit) => (
+                <label key={unit.id} className="flex items-center gap-2 text-sm cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={(routineUnitIds ?? []).includes(unit.id)}
+                    onChange={() => toggleRoutineUnit(unit.id)}
+                    className="checkbox"
+                  />
+                  <span>{unit.code} — {unit.name}</span>
+                </label>
+              ))}
+            </div>
+            {routineUnitIds && routineUnitIds.length > 0 && (
+              <p className="text-xs text-muted mt-2">
+                Item ini hanya akan auto-muncul di PDO untuk {routineUnitIds.length} kebun yang dipilih.
+              </p>
+            )}
+          </div>
+        )}
 
         <div className="flex gap-2 pt-2">
           <Button type="submit" loading={save.isPending}>Simpan</Button>
