@@ -16,16 +16,19 @@ import type { ApiResponse, PdoHeader, PdoDetail } from '@/types'
 // ─── types ────────────────────────────────────────────────────────────────────
 
 interface PdoSummaryRow {
-  pdo_id:             string
-  pdo_number:         string
-  plantation_unit:    { id: string; code: string; name: string } | null
-  period_month:       number
-  period_year:        number
-  notes:              string | null
-  total_amount:       number
-  total_transferred:  number
-  remaining:          number
-  last_transfer_date: string | null
+  pdo_id:                  string
+  pdo_number:              string
+  plantation_unit:         { id: string; code: string; name: string } | null
+  period_month:            number
+  period_year:             number
+  notes:                   string | null
+  total_amount:            number
+  transferred_rek_kebun:   number
+  transferred_pribadi:     number
+  transferred_vendor:      number
+  total_transferred:       number
+  remaining:               number
+  last_transfer_date:      string | null
 }
 
 // ─── schema single entry ───────────────────────────────────────────────────────
@@ -159,7 +162,7 @@ export function TransferPage() {
         <table className="w-full border-collapse" style={{ minWidth: 960 }}>
           <thead>
             <tr>
-              {['No. Referensi PDO', 'Unit Kebun', 'Periode', 'Tanggal Terakhir Transfer', 'Total Pengajuan', 'Total Transfer', 'Catatan', ''].map((h) => (
+              {['No. Referensi PDO', 'Unit Kebun', 'Periode', 'Tgl. Terakhir Transfer', 'Total Pengajuan', 'Rek. Kebun', 'Pribadi', 'Vendor', 'Total Transfer', 'Catatan', ''].map((h) => (
                 <th key={h} className="px-4 py-3 text-left text-[11px] font-bold uppercase tracking-wider text-muted bg-[#f7faf7]">
                   {h}
                 </th>
@@ -170,7 +173,7 @@ export function TransferPage() {
             {isLoading ? (
               Array.from({ length: 4 }).map((_, i) => (
                 <tr key={i}>
-                  {Array.from({ length: 8 }).map((__, j) => (
+                  {Array.from({ length: 11 }).map((__, j) => (
                     <td key={j} className="px-4 py-3">
                       <div className="h-4 bg-[#f0f4f0] rounded animate-pulse" />
                     </td>
@@ -178,7 +181,7 @@ export function TransferPage() {
                 </tr>
               ))
             ) : !pdoSummary?.length ? (
-              <tr><td colSpan={8} className="p-8"><EmptyState /></td></tr>
+              <tr><td colSpan={11} className="p-8"><EmptyState /></td></tr>
             ) : pdoSummary.map((row) => (
               <tr key={row.pdo_id} className="border-t border-line hover:bg-[#fbfdfb]">
                 <td className="px-4 py-3 font-bold text-sm">{row.pdo_number}</td>
@@ -186,6 +189,9 @@ export function TransferPage() {
                 <td className="px-4 py-3 text-sm">{MONTHS[row.period_month]} {row.period_year}</td>
                 <td className="px-4 py-3 text-sm">{row.last_transfer_date ? fmtDate(row.last_transfer_date) : '—'}</td>
                 <td className="px-4 py-3 text-sm">{fmt(row.total_amount)}</td>
+                <td className="px-4 py-3 text-sm">{row.transferred_rek_kebun > 0 ? fmt(row.transferred_rek_kebun) : '—'}</td>
+                <td className="px-4 py-3 text-sm">{row.transferred_pribadi > 0 ? fmt(row.transferred_pribadi) : '—'}</td>
+                <td className="px-4 py-3 text-sm">{row.transferred_vendor > 0 ? fmt(row.transferred_vendor) : '—'}</td>
                 <td className="px-4 py-3 text-sm font-bold">{fmt(row.total_transferred)}</td>
                 <td className="px-4 py-3 text-sm text-muted">{row.notes ?? '—'}</td>
                 <td className="px-4 py-3">

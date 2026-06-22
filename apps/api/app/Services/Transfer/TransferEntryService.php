@@ -198,8 +198,14 @@ class TransferEntryService
         return $pdos->map(function (PdoHeader $pdo) {
             $details = $pdo->details()->get();
 
-            $totalAmount    = $details->sum('amount');
-            $totalTransfer  = $details->sum('total_transferred');
+            $totalAmount   = $details->sum('amount');
+            $totalTransfer = $details->sum('total_transferred');
+
+            // Per-destination totals
+            $transfersByDest = TransferEntry::whereHas('pdoDetail', fn ($q) => $q->where('pdo_header_id', $pdo->id))
+                ->selectRaw('transfer_destination, COALESCE(SUM(amount), 0) as subtotal')
+                ->groupBy('transfer_destination')
+                ->pluck('subtotal', 'transfer_destination');
 
             $lastTransfer = TransferEntry::whereHas('pdoDetail', fn ($q) => $q->where('pdo_header_id', $pdo->id))
                 ->where('entry_source', TransferEntry::SOURCE_MANUAL)
@@ -208,16 +214,19 @@ class TransferEntryService
                 ->first();
 
             return [
-                'pdo_id'                => $pdo->id,
-                'pdo_number'            => $pdo->pdo_number,
-                'plantation_unit'       => $pdo->plantationUnit?->only(['id', 'code', 'name']),
-                'period_month'          => $pdo->period_month,
-                'period_year'           => $pdo->period_year,
-                'notes'                 => $pdo->notes,
-                'total_amount'          => $totalAmount,
-                'total_transferred'     => $totalTransfer,
-                'remaining'             => $totalAmount - $totalTransfer,
-                'last_transfer_date'    => $lastTransfer?->transfer_date,
+                'pdo_id'                    => $pdo->id,
+                'pdo_number'                => $pdo->pdo_number,
+                'plantation_unit'           => $pdo->plantationUnit?->only(['id', 'code', 'name']),
+                'period_month'              => $pdo->period_month,
+                'period_year'              => $pdo->period_year,
+                'notes'                     => $pdo->notes,
+                'total_amount'              => $totalAmount,
+                'transferred_rek_kebun'     => (int) ($transfersByDest[TransferEntry::DEST_REK_KEBUN] ?? 0),
+                'transferred_pribadi'       => (int) ($transfersByDest[TransferEntry::DEST_PRIBADI] ?? 0),
+                'transferred_vendor'        => (int) ($transfersByDest[TransferEntry::DEST_VENDOR] ?? 0),
+                'total_transferred'         => $totalTransfer,
+                'remaining'                 => $totalAmount - $totalTransfer,
+                'last_transfer_date'        => $lastTransfer?->transfer_date,
             ];
         })->values()->all();
     }
