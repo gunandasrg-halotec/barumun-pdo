@@ -7,6 +7,7 @@ use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\SoftDeletes;
+use App\Casts\PgUuidArray;
 use App\Models\PdoHeader;
 
 class ExpenseItem extends Model
@@ -42,10 +43,10 @@ class ExpenseItem extends Model
         return [
             'default_rate'                => 'integer',
             'split_transfer'                      => 'boolean',
-            'split_transfer_plantation_unit_ids'  => 'array',
+            'split_transfer_plantation_unit_ids'  => PgUuidArray::class,
             'is_routine'                          => 'boolean',
             'is_active'                           => 'boolean',
-            'routine_plantation_unit_ids'         => 'array',
+            'routine_plantation_unit_ids'         => PgUuidArray::class,
             'deleted_at'                  => 'datetime',
         ];
     }
