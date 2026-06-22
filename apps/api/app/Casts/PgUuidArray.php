@@ -22,7 +22,7 @@ class PgUuidArray implements CastsAttributes
 
         return array_map(
             fn ($v) => trim($v, '"'),
-            str_getcsv($value)
+            str_getcsv($value, ',', '"', "\0")
         );
     }
 
