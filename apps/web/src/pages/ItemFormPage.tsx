@@ -17,7 +17,10 @@ const schema = z.object({
   name:                         z.string().min(1, 'Nama wajib diisi'),
   default_account_number:       z.string().nullable().optional(),
   default_unit:                 z.string().nullable().optional(),
-  default_rate:                 z.coerce.number().nullable().optional(),
+  default_rate:                 z.preprocess(
+    (v) => (v === '' || v === null || v === undefined ? null : Number(v)),
+    z.number().nullable().optional(),
+  ),
   mode_input:                   z.enum(['manual', 'auto_external']),
   split_transfer:               z.boolean(),
   is_routine:                   z.boolean(),
