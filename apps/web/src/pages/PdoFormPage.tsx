@@ -196,19 +196,17 @@ export function PdoFormPage() {
   }
 
   // Auto-calculate amount = quantity * rate
+  const calculateAmount = (idx: number) => {
+    const detail = detailValues?.[idx]
+    if (!detail) return
+    const qty = Number(detail.quantity) || 0
+    const rate = Number(detail.rate) || 0
+    setValue(`details.${idx}.amount`, qty * rate)
+  }
+
   useEffect(() => {
-    if (detailValues) {
-      detailValues.forEach((detail, idx) => {
-        const qty = Number(detail.quantity) || 0
-        const rate = Number(detail.rate) || 0
-        const calculated = qty * rate
-        // Only update if calculated value differs (avoid infinite loop)
-        if (calculated !== Number(detail.amount)) {
-          setValue(`details.${idx}.amount`, calculated)
-        }
-      })
-    }
-  }, [detailValues, setValue])
+    detailValues?.forEach((_, idx) => calculateAmount(idx))
+  }, [detailValues?.map((d) => `${d.quantity}-${d.rate}`).join(',')])  // Watch only qty and rate changes
 
   // Remove row + its cascade state
   const handleRemove = (idx: number) => {
@@ -397,7 +395,9 @@ export function PdoFormPage() {
                               <label className="label">Volume</label>
                               <input
                                 type="number"
-                                {...register(`details.${idx}.quantity`)}
+                                {...register(`details.${idx}.quantity`, {
+                                  onChange: () => calculateAmount(idx),
+                                })}
                                 className="input-base"
                                 step="0.01"
                                 disabled={isAutoExternal}
@@ -415,7 +415,9 @@ export function PdoFormPage() {
                               <label className="label">Harga Satuan</label>
                               <input
                                 type="number"
-                                {...register(`details.${idx}.rate`)}
+                                {...register(`details.${idx}.rate`, {
+                                  onChange: () => calculateAmount(idx),
+                                })}
                                 className="input-base"
                                 disabled={isAutoExternal}
                               />
