@@ -78,11 +78,6 @@ const DEST_OPTIONS: TransferDest[] = ['rek_kebun', 'pribadi', 'vendor']
 
 const today = new Date().toISOString().split('T')[0]
 
-function fmtDate(dateStr: string): string {
-  const d = new Date(dateStr)
-  return d.toLocaleDateString('id-ID', { day: '2-digit', month: 'short', year: 'numeric' })
-}
-
 function isSplitForUnit(item: ExpenseItemInfo | null, unitId: string | null): boolean {
   if (!item?.split_transfer) return false
   const ids = item.split_transfer_plantation_unit_ids
