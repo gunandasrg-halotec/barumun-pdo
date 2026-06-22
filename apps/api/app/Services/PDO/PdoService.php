@@ -20,9 +20,11 @@ class PdoService
     public function listPdo(array $filters = []): LengthAwarePaginator
     {
         return PdoHeader::with(['plantationUnit', 'creator'])
-            ->when(isset($filters['status']), fn ($q) => $q->where('status', $filters['status']))
-            ->when(isset($filters['period_year']), fn ($q) => $q->where('period_year', $filters['period_year']))
-            ->when(isset($filters['period_month']), fn ($q) => $q->where('period_month', $filters['period_month']))
+            ->when(!empty($filters['search']), fn ($q) => $q->where('pdo_number', 'ilike', '%' . $filters['search'] . '%'))
+            ->when(!empty($filters['status']), fn ($q) => $q->where('status', $filters['status']))
+            ->when(!empty($filters['period_year']), fn ($q) => $q->where('period_year', $filters['period_year']))
+            ->when(!empty($filters['period_month']), fn ($q) => $q->where('period_month', $filters['period_month']))
+            ->when(!empty($filters['plantation_unit_id']), fn ($q) => $q->where('plantation_unit_id', $filters['plantation_unit_id']))
             ->orderByDesc('period_year')
             ->orderByDesc('period_month')
             ->paginate(20);

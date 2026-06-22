@@ -1,16 +1,21 @@
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
+import { useQuery } from '@tanstack/react-query'
 import { usePdoList, useClosePdo } from '@/hooks/usePdo'
 import { useAuthStore } from '@/store/auth.store'
 import { PdoStatusBadge } from '@/components/ui/Badge'
 import { Button } from '@/components/ui/Button'
 import { Modal } from '@/components/ui/Modal'
 import { EmptyState } from '@/components/ui/EmptyState'
+import { api } from '@/lib/api'
 import { fmt, fmtPeriode } from '@/lib/format'
 import { isKerani, isMgrKeu } from '@/lib/auth'
 import { useToastStore } from '@/store/toast.store'
-import type { PdoHeader, RoleCode } from '@/types'
+import type { ApiResponse, PdoHeader, PlantationUnit, RoleCode } from '@/types'
 import { Search, FileDown } from 'lucide-react'
+
+const MONTHS = ['', 'Januari', 'Februari', 'Maret', 'April', 'Mei', 'Juni', 'Juli', 'Agustus', 'September', 'Oktober', 'November', 'Desember']
+const YEARS  = Array.from({ length: 5 }, (_, i) => new Date().getFullYear() - i + 1)
 
 export function PdoListPage() {
   const user     = useAuthStore((s) => s.user)
@@ -18,15 +23,29 @@ export function PdoListPage() {
   const toast    = useToastStore((s) => s.push)
   const role     = user?.role.code as RoleCode | undefined
 
-  const [search, setSearch]     = useState('')
-  const [statusFilter, setStatus] = useState('')
-  const [closingPdo, setClosingPdo] = useState<PdoHeader | null>(null)
-  const [closeDate, setCloseDate]   = useState('')
-  const [closeNotes, setCloseNotes] = useState('')
+  const [search, setSearch]               = useState('')
+  const [statusFilter, setStatus]         = useState('')
+  const [yearFilter, setYearFilter]       = useState('')
+  const [monthFilter, setMonthFilter]     = useState('')
+  const [unitFilter, setUnitFilter]       = useState('')
+  const [closingPdo, setClosingPdo]       = useState<PdoHeader | null>(null)
+  const [closeDate, setCloseDate]         = useState('')
+  const [closeNotes, setCloseNotes]       = useState('')
+
+  const { data: units } = useQuery({
+    queryKey: ['plantation-units'],
+    queryFn: async () => {
+      const res = await api.get<ApiResponse<PlantationUnit[]>>('/plantation-units')
+      return res.data.data
+    },
+  })
 
   const { data, isLoading } = usePdoList({
-    search: search || undefined,
-    status: statusFilter || undefined,
+    search:               search || undefined,
+    status:               statusFilter || undefined,
+    period_year:          yearFilter ? Number(yearFilter) : undefined,
+    period_month:         monthFilter ? Number(monthFilter) : undefined,
+    plantation_unit_id:   unitFilter || undefined,
   })
 
   const closePdo = useClosePdo(closingPdo?.id ?? '')
@@ -59,20 +78,19 @@ export function PdoListPage() {
 
       {/* Filter Bar */}
       <div className="flex items-center gap-3 mb-4 flex-wrap">
+        {/* Search */}
         <div className="relative">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted" />
           <input
-            className="input-base pl-9 w-64"
+            className="input-base pl-9 w-56"
             placeholder="Cari nomor PDO..."
             value={search}
             onChange={(e) => setSearch(e.target.value)}
           />
         </div>
-        <select
-          className="input-base w-auto"
-          value={statusFilter}
-          onChange={(e) => setStatus(e.target.value)}
-        >
+
+        {/* Status */}
+        <select className="input-base w-auto" value={statusFilter} onChange={(e) => setStatus(e.target.value)}>
           <option value="">Semua Status</option>
           <option value="draft">Draft</option>
           <option value="submitted">Submitted</option>
@@ -82,6 +100,27 @@ export function PdoListPage() {
           <option value="final">Final</option>
           <option value="closed">Closed</option>
         </select>
+
+        {/* Tahun */}
+        <select className="input-base w-auto" value={yearFilter} onChange={(e) => setYearFilter(e.target.value)}>
+          <option value="">Semua Tahun</option>
+          {YEARS.map((y) => <option key={y} value={y}>{y}</option>)}
+        </select>
+
+        {/* Bulan */}
+        <select className="input-base w-auto" value={monthFilter} onChange={(e) => setMonthFilter(e.target.value)}>
+          <option value="">Semua Bulan</option>
+          {MONTHS.slice(1).map((m, i) => <option key={i + 1} value={i + 1}>{m}</option>)}
+        </select>
+
+        {/* Unit Kebun */}
+        {units && units.length > 1 && (
+          <select className="input-base w-auto" value={unitFilter} onChange={(e) => setUnitFilter(e.target.value)}>
+            <option value="">Semua Kebun</option>
+            {units.map((u) => <option key={u.id} value={u.id}>{u.code} — {u.name}</option>)}
+          </select>
+        )}
+
         <Button variant="secondary" size="sm">
           <FileDown className="w-4 h-4" /> Export Excel
         </Button>

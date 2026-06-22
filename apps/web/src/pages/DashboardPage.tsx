@@ -1,14 +1,16 @@
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
+import { useQuery } from '@tanstack/react-query'
 import { useDashboard, useCategorySummary } from '@/hooks/useDashboard'
 import { useAuthStore } from '@/store/auth.store'
 import { KpiCard } from '@/components/ui/KpiCard'
 import { ProgressBar } from '@/components/ui/ProgressBar'
 import { Button } from '@/components/ui/Button'
+import { api } from '@/lib/api'
 import { fmtShort, fmtPeriode, fmtPct } from '@/lib/format'
 import { isKerani } from '@/lib/auth'
-import type { RoleCode } from '@/types'
-import { BarChart2, AlertCircle } from 'lucide-react'
+import type { ApiResponse, PlantationUnit, RoleCode } from '@/types'
+import { BarChart2, AlertCircle, ChevronDown } from 'lucide-react'
 
 const MONTHS = [
   '', 'Januari', 'Februari', 'Maret', 'April', 'Mei', 'Juni',
@@ -22,16 +24,47 @@ export function DashboardPage() {
   const navigate = useNavigate()
   const now      = new Date()
 
-  const [filters, setFilters] = useState({
-    period_month: now.getMonth() + 1,
-    period_year:  now.getFullYear(),
-    plantation_unit_id: user?.plantation_unit?.id ?? undefined as string | undefined,
+  const [month, setMonth]                     = useState(now.getMonth() + 1)
+  const [year, setYear]                       = useState(now.getFullYear())
+  const [selectedUnitIds, setSelectedUnitIds] = useState<string[]>([])
+  const [unitDropOpen, setUnitDropOpen]       = useState(false)
+
+  const { data: units } = useQuery({
+    queryKey: ['plantation-units'],
+    queryFn: async () => {
+      const res = await api.get<ApiResponse<PlantationUnit[]>>('/plantation-units')
+      return res.data.data
+    },
   })
 
-  const { data: summary, isLoading } = useDashboard(filters)
-  const { data: categories }         = useCategorySummary(filters)
+  const unitFilterParams = selectedUnitIds.length > 0
+    ? { plantation_unit_ids: selectedUnitIds }
+    : {}
+
+  const { data: summary, isLoading } = useDashboard({
+    period_month: month,
+    period_year: year,
+    ...unitFilterParams,
+  })
+  const { data: categories } = useCategorySummary({
+    year,
+    month,
+    ...unitFilterParams,
+  })
 
   const role = user?.role.code as RoleCode | undefined
+
+  const toggleUnit = (id: string) => {
+    setSelectedUnitIds((prev) =>
+      prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]
+    )
+  }
+
+  const unitLabel = selectedUnitIds.length === 0
+    ? 'Semua Kebun'
+    : selectedUnitIds.length === 1
+      ? (units?.find((u) => u.id === selectedUnitIds[0])?.name ?? '1 Kebun')
+      : `${selectedUnitIds.length} Kebun Dipilih`
 
   return (
     <div>
@@ -39,11 +72,11 @@ export function DashboardPage() {
       <div className="flex flex-col desk:flex-row desk:items-start desk:justify-between gap-3 mb-6">
         <div>
           <h2 className="text-[28px] font-[950] text-ink">
-            Dashboard PDO {fmtPeriode(filters.period_month, filters.period_year)}
+            Dashboard PDO {fmtPeriode(month, year)}
           </h2>
           <p className="text-muted text-sm mt-1">
             Ringkasan pengajuan, transfer, realisasi, saldo, dan selisih dana operasional
-            {user?.plantation_unit ? ` ${user.plantation_unit.name}` : ' seluruh unit'}.
+            {selectedUnitIds.length === 0 ? ' seluruh unit' : ` — ${unitLabel}`}.
           </p>
         </div>
         {role && isKerani(role) && (
@@ -57,8 +90,8 @@ export function DashboardPage() {
       <div className="flex items-center gap-3 mb-6 flex-wrap">
         <select
           className="input-base w-auto"
-          value={filters.period_month}
-          onChange={(e) => setFilters((f) => ({ ...f, period_month: Number(e.target.value) }))}
+          value={month}
+          onChange={(e) => setMonth(Number(e.target.value))}
         >
           {MONTHS.slice(1).map((m, i) => (
             <option key={i + 1} value={i + 1}>{m}</option>
@@ -67,11 +100,68 @@ export function DashboardPage() {
 
         <select
           className="input-base w-auto"
-          value={filters.period_year}
-          onChange={(e) => setFilters((f) => ({ ...f, period_year: Number(e.target.value) }))}
+          value={year}
+          onChange={(e) => setYear(Number(e.target.value))}
         >
           {YEARS.map((y) => <option key={y} value={y}>{y}</option>)}
         </select>
+
+        {/* Multi-select Unit Kebun */}
+        {units && units.length > 1 && (
+          <div className="relative">
+            <button
+              type="button"
+              onClick={() => setUnitDropOpen((o) => !o)}
+              className={`input-base flex items-center gap-2 cursor-pointer min-w-[160px] ${selectedUnitIds.length > 0 ? 'border-green font-bold text-ink' : ''}`}
+            >
+              <span className="flex-1 text-left">{unitLabel}</span>
+              <ChevronDown className={`w-3 h-3 text-muted transition-transform ${unitDropOpen ? 'rotate-180' : ''}`} />
+            </button>
+
+            {unitDropOpen && (
+              <>
+                {/* backdrop */}
+                <div className="fixed inset-0 z-10" onClick={() => setUnitDropOpen(false)} />
+                <div className="absolute top-full left-0 mt-1 z-20 bg-white border border-line rounded-card shadow-lg min-w-[220px]">
+                  <div className="p-2">
+                    <label className="flex items-center gap-2 px-2 py-1.5 rounded hover:bg-[#f7faf7] cursor-pointer text-sm">
+                      <input
+                        type="checkbox"
+                        checked={selectedUnitIds.length === 0}
+                        onChange={() => setSelectedUnitIds([])}
+                        className="checkbox"
+                      />
+                      <span className="font-bold">Semua Kebun</span>
+                    </label>
+                    <div className="border-t border-line my-1" />
+                    {units.map((unit) => (
+                      <label key={unit.id} className="flex items-center gap-2 px-2 py-1.5 rounded hover:bg-[#f7faf7] cursor-pointer text-sm">
+                        <input
+                          type="checkbox"
+                          checked={selectedUnitIds.includes(unit.id)}
+                          onChange={() => toggleUnit(unit.id)}
+                          className="checkbox"
+                        />
+                        <span>{unit.code} — {unit.name}</span>
+                      </label>
+                    ))}
+                  </div>
+                  {selectedUnitIds.length > 0 && (
+                    <div className="px-2 pb-2">
+                      <button
+                        type="button"
+                        onClick={() => { setSelectedUnitIds([]); setUnitDropOpen(false) }}
+                        className="text-xs text-muted hover:text-ink underline"
+                      >
+                        Reset pilihan
+                      </button>
+                    </div>
+                  )}
+                </div>
+              </>
+            )}
+          </div>
+        )}
       </div>
 
       {/* KPI Cards */}
@@ -161,7 +251,6 @@ export function DashboardPage() {
 
           {categories && categories.length > 0 ? (
             <>
-              {/* Simple donut using CSS conic-gradient */}
               <div className="flex justify-center mb-4">
                 <div
                   className="relative rounded-full flex items-center justify-center"
@@ -171,9 +260,7 @@ export function DashboardPage() {
                     background: buildDonut(categories.map((c) => c.percentage)),
                   }}
                 >
-                  <div
-                    className="absolute inset-[42px] rounded-full bg-white flex flex-col items-center justify-center"
-                  >
+                  <div className="absolute inset-[42px] rounded-full bg-white flex flex-col items-center justify-center">
                     <div className="text-[13px] font-[950] text-green">
                       {fmtShort(summary?.total_transferred)}
                     </div>
@@ -181,7 +268,6 @@ export function DashboardPage() {
                 </div>
               </div>
 
-              {/* Legend */}
               <div className="flex flex-col gap-1.5">
                 {categories.slice(0, 5).map((cat, i) => (
                   <div key={cat.category_id} className="flex items-center gap-2 text-xs">

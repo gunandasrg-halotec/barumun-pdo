@@ -16,7 +16,7 @@ class PdoHeaderController extends Controller
 
     public function index(Request $request): JsonResponse
     {
-        $filters = $request->only(['status', 'period_year', 'period_month']);
+        $filters = $request->only(['search', 'status', 'period_year', 'period_month', 'plantation_unit_id']);
         $result  = $this->service->listPdo($filters);
 
         return response()->json([

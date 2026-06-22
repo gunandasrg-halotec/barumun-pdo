@@ -8,25 +8,29 @@ use Illuminate\Support\Facades\DB;
 
 class DashboardService
 {
-    /**
-     * Ringkasan utama dashboard:
-     * - Jumlah PDO per status
-     * - Total transfer & realisasi bulan berjalan
-     * - PDO menunggu approval milik user
-     */
-    public function summary(User $user): array
+    public function summary(User $user, array $filters = []): array
     {
-        $companyId = $user->company_id;
-        $now       = now();
+        $companyId  = $user->company_id;
+        $month      = $filters['period_month'] ?? now()->month;
+        $year       = $filters['period_year']  ?? now()->year;
+        $unitIds    = $this->resolveUnitIds($filters);
 
-        $pdoByStatus = PdoHeader::withoutGlobalScopes()
-            ->where('company_id', $companyId)
+        $pdoQuery = PdoHeader::withoutGlobalScopes()->where('company_id', $companyId);
+        if ($unitIds) {
+            $pdoQuery->whereIn('plantation_unit_id', $unitIds);
+        }
+        $pdoByStatus = $pdoQuery
             ->selectRaw('status, COUNT(*) as count')
             ->groupBy('status')
             ->pluck('count', 'status')
             ->toArray();
 
-        // Total anggaran, transfer, realisasi, dan item tanpa bukti bulan ini (seluruh unit)
+        $unitClause = $unitIds
+            ? 'AND ph.plantation_unit_id = ANY(ARRAY[' . implode(',', array_fill(0, count($unitIds), '?')) . ']::uuid[])'
+            : '';
+
+        $params = array_merge([$companyId, $month, $year], $unitIds ?? []);
+
         $monthlyStats = DB::selectOne("
             SELECT
                 COALESCE(SUM(pd.amount), 0)  AS total_amount,
@@ -40,16 +44,15 @@ class DashboardService
             WHERE ph.company_id = ?
               AND ph.period_month = ?
               AND ph.period_year  = ?
-        ", [$companyId, $now->month, $now->year]);
+              {$unitClause}
+        ", $params);
 
         $totalTransferred = (int) $monthlyStats->total_transferred;
         $totalRealized    = (int) $monthlyStats->total_realized;
-
-        // PDO yang sedang menunggu persetujuan dari role user
-        $pendingForUser = $this->pendingPdoCount($user);
+        $pendingForUser   = $this->pendingPdoCount($user);
 
         return [
-            'period'              => ['month' => $now->month, 'year' => $now->year],
+            'period'              => ['month' => (int) $month, 'year' => (int) $year],
             'pdo_by_status'       => $pdoByStatus,
             'total_amount'        => (int) $monthlyStats->total_amount,
             'total_transferred'   => $totalTransferred,
@@ -60,15 +63,18 @@ class DashboardService
         ];
     }
 
-    /**
-     * Breakdown realisasi per kategori biaya untuk periode tertentu.
-     * GET /dashboard/category-summary?year=&month=&unit_id=
-     */
     public function categorySummary(User $user, array $filters = []): array
     {
         $companyId = $user->company_id;
         $year      = $filters['year']  ?? now()->year;
         $month     = $filters['month'] ?? now()->month;
+        $unitIds   = $this->resolveUnitIds($filters);
+
+        $unitClause = $unitIds
+            ? 'AND ph.plantation_unit_id = ANY(ARRAY[' . implode(',', array_fill(0, count($unitIds), '?')) . ']::uuid[])'
+            : '';
+
+        $params = array_merge([$companyId, $year, $month], $unitIds ?? []);
 
         $rows = DB::select("
             SELECT
@@ -89,10 +95,10 @@ class DashboardService
             WHERE ec.company_id = ?
               AND ph.period_year  = ?
               AND ph.period_month = ?
-              " . (isset($filters['unit_id']) ? 'AND ph.plantation_unit_id = ?' : '') . "
+              {$unitClause}
             GROUP BY ec.id, ec.code, ec.name, ec.include_in_recap
             ORDER BY ec.display_order, ec.code
-        ", array_filter([$companyId, $year, $month, $filters['unit_id'] ?? null]));
+        ", $params);
 
         $grandTotal = array_sum(array_column($rows, 'total_budget'));
 
@@ -117,6 +123,17 @@ class DashboardService
     // ─────────────────────────────────────────────────────
     // PRIVATE
     // ─────────────────────────────────────────────────────
+
+    /** Resolve plantation_unit_ids dari filter; null = semua unit */
+    private function resolveUnitIds(array $filters): ?array
+    {
+        $ids = $filters['plantation_unit_ids'] ?? null;
+        if (empty($ids) || !is_array($ids)) {
+            return null;
+        }
+        $filtered = array_filter($ids, fn ($id) => !empty($id));
+        return empty($filtered) ? null : array_values($filtered);
+    }
 
     private function pendingPdoCount(User $user): int
     {
