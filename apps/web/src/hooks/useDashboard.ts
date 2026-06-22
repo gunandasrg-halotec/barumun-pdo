@@ -2,7 +2,7 @@ import { useQuery } from '@tanstack/react-query'
 import { api } from '@/lib/api'
 import type { DashboardSummary, CategorySummary, ApiResponse } from '@/types'
 
-export function useDashboard(params?: Record<string, string | number | undefined>) {
+export function useDashboard(params?: Record<string, string | number | string[] | undefined>) {
   return useQuery({
     queryKey: ['dashboard', params],
     queryFn: async () => {
@@ -13,7 +13,7 @@ export function useDashboard(params?: Record<string, string | number | undefined
   })
 }
 
-export function useCategorySummary(params?: Record<string, string | number | undefined>) {
+export function useCategorySummary(params?: Record<string, string | number | string[] | undefined>) {
   return useQuery({
     queryKey: ['dashboard', 'category', params],
     queryFn: async () => {
