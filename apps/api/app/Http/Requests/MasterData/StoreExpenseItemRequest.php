@@ -23,7 +23,7 @@ class StoreExpenseItemRequest extends FormRequest
             'name'                   => ['required', 'string', 'max:255'],
             'default_account_number' => ['nullable', 'string', 'max:50'],
             'default_unit'           => ['nullable', 'string', 'max:50'],
-            'default_rate'           => ['sometimes', 'integer', 'min:0'],
+            'default_rate'           => ['nullable', 'integer', 'min:0'],
             'mode_input'                    => ['sometimes', Rule::in([ExpenseItem::MODE_MANUAL, ExpenseItem::MODE_AUTO_EXTERNAL])],
             'split_transfer'                       => ['sometimes', 'boolean'],
             'split_transfer_plantation_unit_ids'   => ['nullable', 'array'],
