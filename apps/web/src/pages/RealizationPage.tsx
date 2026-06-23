@@ -201,6 +201,17 @@ export function RealizationPage() {
             {errors.pdo_detail_id && <p className="field-error">{errors.pdo_detail_id.message}</p>}
           </div>
 
+          {Object.keys(errors).length > 0 && (
+            <div className="p-3 bg-red-50 border border-red-200 rounded text-sm text-red-700">
+              <p className="font-bold mb-1">Ada kesalahan di form:</p>
+              <ul className="list-disc list-inside">
+                {Object.entries(errors).map(([field, error]: [string, any]) => (
+                  <li key={field}>{error?.message || `${field} tidak valid`}</li>
+                ))}
+              </ul>
+            </div>
+          )}
+
           <div className="grid grid-cols-1 desk:grid-cols-2 gap-3">
             <div>
               <label className="label">Tanggal Transaksi</label>
