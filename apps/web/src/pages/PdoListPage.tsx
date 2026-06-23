@@ -276,6 +276,7 @@ export function PdoListPage() {
         open={!!transferDetailPdo}
         onClose={() => setTransferDetailPdo(null)}
         title={`Riwayat Transfer — ${transferDetailPdo?.pdo_number}`}
+        width="w-[820px]"
       >
         {transferLoading ? (
           <div className="flex justify-center py-8 text-muted text-sm">Memuat data...</div>
@@ -293,7 +294,7 @@ export function PdoListPage() {
 
             {/* Tabel riwayat flat */}
             <div className="overflow-auto border border-line rounded-card">
-              <table className="w-full border-collapse text-sm" style={{ minWidth: 560 }}>
+              <table className="w-full border-collapse text-sm">
                 <thead>
                   <tr>
                     {['Tanggal', 'Item', 'Tujuan Transfer', 'Jumlah'].map((h) => (
