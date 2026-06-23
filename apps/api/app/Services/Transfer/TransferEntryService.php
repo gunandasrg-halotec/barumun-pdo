@@ -251,6 +251,14 @@ class TransferEntryService
             ], 403));
         }
 
+        // BR-CLOSE-003: PDO yang sudah ditutup tidak bisa diubah
+        if ($pdo->isClosed()) {
+            abort(response()->json([
+                'success' => false,
+                'error'   => ['code' => 'PDO_CLOSED', 'message' => 'Transfer tidak bisa diubah setelah PDO ditutup.'],
+            ], 409));
+        }
+
         // BR-TRANSFER-003: entri auto tidak bisa diedit
         if ($entry->is_auto_generated) {
             abort(response()->json([
