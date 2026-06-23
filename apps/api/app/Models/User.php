@@ -114,6 +114,6 @@ class User extends Authenticatable
      */
     public function canRecordRealization(): bool
     {
-        return $this->hasAnyRole(['KERANI', 'STAFF_PURCHASING']);
+        return $this->hasAnyRole(['ADMIN', 'KERANI', 'STAFF_PURCHASING']);
     }
 }
