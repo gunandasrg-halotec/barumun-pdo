@@ -5,9 +5,9 @@ services:
     image: postgres:16-alpine
     restart: always
     environment:
-      POSTGRES_DB: ${DB_DATABASE:-pdodb}
-      POSTGRES_USER: ${DB_USERNAME:-pdo_user}
-      POSTGRES_PASSWORD: ${DB_PASSWORD:-secret}
+      POSTGRES_DB: pdodb
+      POSTGRES_USER: mhdrefdi
+      POSTGRES_PASSWORD: lPcfKFrex9Hp2JasvOl7
     volumes:
       - pgdata:/var/lib/postgresql/data
     ports:
