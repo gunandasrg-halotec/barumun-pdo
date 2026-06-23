@@ -237,6 +237,16 @@ class TransferEntryService
      */
     public function update(TransferEntry $entry, array $data, User $actor): TransferEntry
     {
+        $pdo = $entry->pdoDetail->pdoHeader;
+
+        // BR-AUTH-001: Verify PDO belongs to user's company
+        if ($pdo->company_id !== $actor->company_id) {
+            abort(response()->json([
+                'success' => false,
+                'error'   => ['code' => 'COMPANY_MISMATCH', 'message' => 'Anda tidak memiliki akses ke transfer ini.'],
+            ], 403));
+        }
+
         // BR-TRANSFER-003: entri auto tidak bisa diedit
         if ($entry->is_auto_generated) {
             abort(response()->json([
