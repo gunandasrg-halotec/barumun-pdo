@@ -39,14 +39,14 @@ fi
 echo -e "${GREEN}✓ Containers started${NC}"
 echo ""
 
-# Step 4: Wait and verify
+# Step 4: Wait for containers to stabilize and verify
 echo -e "${YELLOW}[4/4] Verifying containers are running...${NC}"
-sleep 5
+sleep 15
 
-API_STATUS=$(docker compose -f "$DOCKER_COMPOSE_FILE" ps api --format json 2>/dev/null | jq -r '.[0].State' || echo "unknown")
-WEB_STATUS=$(docker compose -f "$DOCKER_COMPOSE_FILE" ps web --format json 2>/dev/null | jq -r '.[0].State' || echo "unknown")
+API_RUNNING=$(docker compose -f "$DOCKER_COMPOSE_FILE" ps api 2>/dev/null | grep -c "running" || echo "0")
+WEB_RUNNING=$(docker compose -f "$DOCKER_COMPOSE_FILE" ps web 2>/dev/null | grep -c "running" || echo "0")
 
-if [ "$API_STATUS" = "running" ] && [ "$WEB_STATUS" = "running" ]; then
+if [ "$API_RUNNING" = "1" ] && [ "$WEB_RUNNING" = "1" ]; then
     echo -e "${GREEN}✓ All containers running${NC}"
     echo ""
     echo -e "${GREEN}=== ✅ Deployment Completed Successfully ===${NC}"
@@ -54,10 +54,10 @@ if [ "$API_STATUS" = "running" ] && [ "$WEB_STATUS" = "running" ]; then
     exit 0
 else
     echo -e "${RED}✗ Container health check failed${NC}"
-    echo "API Status: $API_STATUS"
-    echo "Web Status: $WEB_STATUS"
+    echo "API Running: $API_RUNNING"
+    echo "Web Running: $WEB_RUNNING"
     echo ""
     echo "Logs:"
-    docker compose -f "$DOCKER_COMPOSE_FILE" logs api web | tail -30
+    docker compose -f "$DOCKER_COMPOSE_FILE" logs api web | tail -50
     exit 1
 fi
