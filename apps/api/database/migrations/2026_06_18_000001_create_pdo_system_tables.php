@@ -12,6 +12,11 @@ return new class extends Migration
         // Aktifkan ekstensi UUID
         DB::statement('CREATE EXTENSION IF NOT EXISTS "pgcrypto"');
 
+        // Drop default Laravel tables that we're replacing
+        Schema::dropIfExists('personal_access_tokens');
+        Schema::dropIfExists('users');
+        Schema::dropIfExists('password_reset_tokens');
+
         // ─────────────────────────────────────────
         // 1. COMPANIES
         // ─────────────────────────────────────────
