@@ -15,6 +15,7 @@ import { ArrowLeft, Plus, Trash2, CloudDownload } from 'lucide-react'
 import type { ApiResponse, PdoHeader, PlantationUnit } from '@/types'
 
 const detailSchema = z.object({
+  id:              z.string().uuid().optional(),
   expense_item_id: z.string().uuid('Pilih item'),
   description:     z.string().min(1, 'Deskripsi wajib diisi'),
   quantity:        z.coerce.number().nullable().optional(),
