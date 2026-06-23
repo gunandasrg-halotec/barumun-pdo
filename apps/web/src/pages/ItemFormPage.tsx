@@ -130,7 +130,7 @@ export function ItemFormPage() {
   })
 
   return (
-    <div className="max-w-lg">
+    <div className="form-container-narrow">
       <div className="flex items-center gap-3 mb-6">
         <Button variant="secondary" size="sm" onClick={() => navigate('/master')}>
           <ArrowLeft className="w-4 h-4" />

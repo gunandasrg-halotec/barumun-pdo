@@ -152,4 +152,30 @@
   .supp-separator td {
     @apply bg-[#dbeafe] text-[#1d4ed8] font-bold text-sm;
   }
+
+  /* ── Form container responsive padding ── */
+  .form-container {
+    @apply px-4 py-0 sm:px-6 lg:px-8;
+  }
+
+  /* ── Form wrapper with max-width ── */
+  .form-wrapper {
+    @apply mx-auto w-full max-w-2xl;
+  }
+
+  /* ── Responsive typography adjustments ── */
+  @media (max-width: 640px) {
+    .card { @apply p-4; }
+  }
+}
+
+@layer utilities {
+  /* ── Responsive padding utilities ── */
+  .px-responsive { @apply px-4 sm:px-6 lg:px-8; }
+
+  /* ── Page container with responsive spacing ── */
+  .page-container { @apply px-4 sm:px-6 lg:px-8 py-6 max-w-7xl mx-auto; }
+
+  /* ── Form container (650px max-width centered) ── */
+  .form-container-narrow { @apply w-full max-w-2xl mx-auto px-4 sm:px-6; }
 }

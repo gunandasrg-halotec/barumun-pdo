@@ -6,6 +6,7 @@ import { z } from 'zod'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '@/lib/api'
 import { Button } from '@/components/ui/Button'
+import { PasswordInput } from '@/components/ui/PasswordInput'
 import { useToastStore } from '@/store/toast.store'
 import { ArrowLeft } from 'lucide-react'
 import type { ApiResponse, AuthUser, Role, PlantationUnit } from '@/types'
@@ -125,7 +126,7 @@ export function UserFormPage() {
   })
 
   return (
-    <div className="max-w-lg">
+    <div className="form-container-narrow">
       <div className="flex items-center gap-3 mb-6">
         <Button variant="secondary" size="sm" onClick={() => navigate('/master')}>
           <ArrowLeft className="w-4 h-4" />
@@ -148,13 +149,12 @@ export function UserFormPage() {
           {errors.email && <p className="field-error">{errors.email.message}</p>}
         </div>
 
-        <div>
-          <label className="label">
-            Password {isEdit && <span className="text-muted font-normal">(kosongkan jika tidak diubah)</span>}
-          </label>
-          <input type="password" {...register('password')} className="input-base" autoComplete="new-password" />
-          {errors.password && <p className="field-error">{errors.password.message}</p>}
-        </div>
+        <PasswordInput
+          label={`Password ${isEdit ? '(kosongkan jika tidak diubah)' : ''}`}
+          {...register('password')}
+          autoComplete="new-password"
+          error={errors.password?.message}
+        />
 
         <div>
           <label className="label">Nomor WhatsApp</label>
