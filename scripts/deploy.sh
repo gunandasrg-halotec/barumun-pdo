@@ -17,22 +17,30 @@ echo ""
 cd "$PROJECT_DIR" || exit 1
 
 # Step 1: Pull latest code
-echo -e "${YELLOW}[1/3] Pulling latest code from GitHub...${NC}"
+echo -e "${YELLOW}[1/4] Pulling latest code from GitHub...${NC}"
 git fetch origin
 git reset --hard origin/main
 echo -e "${GREEN}✓ Code pulled ($(git log --oneline -1))${NC}"
 echo ""
 
-# Step 2: Restart containers with existing images
-echo -e "${YELLOW}[2/3] Restarting containers...${NC}"
+# Step 2: Manage containers
+echo -e "${YELLOW}[2/4] Stopping existing containers...${NC}"
 docker compose -f "$DOCKER_COMPOSE_FILE" down --remove-orphans || true
 sleep 2
-docker compose -f "$DOCKER_COMPOSE_FILE" up -d
-echo -e "${GREEN}✓ Containers restarted${NC}"
 echo ""
 
-# Step 3: Wait and verify
-echo -e "${YELLOW}[3/3] Verifying containers are running...${NC}"
+# Step 3: Start containers (build only if images missing)
+echo -e "${YELLOW}[3/4] Starting containers...${NC}"
+if docker compose -f "$DOCKER_COMPOSE_FILE" up -d --no-build 2>&1 | grep -q "image not found\|No such image"; then
+  echo "Images not found, building..."
+  docker compose -f "$DOCKER_COMPOSE_FILE" build
+  docker compose -f "$DOCKER_COMPOSE_FILE" up -d --no-build
+fi
+echo -e "${GREEN}✓ Containers started${NC}"
+echo ""
+
+# Step 4: Wait and verify
+echo -e "${YELLOW}[4/4] Verifying containers are running...${NC}"
 sleep 5
 
 API_STATUS=$(docker compose -f "$DOCKER_COMPOSE_FILE" ps api --format json 2>/dev/null | jq -r '.[0].State' || echo "unknown")
