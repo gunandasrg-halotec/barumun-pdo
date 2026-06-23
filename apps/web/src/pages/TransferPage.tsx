@@ -33,13 +33,20 @@ interface PdoSummaryRow {
 
 // ─── schema single entry ───────────────────────────────────────────────────────
 
+const TRANSFER_DESTINATIONS = [
+  { value: 'rek_kebun', label: 'Rekening Kebun' },
+  { value: 'pribadi',   label: 'Rekening Pribadi' },
+  { value: 'vendor',    label: 'Vendor' },
+] as const
+
 const schema = z.object({
-  pdo_header_id:    z.string().uuid('Pilih PDO'),
-  pdo_detail_id:    z.string().uuid('Pilih item biaya'),
-  transfer_date:    z.string().min(1, 'Tanggal wajib diisi'),
-  amount:           z.coerce.number().min(1, 'Jumlah harus > 0'),
-  reference_number: z.string().optional().nullable(),
-  notes:            z.string().optional().nullable(),
+  pdo_header_id:        z.string().uuid('Pilih PDO'),
+  pdo_detail_id:        z.string().uuid('Pilih item biaya'),
+  transfer_destination: z.enum(['rek_kebun', 'pribadi', 'vendor']),
+  transfer_date:        z.string().min(1, 'Tanggal wajib diisi'),
+  amount:               z.coerce.number().min(1, 'Jumlah harus > 0'),
+  reference_number:     z.string().optional().nullable(),
+  notes:                z.string().optional().nullable(),
 })
 
 type Form = z.infer<typeof schema>
@@ -86,7 +93,10 @@ export function TransferPage() {
     formState: { errors },
   } = useForm<Form>({
     resolver: zodResolver(schema),
-    defaultValues: { transfer_date: new Date().toISOString().split('T')[0] },
+    defaultValues: {
+      transfer_date:        new Date().toISOString().split('T')[0],
+      transfer_destination: 'rek_kebun' as const,
+    },
   })
 
   const selectedPdoId    = watch('pdo_header_id')
@@ -259,6 +269,16 @@ export function TransferPage() {
               />
             </div>
           )}
+
+          {/* Tujuan Transfer */}
+          <div>
+            <label className="label">Tujuan Transfer</label>
+            <select {...register('transfer_destination')} className="input-base">
+              {TRANSFER_DESTINATIONS.map((d) => (
+                <option key={d.value} value={d.value}>{d.label}</option>
+              ))}
+            </select>
+          </div>
 
           <div className="grid grid-cols-1 desk:grid-cols-2 gap-3">
             <div>
