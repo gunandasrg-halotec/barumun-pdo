@@ -10,7 +10,7 @@ import { EmptyState } from '@/components/ui/EmptyState'
 import { useToastStore } from '@/store/toast.store'
 import { fmt, fmtDate } from '@/lib/format'
 import { Plus, Upload, AlertCircle } from 'lucide-react'
-import type { ApiResponse, RealizationEntry, PdoHeader, PdoDetail, User } from '@/types'
+import type { ApiResponse, RealizationEntry, PdoHeader, PdoDetail, AuthUser } from '@/types'
 
 const schema = z.object({
   pdo_header_id:    z.string().uuid('Pilih PDO'),
@@ -35,7 +35,7 @@ export function RealizationPage() {
   const { data: currentUser } = useQuery({
     queryKey: ['auth/me'],
     queryFn: async () => {
-      const res = await api.get<ApiResponse<User>>('/auth/me')
+      const res = await api.get<ApiResponse<AuthUser>>('/auth/me')
       return res.data.data
     },
   })
