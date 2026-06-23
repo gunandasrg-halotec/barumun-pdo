@@ -3,6 +3,8 @@
 namespace App\Http\Middleware;
 
 use App\Models\PdoHeader;
+use App\Models\RealizationEntry;
+use App\Models\TransferEntry;
 use Closure;
 use Illuminate\Http\Request;
 use Symfony\Component\HttpFoundation\Response;
@@ -22,6 +24,17 @@ class CheckPdoStatus
 
         // Cari PDO dari route parameter (bisa 'pdo' atau 'id')
         $pdoId = $request->route('pdo') ?? $request->route('id');
+
+        // Jika tidak ada, coba resolve dari entry route bindings
+        if (! $pdoId) {
+            if ($entry = $request->route('entry')) {
+                if ($entry instanceof RealizationEntry) {
+                    $pdoId = $entry->pdoDetail?->pdoHeader?->id;
+                } elseif ($entry instanceof TransferEntry) {
+                    $pdoId = $entry->pdoDetail?->pdoHeader?->id;
+                }
+            }
+        }
 
         if (! $pdoId) {
             return $next($request);
