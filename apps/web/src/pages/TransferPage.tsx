@@ -31,25 +31,29 @@ interface PdoSummaryRow {
   last_transfer_date:      string | null
 }
 
-// ─── schema single entry ───────────────────────────────────────────────────────
+// ─── schema & constants ────────────────────────────────────────────────────────
 
-const TRANSFER_DESTINATIONS = [
+const DESTINATIONS = [
   { value: 'rek_kebun', label: 'Rekening Kebun' },
   { value: 'pribadi',   label: 'Rekening Pribadi' },
   { value: 'vendor',    label: 'Vendor' },
 ] as const
+
+type Destination = 'rek_kebun' | 'pribadi' | 'vendor'
 
 const schema = z.object({
   pdo_header_id:        z.string().uuid('Pilih PDO'),
   pdo_detail_id:        z.string().uuid('Pilih item biaya'),
   transfer_destination: z.enum(['rek_kebun', 'pribadi', 'vendor']),
   transfer_date:        z.string().min(1, 'Tanggal wajib diisi'),
-  amount:               z.coerce.number().min(1, 'Jumlah harus > 0'),
+  amount:               z.coerce.number().min(0),
   reference_number:     z.string().optional().nullable(),
   notes:                z.string().optional().nullable(),
 })
 
 type Form = z.infer<typeof schema>
+
+const EMPTY_SPLIT: Record<Destination, string> = { rek_kebun: '', pribadi: '', vendor: '' }
 
 const MONTHS = [
   '', 'Januari', 'Februari', 'Maret', 'April', 'Mei', 'Juni',
@@ -62,8 +66,10 @@ export function TransferPage() {
   const toast    = useToastStore((s) => s.push)
   const qc       = useQueryClient()
   const navigate = useNavigate()
-  const [open, setOpen] = useState(false)
+  const [open, setOpen]           = useState(false)
   const [maxAmount, setMaxAmount] = useState<number>(0)
+  const [splitAmounts, setSplitAmounts] = useState<Record<Destination, string>>(EMPTY_SPLIT)
+  const [saving, setSaving]       = useState(false)
 
   // list PDO final dengan ringkasan transfer
   const { data: pdoSummary, isLoading } = useQuery({
@@ -119,7 +125,9 @@ export function TransferPage() {
     if (!detail) return
     const remaining = detail.amount - (detail.total_transferred ?? 0)
     setMaxAmount(remaining)
-    setValue('amount', remaining, { shouldValidate: false })
+    setSplitAmounts(EMPTY_SPLIT)
+    const split = (detail.expense_item as any)?.split_transfer
+    if (!split) setValue('amount', remaining, { shouldValidate: false })
   }, [selectedDetailId, pdoDetails, setValue])
 
   // reset detail & amount saat PDO berubah
@@ -129,31 +137,75 @@ export function TransferPage() {
     setMaxAmount(0)
   }, [selectedPdoId, setValue])
 
-  const sisaDana = (() => {
-    if (!selectedDetailId || !pdoDetails) return null
-    const detail = pdoDetails.find((d) => d.id === selectedDetailId)
-    if (!detail) return null
-    return detail.amount - (detail.total_transferred ?? 0)
-  })()
+  const selectedDetail = pdoDetails?.find((d) => d.id === selectedDetailId) ?? null
+  const isSplit = !!(selectedDetail?.expense_item as any)?.split_transfer
+
+  const sisaDana = selectedDetail
+    ? selectedDetail.amount - (selectedDetail.total_transferred ?? 0)
+    : null
+
+  const postEntry = (detailId: string, payload: object) =>
+    api.post(`/pdo-details/${detailId}/transfers`, payload)
+
+  const onSuccess = () => {
+    toast('Transfer berhasil dicatat')
+    qc.invalidateQueries({ queryKey: ['transfer-pdo-summary'] })
+    setOpen(false)
+    reset()
+    setSplitAmounts(EMPTY_SPLIT)
+    setSaving(false)
+  }
+
+  const onError = (err: any) => {
+    const msg = err?.response?.data?.error?.message ?? 'Gagal menyimpan transfer'
+    toast(msg, 'error')
+    setSaving(false)
+  }
 
   const save = useMutation({
     mutationFn: (data: Form) => {
       const { pdo_header_id: _h, pdo_detail_id, ...payload } = data
-      return api.post(`/pdo-details/${pdo_detail_id}/transfers`, payload)
+      return postEntry(pdo_detail_id, payload)
     },
-    onSuccess: () => {
-      toast('Transfer berhasil dicatat')
-      qc.invalidateQueries({ queryKey: ['transfer-pdo-summary'] })
-      setOpen(false)
-      reset()
-    },
-    onError: (err: any) => {
-      const msg = err?.response?.data?.error?.message ?? 'Gagal menyimpan transfer'
-      toast(msg, 'error')
-    },
+    onSuccess,
+    onError,
   })
 
-  const handleClose = () => { setOpen(false); reset(); setMaxAmount(0) }
+  const handleSubmitSplit = (baseData: Pick<Form, 'pdo_detail_id' | 'transfer_date' | 'reference_number' | 'notes'>) => {
+    const entries = (Object.entries(splitAmounts) as [Destination, string][])
+      .map(([dest, val]) => ({ dest, amount: Number(val) || 0 }))
+      .filter((e) => e.amount > 0)
+
+    if (entries.length === 0) {
+      toast('Masukkan minimal satu jumlah transfer', 'error')
+      return
+    }
+    const total = entries.reduce((s, e) => s + e.amount, 0)
+    if (maxAmount > 0 && total > maxAmount) {
+      toast(`Total split (${fmt(total)}) melebihi sisa dana (${fmt(maxAmount)})`, 'error')
+      return
+    }
+
+    setSaving(true)
+    Promise.all(
+      entries.map((e) =>
+        postEntry(baseData.pdo_detail_id, {
+          transfer_destination: e.dest,
+          amount:               e.amount,
+          transfer_date:        baseData.transfer_date,
+          reference_number:     baseData.reference_number,
+          notes:                baseData.notes,
+        })
+      )
+    ).then(onSuccess).catch(onError)
+  }
+
+  const handleClose = () => {
+    setOpen(false)
+    reset()
+    setMaxAmount(0)
+    setSplitAmounts(EMPTY_SPLIT)
+  }
 
   return (
     <div>
@@ -222,11 +274,15 @@ export function TransferPage() {
       {/* ─── Modal Single Entry ───────────────────────────────────── */}
       <Modal open={open} onClose={handleClose} title="Catat Transfer Dana">
         <form onSubmit={handleSubmit((d) => {
-          if (maxAmount > 0 && Number(d.amount) > maxAmount) {
-            toast(`Jumlah melebihi sisa dana (${fmt(maxAmount)})`, 'error')
-            return
+          if (isSplit) {
+            handleSubmitSplit(d)
+          } else {
+            if (maxAmount > 0 && Number(d.amount) > maxAmount) {
+              toast(`Jumlah melebihi sisa dana (${fmt(maxAmount)})`, 'error')
+              return
+            }
+            save.mutate(d)
           }
-          save.mutate(d)
         })} className="flex flex-col gap-4">
 
           {/* PDO */}
@@ -270,15 +326,45 @@ export function TransferPage() {
             </div>
           )}
 
-          {/* Tujuan Transfer */}
-          <div>
-            <label className="label">Tujuan Transfer</label>
-            <select {...register('transfer_destination')} className="input-base">
-              {TRANSFER_DESTINATIONS.map((d) => (
-                <option key={d.value} value={d.value}>{d.label}</option>
+          {/* ── Mode split transfer ── */}
+          {isSplit ? (
+            <div className="border border-line rounded-card p-4 bg-[#f0f7ff] flex flex-col gap-3">
+              <p className="text-[12px] font-[850] text-muted uppercase tracking-wider">
+                Split Transfer — masukkan jumlah per tujuan
+              </p>
+              {DESTINATIONS.map((dest) => (
+                <div key={dest.value} className="grid grid-cols-2 items-center gap-3">
+                  <label className="text-sm font-[700] text-ink">{dest.label}</label>
+                  <input
+                    type="number"
+                    min={0}
+                    placeholder="0"
+                    value={splitAmounts[dest.value]}
+                    onChange={(e) => setSplitAmounts((prev) => ({ ...prev, [dest.value]: e.target.value }))}
+                    className="input-base"
+                  />
+                </div>
               ))}
-            </select>
-          </div>
+              {sisaDana !== null && (
+                <p className="text-[12px] text-muted pt-1">
+                  Total: <span className="font-bold text-ink">
+                    {fmt(Object.values(splitAmounts).reduce((s, v) => s + (Number(v) || 0), 0))}
+                  </span>
+                  {' '}/ Sisa: <span className="font-bold">{fmt(sisaDana)}</span>
+                </p>
+              )}
+            </div>
+          ) : (
+            /* ── Mode transfer tunggal ── */
+            <div>
+              <label className="label">Tujuan Transfer</label>
+              <select {...register('transfer_destination')} className="input-base">
+                {DESTINATIONS.map((d) => (
+                  <option key={d.value} value={d.value}>{d.label}</option>
+                ))}
+              </select>
+            </div>
+          )}
 
           <div className="grid grid-cols-1 desk:grid-cols-2 gap-3">
             <div>
@@ -286,16 +372,18 @@ export function TransferPage() {
               <input type="date" {...register('transfer_date')} className="input-base" />
               {errors.transfer_date && <p className="field-error">{errors.transfer_date.message}</p>}
             </div>
-            <div>
-              <label className="label">Jumlah (Rp)</label>
-              <input
-                type="number"
-                {...register('amount')}
-                className="input-base"
-                max={maxAmount || undefined}
-              />
-              {errors.amount && <p className="field-error">{errors.amount.message}</p>}
-            </div>
+            {!isSplit && (
+              <div>
+                <label className="label">Jumlah (Rp)</label>
+                <input
+                  type="number"
+                  {...register('amount')}
+                  className="input-base"
+                  max={maxAmount || undefined}
+                />
+                {errors.amount && <p className="field-error">{errors.amount.message}</p>}
+              </div>
+            )}
           </div>
 
           <div>
@@ -310,7 +398,7 @@ export function TransferPage() {
 
           <div className="flex justify-end gap-2 pt-2">
             <Button type="button" variant="secondary" onClick={handleClose}>Batal</Button>
-            <Button type="submit" loading={save.isPending}>Simpan</Button>
+            <Button type="submit" loading={save.isPending || saving}>Simpan</Button>
           </div>
         </form>
       </Modal>
