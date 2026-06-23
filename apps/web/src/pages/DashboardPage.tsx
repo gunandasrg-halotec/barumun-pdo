@@ -5,12 +5,15 @@ import { useDashboard, useCategorySummary } from '@/hooks/useDashboard'
 import { useAuthStore } from '@/store/auth.store'
 import { KpiCard } from '@/components/ui/KpiCard'
 import { ProgressBar } from '@/components/ui/ProgressBar'
+import { Modal } from '@/components/ui/Modal'
 import { Button } from '@/components/ui/Button'
 import { api } from '@/lib/api'
-import { fmtShort, fmtPeriode, fmtPct } from '@/lib/format'
+import { fmt, fmtShort, fmtPeriode, fmtPct } from '@/lib/format'
 import { isKerani } from '@/lib/auth'
 import type { ApiResponse, PlantationUnit, RoleCode } from '@/types'
 import { BarChart2, AlertCircle, ChevronDown } from 'lucide-react'
+
+type ModalType = 'pengajuan' | 'transfer' | 'realisasi' | null
 
 const MONTHS = [
   '', 'Januari', 'Februari', 'Maret', 'April', 'Mei', 'Juni',
@@ -28,6 +31,7 @@ export function DashboardPage() {
   const [year, setYear]                       = useState(now.getFullYear())
   const [selectedUnitIds, setSelectedUnitIds] = useState<string[]>([])
   const [unitDropOpen, setUnitDropOpen]       = useState(false)
+  const [activeModal, setActiveModal]         = useState<ModalType>(null)
 
   const { data: units } = useQuery({
     queryKey: ['plantation-units'],
@@ -65,6 +69,21 @@ export function DashboardPage() {
     : selectedUnitIds.length === 1
       ? (units?.find((u) => u.id === selectedUnitIds[0])?.name ?? '1 Kebun')
       : `${selectedUnitIds.length} Kebun Dipilih`
+
+  const isSingleUnit = selectedUnitIds.length === 1
+
+  const handlePengajuanClick = () => {
+    if (isSingleUnit) navigate('/pdo')
+    else setActiveModal('pengajuan')
+  }
+  const handleTransferClick = () => {
+    if (isSingleUnit) navigate('/transfer')
+    else setActiveModal('transfer')
+  }
+  const handleRealisasiClick = () => {
+    if (isSingleUnit) navigate('/realisasi')
+    else setActiveModal('realisasi')
+  }
 
   return (
     <div>
@@ -176,21 +195,23 @@ export function DashboardPage() {
           <KpiCard
             label="Total Pengajuan"
             value={fmtShort(summary?.total_amount)}
-            hint="Klik untuk daftar PDO"
+            hint={isSingleUnit ? 'Klik untuk daftar PDO' : 'Klik untuk detail per kebun'}
             clickable
-            onClick={() => navigate('/pdo')}
+            onClick={handlePengajuanClick}
           />
           <KpiCard
             label="Total Transfer"
             value={fmtShort(summary?.total_transferred)}
-            hint={summary?.total_transferred === summary?.total_amount ? 'Sesuai PDO' : 'Ada selisih'}
+            hint={isSingleUnit ? 'Klik untuk detail transfer' : 'Klik untuk detail per tujuan'}
+            clickable
+            onClick={handleTransferClick}
           />
           <KpiCard
             label="Total Realisasi"
             value={fmtShort(summary?.total_realized)}
-            hint="Klik untuk input item"
+            hint={isSingleUnit ? 'Klik untuk detail realisasi' : 'Klik untuk detail per kebun'}
             clickable
-            onClick={() => navigate('/realisasi')}
+            onClick={handleRealisasiClick}
           />
           <KpiCard
             label="Saldo"
@@ -289,6 +310,92 @@ export function DashboardPage() {
           )}
         </div>
       </div>
+
+      {/* ── Modal Pengajuan per Kebun ── */}
+      <Modal
+        open={activeModal === 'pengajuan'}
+        onClose={() => setActiveModal(null)}
+        title={`Total Pengajuan per Kebun — ${MONTHS[month]} ${year}`}
+        width="w-[560px]"
+      >
+        <table className="w-full border-collapse text-sm">
+          <thead>
+            <tr>
+              {['Unit Kebun', 'Total Pengajuan'].map((h) => (
+                <th key={h} className="px-3 py-2 text-left text-[11px] font-bold uppercase tracking-wider text-muted bg-[#f7faf7]">{h}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {!summary?.by_unit?.length ? (
+              <tr><td colSpan={2} className="px-3 py-6 text-center text-muted">Tidak ada data</td></tr>
+            ) : (summary.by_unit as any[]).map((u) => (
+              <tr key={u.unit_id} className="border-t border-line hover:bg-[#fbfdfb]">
+                <td className="px-3 py-2 font-bold">{u.unit_code} — {u.unit_name}</td>
+                <td className="px-3 py-2 text-right">{fmt(u.total_amount)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+        <div className="flex justify-end mt-4">
+          <Button variant="secondary" onClick={() => setActiveModal(null)}>Tutup</Button>
+        </div>
+      </Modal>
+
+      {/* ── Modal Transfer per Tujuan ── */}
+      <Modal
+        open={activeModal === 'transfer'}
+        onClose={() => setActiveModal(null)}
+        title={`Detail Transfer — ${MONTHS[month]} ${year}`}
+        width="w-[560px]"
+      >
+        <div className="flex flex-col gap-3 mb-4">
+          {([['rek_kebun', 'Rekening Kebun'], ['pribadi', 'Rekening Pribadi'], ['vendor', 'Vendor']] as const).map(([key, label]) => (
+            <div key={key} className="flex items-center justify-between border border-line rounded-card px-4 py-3 bg-[#f7faf7]">
+              <span className="text-sm font-[700]">{label}</span>
+              <span className="text-sm font-[850]">{fmt((summary?.transferred_by_destination as any)?.[key] ?? 0)}</span>
+            </div>
+          ))}
+          <div className="flex items-center justify-between border-t border-line pt-3 mt-1">
+            <span className="text-sm font-[850] text-ink">Total Transfer</span>
+            <span className="text-sm font-[950] text-green">{fmt(summary?.total_transferred ?? 0)}</span>
+          </div>
+        </div>
+        <div className="flex justify-end">
+          <Button variant="secondary" onClick={() => setActiveModal(null)}>Tutup</Button>
+        </div>
+      </Modal>
+
+      {/* ── Modal Realisasi per Kebun ── */}
+      <Modal
+        open={activeModal === 'realisasi'}
+        onClose={() => setActiveModal(null)}
+        title={`Total Realisasi per Kebun — ${MONTHS[month]} ${year}`}
+        width="w-[560px]"
+      >
+        <table className="w-full border-collapse text-sm">
+          <thead>
+            <tr>
+              {['Unit Kebun', 'Total Realisasi'].map((h) => (
+                <th key={h} className="px-3 py-2 text-left text-[11px] font-bold uppercase tracking-wider text-muted bg-[#f7faf7]">{h}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {!summary?.by_unit?.length ? (
+              <tr><td colSpan={2} className="px-3 py-6 text-center text-muted">Tidak ada data</td></tr>
+            ) : (summary.by_unit as any[]).map((u) => (
+              <tr key={u.unit_id} className="border-t border-line hover:bg-[#fbfdfb]">
+                <td className="px-3 py-2 font-bold">{u.unit_code} — {u.unit_name}</td>
+                <td className="px-3 py-2 text-right">{fmt(u.total_realized)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+        <div className="flex justify-end mt-4">
+          <Button variant="secondary" onClick={() => setActiveModal(null)}>Tutup</Button>
+        </div>
+      </Modal>
     </div>
   )
 }
