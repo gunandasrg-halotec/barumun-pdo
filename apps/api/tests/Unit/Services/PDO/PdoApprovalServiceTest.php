@@ -3,6 +3,7 @@
 namespace Tests\Unit\Services\PDO;
 
 use App\Models\Company;
+use App\Models\ExpenseItem;
 use App\Models\PdoApprovalLog;
 use App\Models\PdoDetail;
 use App\Models\PdoHeader;
@@ -88,6 +89,51 @@ class PdoApprovalServiceTest extends TestCase
         $this->expectException(\Illuminate\Http\Exceptions\HttpResponseException::class);
 
         $this->service->submit($pdo, '2026-06-01', $this->asisten);
+    }
+
+    public function test_cannot_submit_if_auto_external_detail_has_not_been_pulled(): void
+    {
+        $pdo = $this->makePdoWithAutoExternalDetail(PdoHeader::STATUS_DRAFT, amount: 0);
+
+        $this->expectException(\Illuminate\Http\Exceptions\HttpResponseException::class);
+
+        $this->service->submit($pdo, '2026-06-01', $this->kerani);
+    }
+
+    public function test_can_submit_if_auto_external_detail_has_successful_zero_pull(): void
+    {
+        $pdo = $this->makePdoWithAutoExternalDetail(
+            PdoHeader::STATUS_DRAFT,
+            amount: 0,
+            externalAmountPulledAt: now(),
+            externalPayload: [
+                'status' => 'empty',
+                'amount' => 0,
+                'component_label' => 'Gaji Pokok',
+            ],
+        );
+
+        $updated = $this->service->submit($pdo, '2026-06-01', $this->kerani);
+
+        $this->assertEquals(PdoHeader::STATUS_SUBMITTED, $updated->status);
+    }
+
+    public function test_can_submit_if_auto_external_detail_has_successful_positive_pull(): void
+    {
+        $pdo = $this->makePdoWithAutoExternalDetail(
+            PdoHeader::STATUS_DRAFT,
+            amount: 1250000,
+            externalAmountPulledAt: now(),
+            externalPayload: [
+                'status' => 'ok',
+                'amount' => 1250000,
+                'component_label' => 'Gaji Pokok',
+            ],
+        );
+
+        $updated = $this->service->submit($pdo, '2026-06-01', $this->kerani);
+
+        $this->assertEquals(PdoHeader::STATUS_SUBMITTED, $updated->status);
     }
 
     // ─────────────────────────────────────────────────────
@@ -240,5 +286,35 @@ class PdoApprovalServiceTest extends TestCase
         ]);
 
         return $pdo;
+    }
+
+    /**
+     * @param  array<string, mixed>|null  $externalPayload
+     */
+    private function makePdoWithAutoExternalDetail(
+        string $status,
+        int $amount = 0,
+        ?\Illuminate\Support\Carbon $externalAmountPulledAt = null,
+        ?array $externalPayload = null
+    ): PdoHeader {
+        $pdo = $this->makePdoWithDetail($status, amount: $amount);
+
+        /** @var PdoDetail $detail */
+        $detail = $pdo->details()->firstOrFail();
+
+        $detail->expenseItem()->update([
+            'mode_input' => ExpenseItem::MODE_AUTO_EXTERNAL,
+            'external_source_system' => ExpenseItem::EXTERNAL_SOURCE_PAYROLL,
+            'external_component' => ExpenseItem::PAYROLL_COMPONENT_BASE_PAYROLL_TOTAL,
+        ]);
+
+        $detail->update([
+            'external_source_system' => ExpenseItem::EXTERNAL_SOURCE_PAYROLL,
+            'external_component' => ExpenseItem::PAYROLL_COMPONENT_BASE_PAYROLL_TOTAL,
+            'external_amount_pulled_at' => $externalAmountPulledAt,
+            'external_payload' => $externalPayload,
+        ]);
+
+        return $pdo->fresh();
     }
 }

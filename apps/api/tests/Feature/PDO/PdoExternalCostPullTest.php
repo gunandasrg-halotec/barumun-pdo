@@ -58,7 +58,7 @@ class PdoExternalCostPullTest extends TestCase
             ->assertJsonPath('grand_total', 1250000);
 
         Http::assertSent(function ($request): bool {
-            return $request->url() === 'http://payroll.test/internal/payroll-costs'
+            return str_starts_with($request->url(), 'http://payroll.test/internal/payroll-costs')
                 && $request->hasHeader('Authorization', 'Bearer test-payroll-token')
                 && $request['year'] === 2026
                 && $request['month'] === 6

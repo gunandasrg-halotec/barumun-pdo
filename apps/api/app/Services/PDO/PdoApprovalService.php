@@ -3,6 +3,7 @@
 namespace App\Services\PDO;
 
 use App\Models\PdoApprovalLog;
+use App\Models\ExpenseItem;
 use App\Models\PdoHeader;
 use App\Models\Role;
 use App\Models\TransferEntry;
@@ -53,8 +54,29 @@ class PdoApprovalService
             abort(response()->json(['success' => false, 'error' => ['code' => 'INVALID_STATUS', 'message' => 'PDO harus berstatus draft untuk di-submit.']], 409));
         }
 
-        // Minimal satu baris dengan amount > 0
-        if ($pdo->details()->where('amount', '>', 0)->doesntExist()) {
+        $unpulledAutoExternalRows = $pdo->details()
+            ->whereHas('expenseItem', fn ($query) => $query->where('mode_input', ExpenseItem::MODE_AUTO_EXTERNAL))
+            ->where(fn ($query) => $query
+                ->whereNull('external_amount_pulled_at')
+                ->orWhereNull('external_payload'))
+            ->orderBy('display_order')
+            ->pluck('display_order');
+
+        if ($unpulledAutoExternalRows->isNotEmpty()) {
+            abort(response()->json(['success' => false, 'error' => [
+                'code' => 'EXTERNAL_PULL_REQUIRED',
+                'message' => 'Baris ' . $unpulledAutoExternalRows->implode(', ') . ' wajib Ambil Data dulu sebelum submit PDO.',
+            ]], 422));
+        }
+
+        $hasPositiveAmount = $pdo->details()->where('amount', '>', 0)->exists();
+        $hasSuccessfulAutoExternalPull = $pdo->details()
+            ->whereHas('expenseItem', fn ($query) => $query->where('mode_input', ExpenseItem::MODE_AUTO_EXTERNAL))
+            ->whereNotNull('external_amount_pulled_at')
+            ->whereNotNull('external_payload')
+            ->exists();
+
+        if (! $hasPositiveAmount && ! $hasSuccessfulAutoExternalPull) {
             abort(response()->json(['success' => false, 'error' => ['code' => 'PDO_EMPTY', 'message' => 'PDO tidak bisa disubmit karena tidak ada item dengan jumlah > 0.']], 422));
         }
 
