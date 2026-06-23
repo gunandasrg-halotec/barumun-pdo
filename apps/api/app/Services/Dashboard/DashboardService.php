@@ -67,6 +67,7 @@ class DashboardService
         $byDest = collect($destRows)->pluck('subtotal', 'transfer_destination');
 
         // Pengajuan & realisasi per plantation unit (tanpa transfer agar tidak multiply rows)
+        // Note: LEFT JOIN plantation_units untuk include PDOs tanpa unit (consistency dengan global query)
         $unitRows = DB::select("
             SELECT
                 pu.id   AS unit_id,
@@ -75,7 +76,7 @@ class DashboardService
                 COALESCE(SUM(pd.amount), 0) AS total_amount,
                 COALESCE(SUM(re.amount), 0) AS total_realized
             FROM pdo_headers ph
-            JOIN plantation_units pu ON pu.id = ph.plantation_unit_id
+            LEFT JOIN plantation_units pu ON pu.id = ph.plantation_unit_id
             LEFT JOIN pdo_details pd ON pd.pdo_header_id = ph.id
             LEFT JOIN realization_entries re ON re.pdo_detail_id = pd.id
             WHERE ph.company_id = ?
@@ -83,7 +84,7 @@ class DashboardService
               AND ph.period_year  = ?
               {$unitClause}
             GROUP BY pu.id, pu.code, pu.name
-            ORDER BY pu.code
+            ORDER BY COALESCE(pu.code, 'zzz')
         ", $params);
 
         // Transfer per unit per destination
@@ -93,7 +94,7 @@ class DashboardService
                 te.transfer_destination,
                 COALESCE(SUM(te.amount), 0) AS subtotal
             FROM pdo_headers ph
-            JOIN plantation_units pu ON pu.id = ph.plantation_unit_id
+            LEFT JOIN plantation_units pu ON pu.id = ph.plantation_unit_id
             LEFT JOIN pdo_details pd ON pd.pdo_header_id = ph.id
             LEFT JOIN transfer_entries te ON te.pdo_detail_id = pd.id
             WHERE ph.company_id = ?
@@ -110,7 +111,11 @@ class DashboardService
             $transferByUnit[$row->unit_id][$row->transfer_destination] = (int) $row->subtotal;
         }
 
-        $byUnit = array_map(function ($r) use ($transferByUnit) {
+        $byUnit = array_values(array_filter(array_map(function ($r) use ($transferByUnit) {
+            // Skip rows dengan unit_id NULL
+            if (! $r->unit_id) {
+                return null;
+            }
             $t = $transferByUnit[$r->unit_id] ?? [];
             $rekKebun = (int) ($t['rek_kebun'] ?? 0);
             $pribadi  = (int) ($t['pribadi']   ?? 0);
@@ -126,7 +131,7 @@ class DashboardService
                 'transferred_pribadi'   => $pribadi,
                 'transferred_vendor'    => $vendor,
             ];
-        }, $unitRows);
+        }, $unitRows)));
 
         return [
             'period'              => ['month' => (int) $month, 'year' => (int) $year],
