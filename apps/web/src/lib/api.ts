@@ -34,8 +34,23 @@ export function getApiErrorMessage(error: unknown): string {
   return 'Terjadi kesalahan. Silakan coba lagi.'
 }
 
+export function getApiValidationDetails(error: unknown): Array<{ field: string; message: string }> {
+  if (axios.isAxiosError(error)) {
+    const data = error.response?.data as ApiError | undefined
+    return data?.error?.details ?? []
+  }
+
+  return []
+}
+
 // Helper: ekstrak field errors dari response validasi (422)
 export function getFieldErrors(error: unknown): Record<string, string> {
+  const details = getApiValidationDetails(error)
+
+  if (details.length > 0) {
+    return Object.fromEntries(details.map((detail) => [detail.field, detail.message]))
+  }
+
   if (axios.isAxiosError(error)) {
     const data = error.response?.data as ApiError | undefined
     const errors = data?.error?.errors ?? {}

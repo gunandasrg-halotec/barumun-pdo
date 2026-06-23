@@ -4,15 +4,16 @@ import { useForm, useFieldArray } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { api } from '@/lib/api'
+import { api, getApiErrorMessage, getApiValidationDetails } from '@/lib/api'
 import { Button } from '@/components/ui/Button'
 import { useToastStore } from '@/store/toast.store'
 import { useAuthStore } from '@/store/auth.store'
+import { ExternalCostPullPanel } from '@/components/pdo/ExternalCostPullPanel'
 import { useItems, useSubcategories, useCategories } from '@/hooks/useMasterData'
-import { usePdo } from '@/hooks/usePdo'
+import { usePdo, usePullExternalCost } from '@/hooks/usePdo'
 import { fmt } from '@/lib/format'
-import { ArrowLeft, Plus, Trash2, CloudDownload } from 'lucide-react'
-import type { ApiResponse, PdoHeader, PlantationUnit } from '@/types'
+import { ArrowLeft, Plus, Trash2 } from 'lucide-react'
+import type { ApiResponse, PdoDetail, PdoHeader, PlantationUnit } from '@/types'
 
 const detailSchema = z.object({
   expense_item_id: z.string().uuid('Pilih item'),
@@ -46,6 +47,7 @@ type Form = z.infer<typeof schema>
 
 // [F] Per-row cascade state: tracks category and subcategory selection per detail row
 type RowSelection = { categoryId: string; subcategoryId: string }
+type DetailSnapshot = Partial<PdoDetail> & { id?: string }
 
 const MONTHS = ['Januari','Februari','Maret','April','Mei','Juni','Juli','Agustus','September','Oktober','November','Desember']
 const YEARS  = Array.from({ length: 5 }, (_, i) => new Date().getFullYear() - i + 1)
@@ -74,6 +76,7 @@ export function PdoFormPage() {
   const { data: categories }    = useCategories({ is_active: true })
 
   const { data: existing } = usePdo(id)
+  const pullExternalCost = usePullExternalCost(id ?? '')
 
   const now = new Date()
   const { register, control, handleSubmit, watch, reset, setValue, formState: { errors } } = useForm<Form>({
@@ -88,6 +91,9 @@ export function PdoFormPage() {
   })
 
   const { fields, append, remove } = useFieldArray({ control, name: 'details' })
+  const [detailSnapshots, setDetailSnapshots] = useState<DetailSnapshot[]>([])
+  const [pullErrors, setPullErrors] = useState<Record<number, string>>({})
+  const [pullingDetailId, setPullingDetailId] = useState<string | null>(null)
 
   const detailValues = watch('details')
   const totalAmount  = detailValues?.reduce((sum, d) => sum + (Number(d.amount) || 0), 0) ?? 0
@@ -111,11 +117,22 @@ export function PdoFormPage() {
         notes:        existing.notes ?? '',
         details: [],
       })
-      api.get<ApiResponse<unknown[]>>(`/pdo/${id}/details`).then((res) => {
-        const details = res.data.data as Form['details']
-        details.forEach((d) => append(d))
+      api.get<ApiResponse<PdoDetail[]>>(`/pdo/${id}/details`).then((res) => {
+        const details = res.data.data
+        details.forEach((detail) => append({
+          expense_item_id: detail.expense_item_id,
+          description: detail.description,
+          quantity: detail.quantity,
+          unit: detail.unit,
+          rate: detail.rate,
+          amount: detail.amount,
+          notes: detail.notes,
+          display_order: detail.display_order,
+        }))
+        setDetailSnapshots(details)
+        setPullErrors({})
         // Restore cascade selections for each loaded row
-        setRowSelections(details.map((d) => resolveRowSelection(d.expense_item_id)))
+        setRowSelections(details.map((detail) => resolveRowSelection(detail.expense_item_id)))
       })
     }
   }, [existing])
@@ -195,10 +212,51 @@ export function PdoFormPage() {
     setRowSel(idx, { categoryId: sub?.category_id ?? '', subcategoryId: item.subcategory_id ?? '' })
   }
 
+  const handlePullExternalCost = async (idx: number) => {
+    const detailId = detailSnapshots[idx]?.id
+
+    if (!id || !detailId) {
+      const message = 'Simpan draft dulu sebelum Ambil Data.'
+      setPullErrors((prev) => ({ ...prev, [idx]: message }))
+      toast(message, 'error')
+      return
+    }
+
+    setPullingDetailId(detailId)
+    setPullErrors((prev) => {
+      const next = { ...prev }
+      delete next[idx]
+      return next
+    })
+
+    try {
+      const result = await pullExternalCost.mutateAsync(detailId)
+
+      setValue(`details.${idx}.amount`, Number(result.detail.amount ?? 0))
+      setDetailSnapshots((prev) => {
+        const next = [...prev]
+        next[idx] = result.detail
+        return next
+      })
+
+      toast(result.detail.external_payload?.status === 'empty' ? 'Data Payroll kosong berhasil diambil.' : 'Data Payroll berhasil diambil.')
+    } catch (error) {
+      const validationMessage = getApiValidationDetails(error)[0]?.message
+      const message = validationMessage ?? getApiErrorMessage(error)
+
+      setPullErrors((prev) => ({ ...prev, [idx]: message }))
+      toast(message, 'error')
+    } finally {
+      setPullingDetailId(null)
+    }
+  }
+
   // Auto-calculate amount = quantity * rate
   const calculateAmount = (idx: number) => {
     const detail = detailValues?.[idx]
     if (!detail) return
+    const selectedItem = items?.find((entry) => entry.id === detail.expense_item_id)
+    if (selectedItem?.mode_input === 'auto_external') return
     const qty = Number(detail.quantity) || 0
     const rate = Number(detail.rate) || 0
     setValue(`details.${idx}.amount`, qty * rate)
@@ -216,6 +274,26 @@ export function PdoFormPage() {
       next.splice(idx, 1)
       return next
     })
+    setDetailSnapshots((prev) => {
+      const next = [...prev]
+      next.splice(idx, 1)
+      return next
+    })
+    setPullErrors((prev) => {
+      const next: Record<number, string> = {}
+
+      Object.entries(prev).forEach(([key, value]) => {
+        const currentIndex = Number(key)
+
+        if (currentIndex === idx) {
+          return
+        }
+
+        next[currentIndex > idx ? currentIndex - 1 : currentIndex] = value
+      })
+
+      return next
+    })
   }
 
   // Append row + empty cascade state
@@ -225,6 +303,7 @@ export function PdoFormPage() {
       unit: null, rate: null, amount: 0, notes: null, display_order: fields.length,
     })
     setRowSelections((prev) => [...prev, { categoryId: '', subcategoryId: '' }])
+    setDetailSnapshots((prev) => [...prev, {}])
   }
 
   return (
@@ -298,6 +377,12 @@ export function PdoFormPage() {
                 const sel     = rowSelections[idx] ?? { categoryId: '', subcategoryId: '' }
                 const filteredSubs  = subcategories?.filter((s) => s.category_id === sel.categoryId) ?? []
                 const filteredItems = items?.filter((i) => i.subcategory_id === sel.subcategoryId) ?? []
+                const itemId = detailValues?.[idx]?.expense_item_id ?? ''
+                const item = items?.find((entry) => entry.id === itemId)
+                const isAutoExternal = item?.mode_input === 'auto_external'
+                const snapshot = detailSnapshots[idx]
+                const pullError = pullErrors[idx]
+                const isPulling = pullingDetailId === snapshot?.id && pullExternalCost.isPending
 
                 return (
                   <div key={field.id} className="border border-line rounded-card p-4 relative">
@@ -383,76 +468,61 @@ export function PdoFormPage() {
                       </div>
                     </div>
 
-                    {(() => {
-                      const itemId = fields[idx].expense_item_id as string
-                      const item = items?.find((i) => i.id === itemId)
-                      const isAutoExternal = item?.mode_input === 'auto_external'
+                    <div className="grid grid-cols-2 desk:grid-cols-4 gap-3">
+                      <div>
+                        <label className="label">Volume</label>
+                        <input
+                          type="number"
+                          {...register(`details.${idx}.quantity`, {
+                            onChange: () => calculateAmount(idx),
+                          })}
+                          className="input-base"
+                          step="0.01"
+                          disabled={isAutoExternal}
+                        />
+                      </div>
+                      <div>
+                        <label className="label">Satuan</label>
+                        <input
+                          {...register(`details.${idx}.unit`)}
+                          className="input-base"
+                          disabled={isAutoExternal}
+                        />
+                      </div>
+                      <div>
+                        <label className="label">Harga Satuan</label>
+                        <input
+                          type="number"
+                          {...register(`details.${idx}.rate`, {
+                            onChange: () => calculateAmount(idx),
+                          })}
+                          className="input-base"
+                          disabled={isAutoExternal}
+                        />
+                      </div>
+                      <div>
+                        <label className="label">Jumlah (Rp)</label>
+                        <input
+                          type="number"
+                          {...register(`details.${idx}.amount`)}
+                          data-testid={`detail-amount-${idx}`}
+                          className="input-base font-bold"
+                          disabled={true}
+                        />
+                        {errors.details?.[idx]?.amount && (
+                          <p className="field-error">{errors.details[idx]?.amount?.message}</p>
+                        )}
+                      </div>
+                    </div>
 
-                      return (
-                        <>
-                          <div className="grid grid-cols-2 desk:grid-cols-4 gap-3">
-                            <div>
-                              <label className="label">Volume</label>
-                              <input
-                                type="number"
-                                {...register(`details.${idx}.quantity`, {
-                                  onChange: () => calculateAmount(idx),
-                                })}
-                                className="input-base"
-                                step="0.01"
-                                disabled={isAutoExternal}
-                              />
-                            </div>
-                            <div>
-                              <label className="label">Satuan</label>
-                              <input
-                                {...register(`details.${idx}.unit`)}
-                                className="input-base"
-                                disabled={isAutoExternal}
-                              />
-                            </div>
-                            <div>
-                              <label className="label">Harga Satuan</label>
-                              <input
-                                type="number"
-                                {...register(`details.${idx}.rate`, {
-                                  onChange: () => calculateAmount(idx),
-                                })}
-                                className="input-base"
-                                disabled={isAutoExternal}
-                              />
-                            </div>
-                            <div>
-                              <label className="label">Jumlah (Rp)</label>
-                              <input
-                                type="number"
-                                {...register(`details.${idx}.amount`)}
-                                className="input-base font-bold"
-                                disabled={true}
-                              />
-                              {errors.details?.[idx]?.amount && (
-                                <p className="field-error">{errors.details[idx]?.amount?.message}</p>
-                              )}
-                            </div>
-                          </div>
-
-                          {isAutoExternal && (
-                            <div className="mt-3 p-3 bg-blue-50 border border-blue-200 rounded flex items-center justify-between">
-                              <p className="text-sm text-blue-700">
-                                <strong>Auto External:</strong> Data volume, satuan, harga, dan jumlah akan diambil dari sistem eksternal.
-                              </p>
-                              <button
-                                type="button"
-                                className="inline-flex items-center gap-1 text-sm font-bold px-3 py-1 rounded bg-blue-600 text-white hover:bg-blue-700 transition-colors whitespace-nowrap"
-                                onClick={() => toast('Fitur ambil data eksternal belum tersedia', 'error')}
-                              >
-                                <CloudDownload className="w-4 h-4" /> Ambil Data
-                              </button>
-                            </div>
-                          )}
-                        </>
-                      )
-                    })()}
+                    {isAutoExternal && (
+                      <ExternalCostPullPanel
+                        errorMessage={pullError}
+                        isPulling={isPulling}
+                        onPull={() => handlePullExternalCost(idx)}
+                        snapshot={snapshot}
+                      />
+                    )}
                   </div>
                 )
               })}

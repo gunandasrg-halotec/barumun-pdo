@@ -132,6 +132,25 @@ export function useDeleteDetail(pdoId: string, detailId: string) {
   })
 }
 
+export function usePullExternalCost(pdoId: string) {
+  const qc = useQueryClient()
+
+  return useMutation({
+    mutationFn: async (detailId: string) => {
+      const res = await api.post<ApiResponse<PdoDetail> & { grand_total: number }>(`/pdo/${pdoId}/details/${detailId}/pull-external-cost`)
+
+      return {
+        detail: res.data.data,
+        grandTotal: res.data.grand_total,
+      }
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['pdo', pdoId] })
+      qc.invalidateQueries({ queryKey: ['pdo', pdoId, 'details'] })
+    },
+  })
+}
+
 // ─── Approval actions ────────────────────────────────────────────────────────
 
 export function useSubmitPdo(pdoId: string) {

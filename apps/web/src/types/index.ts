@@ -21,6 +21,7 @@ export interface PlantationUnit {
   code: string
   name: string
   is_active: boolean
+  payroll_estate_external_id?: string | null
 }
 
 export interface AuthUser {
@@ -69,6 +70,9 @@ export interface ExpenseItem {
   default_unit: string | null
   default_rate: number | null
   mode_input: ModeInput
+  external_source_system?: string | null
+  external_component?: string | null
+  external_component_key?: string | null
   is_routine: boolean
   is_active: boolean
   notes: string | null
@@ -129,6 +133,20 @@ export interface PdoDetail {
   unit: string | null
   rate: number | null
   amount: number
+  external_source_system?: string | null
+  external_component?: string | null
+  external_component_key?: string | null
+  external_amount_pulled_at?: string | null
+  external_payload?: {
+    status?: string
+    amount?: number
+    employee_count?: number
+    component?: string
+    component_label?: string
+    period?: string
+    estate_external_id?: string
+    generated_at?: string | null
+  } | null
   notes: string | null
   display_order: number
   // computed
@@ -271,6 +289,10 @@ export interface ApiError {
   error: {
     code: string
     message: string
+    details?: Array<{
+      field: string
+      message: string
+    }>
     errors?: Record<string, string[]>
   }
 }
