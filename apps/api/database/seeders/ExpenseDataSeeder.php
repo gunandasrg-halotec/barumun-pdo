@@ -232,12 +232,10 @@ class ExpenseDataSeeder extends Seeder
 
         foreach ($masterData as $katData) {
             // ── Upsert Kategori ──────────────────────────────────────────────
-            DB::table('expense_categories')->updateOrInsert(
+            $categoryId = $this->stableUpsert(
+                'expense_categories',
                 ['company_id' => $companyId, 'code' => $katData['code']],
                 [
-                    'id'              => (string) Str::uuid(),
-                    'company_id'      => $companyId,
-                    'code'            => $katData['code'],
                     'name'            => $katData['name'],
                     'display_order'   => $katData['display_order'],
                     'include_in_recap'=> $katData['include_in_recap'],
@@ -246,20 +244,14 @@ class ExpenseDataSeeder extends Seeder
                     'updated_at'      => $now,
                 ]
             );
-            $categoryId = DB::table('expense_categories')
-                ->where('company_id', $companyId)
-                ->where('code', $katData['code'])
-                ->value('id');
             $totalKategori++;
 
             foreach ($katData['subcategories'] as $subData) {
                 // ── Upsert Sub-Kategori ──────────────────────────────────────
-                DB::table('expense_subcategories')->updateOrInsert(
+                $subcategoryId = $this->stableUpsert(
+                    'expense_subcategories',
                     ['category_id' => $categoryId, 'code' => $subData['code']],
                     [
-                        'id'           => (string) Str::uuid(),
-                        'category_id'  => $categoryId,
-                        'code'         => $subData['code'],
                         'name'         => $subData['name'],
                         'display_order'=> $subData['display_order'],
                         'is_active'    => true,
@@ -267,20 +259,14 @@ class ExpenseDataSeeder extends Seeder
                         'updated_at'   => $now,
                     ]
                 );
-                $subcategoryId = DB::table('expense_subcategories')
-                    ->where('category_id', $categoryId)
-                    ->where('code', $subData['code'])
-                    ->value('id');
                 $totalSubkategori++;
 
                 foreach ($subData['items'] as [$code, $name, $account, $unit, $rate, $isRoutine]) {
                     // ── Upsert Item Biaya ────────────────────────────────────
-                    DB::table('expense_items')->updateOrInsert(
+                    $this->stableUpsert(
+                        'expense_items',
                         ['subcategory_id' => $subcategoryId, 'code' => $code],
                         [
-                            'id'                     => (string) Str::uuid(),
-                            'subcategory_id'         => $subcategoryId,
-                            'code'                   => $code,
                             'name'                   => $name,
                             'default_account_number' => $account,
                             'default_unit'           => $unit,
@@ -301,5 +287,25 @@ class ExpenseDataSeeder extends Seeder
         $this->command->info("✅ Kategori:    $totalKategori");
         $this->command->info("✅ Sub-Kategori: $totalSubkategori");
         $this->command->info("✅ Item Biaya:   $totalItem (Rutin: $totalRoutine)");
+    }
+
+    private function stableUpsert(string $table, array $match, array $values): string
+    {
+        $existingId = DB::table($table)->where($match)->value('id');
+
+        if ($existingId) {
+            $updateValues = $values;
+            unset($updateValues['id'], $updateValues['created_at']);
+
+            DB::table($table)->where('id', $existingId)->update($updateValues);
+
+            return $existingId;
+        }
+
+        $id = (string) Str::uuid();
+
+        DB::table($table)->insert(array_merge($match, $values, ['id' => $id]));
+
+        return $id;
     }
 }

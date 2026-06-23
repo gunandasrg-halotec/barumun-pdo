@@ -13,6 +13,7 @@ export default defineConfig({
   },
   server: {
     port: 5173,
+    allowedHosts: ['pdo.test', 'www.pdo.test'],
     proxy: {
       '/api': {
         // Di Docker: VITE_API_TARGET=http://api:8000 (nama service di docker-compose)
