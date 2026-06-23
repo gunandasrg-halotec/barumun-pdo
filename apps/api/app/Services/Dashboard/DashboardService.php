@@ -31,21 +31,51 @@ class DashboardService
 
         $params = array_merge([$companyId, $month, $year], $unitIds ?? []);
 
-        $monthlyStats = DB::selectOne("
+        // Query amount separately dari transfer/realization untuk avoid row multiplication
+        $amountStats = DB::selectOne("
             SELECT
-                COALESCE(SUM(pd.amount), 0)  AS total_amount,
-                COALESCE(SUM(te.amount), 0)  AS total_transferred,
+                COALESCE(SUM(pd.amount), 0)  AS total_amount
+            FROM pdo_headers ph
+            LEFT JOIN pdo_details pd ON pd.pdo_header_id = ph.id
+            WHERE ph.company_id = ?
+              AND ph.period_month = ?
+              AND ph.period_year  = ?
+              {$unitClause}
+        ", $params);
+
+        // Query transfer amount
+        $transferStats = DB::selectOne("
+            SELECT
+                COALESCE(SUM(te.amount), 0)  AS total_transferred
+            FROM pdo_headers ph
+            LEFT JOIN pdo_details pd ON pd.pdo_header_id = ph.id
+            LEFT JOIN transfer_entries te ON te.pdo_detail_id = pd.id
+            WHERE ph.company_id = ?
+              AND ph.period_month = ?
+              AND ph.period_year  = ?
+              {$unitClause}
+        ", $params);
+
+        // Query realization amount & items without proof
+        $realizationStats = DB::selectOne("
+            SELECT
                 COALESCE(SUM(re.amount), 0)  AS total_realized,
                 COUNT(DISTINCT CASE WHEN re.proof_number IS NULL OR re.proof_number = '' THEN re.id END) AS items_without_proof
             FROM pdo_headers ph
             LEFT JOIN pdo_details pd ON pd.pdo_header_id = ph.id
-            LEFT JOIN transfer_entries te ON te.pdo_detail_id = pd.id
             LEFT JOIN realization_entries re ON re.pdo_detail_id = pd.id
             WHERE ph.company_id = ?
               AND ph.period_month = ?
               AND ph.period_year  = ?
               {$unitClause}
         ", $params);
+
+        $monthlyStats = (object) [
+            'total_amount' => $amountStats->total_amount,
+            'total_transferred' => $transferStats->total_transferred,
+            'total_realized' => $realizationStats->total_realized,
+            'items_without_proof' => $realizationStats->items_without_proof,
+        ];
 
         $totalTransferred = (int) $monthlyStats->total_transferred;
         $totalRealized    = (int) $monthlyStats->total_realized;
