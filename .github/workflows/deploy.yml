@@ -1,181 +1,183 @@
-name: PDO System CI/CD
+name: Deploy to Production
 
 on:
   push:
-    branches: [main, develop]
-  pull_request:
-    branches: [main, develop]
+    branches:
+      - main
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME_API: ${{ github.repository }}/api
+  IMAGE_NAME_WEB: ${{ github.repository }}/web
 
 jobs:
-  # ─────────────────────────────────────────
-  # Backend Tests
-  # ─────────────────────────────────────────
-  backend-test:
-    name: Backend Tests (Laravel 13 / PHP 8.4)
+  build-and-push:
     runs-on: ubuntu-latest
-
-    services:
-      postgres:
-        image: postgres:15-alpine
-        env:
-          POSTGRES_DB: pdo_test
-          POSTGRES_USER: pdo_user
-          POSTGRES_PASSWORD: secret
-        ports: ["5432:5432"]
-        options: >-
-          --health-cmd pg_isready
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
-
-      redis:
-        image: redis:7-alpine
-        ports: ["6379:6379"]
+    permissions:
+      contents: read
+      packages: write
 
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout code
+        uses: actions/checkout@v4
 
-      - name: Setup PHP 8.4
-        uses: shivammathur/setup-php@v2
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
         with:
-          php-version: "8.4"
-          extensions: pdo, pdo_pgsql, redis, bcmath, mbstring, xml, zip
-          coverage: xdebug
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Cache Composer dependencies
-        uses: actions/cache@v4
+      - name: Extract metadata (API)
+        id: meta-api
+        uses: docker/metadata-action@v5
         with:
-          path: apps/api/vendor
-          key: ${{ runner.os }}-composer-${{ hashFiles('apps/api/composer.lock') }}
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME_API }}
+          tags: |
+            type=ref,event=branch
+            type=sha,prefix={{branch}}-
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
 
-      - name: Install dependencies
-        working-directory: apps/api
-        run: composer install --no-dev --optimize-autoloader --no-interaction
+      - name: Extract metadata (Web)
+        id: meta-web
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME_WEB }}
+          tags: |
+            type=ref,event=branch
+            type=sha,prefix={{branch}}-
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
 
-      - name: Copy .env
-        working-directory: apps/api
-        run: cp .env.ci .env
+      - name: Build and push API image
+        uses: docker/build-push-action@v5
+        with:
+          context: ./apps/api
+          file: ./apps/api/Dockerfile.prod
+          push: true
+          tags: ${{ steps.meta-api.outputs.tags }}
+          labels: ${{ steps.meta-api.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
 
-      - name: Generate app key
-        working-directory: apps/api
-        run: php artisan key:generate
+      - name: Build and push Web image
+        uses: docker/build-push-action@v5
+        with:
+          context: ./apps/web
+          file: ./apps/web/Dockerfile.prod
+          push: true
+          tags: ${{ steps.meta-web.outputs.tags }}
+          labels: ${{ steps.meta-web.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
 
-      - name: Run migrations
-        working-directory: apps/api
-        run: php artisan migrate --force
-        env:
-          DB_HOST: 127.0.0.1
-          DB_PORT: 5432
-          DB_DATABASE: pdo_test
-          DB_USERNAME: pdo_user
-          DB_PASSWORD: secret
-
-      - name: Run tests
-        working-directory: apps/api
-        run: php artisan test --parallel --coverage --min=70
-        env:
-          DB_HOST: 127.0.0.1
-          DB_DATABASE: pdo_test
-          DB_USERNAME: pdo_user
-          DB_PASSWORD: secret
-          REDIS_HOST: 127.0.0.1
-
-  # ─────────────────────────────────────────
-  # Frontend Build Check
-  # ─────────────────────────────────────────
-  frontend-build:
-    name: Frontend Build (React 19 / Vite)
+  deploy:
+    needs: build-and-push
     runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: "20"
-          cache: "npm"
-          cache-dependency-path: apps/web/package-lock.json
-
-      - name: Install dependencies
-        working-directory: apps/web
-        run: npm ci
-
-      - name: TypeScript check
-        working-directory: apps/web
-        run: npm run type-check
-
-      - name: Build
-        working-directory: apps/web
-        run: npm run build
-        env:
-          VITE_API_URL: https://api.pdo.barumunpalma.co.id/api/v1
-
-  # ─────────────────────────────────────────
-  # Deploy to Staging (hanya dari branch develop)
-  # ─────────────────────────────────────────
-  deploy-staging:
-    name: Deploy to Staging
-    needs: [backend-test, frontend-build]
-    runs-on: ubuntu-latest
-    if: github.ref == 'refs/heads/develop' && github.event_name == 'push'
-    environment: staging
+    if: success()
 
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout code
+        uses: actions/checkout@v4
 
-      - name: Deploy Backend to Staging EC2
-        uses: appleboy/ssh-action@v1
-        with:
-          host: ${{ secrets.STAGING_EC2_HOST }}
-          username: ubuntu
-          key: ${{ secrets.EC2_SSH_PRIVATE_KEY }}
-          script: |
-            cd /var/www/pdo-api
-            git pull origin develop
-            composer install --no-dev --optimize-autoloader
-            php artisan migrate --force
-            php artisan config:cache
-            php artisan route:cache
-            php artisan event:cache
-            php artisan queue:restart
-            sudo systemctl reload php8.4-fpm
-            echo "✅ Staging deploy selesai: $(date)"
-
-  # ─────────────────────────────────────────
-  # Deploy to Production (hanya dari branch main, butuh manual approval)
-  # ─────────────────────────────────────────
-  deploy-production:
-    name: Deploy to Production
-    needs: [backend-test, frontend-build]
-    runs-on: ubuntu-latest
-    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
-    environment: production  # environment ini dikonfigurasi required reviewers di GitHub
-
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Create RDS Snapshot before deploy
+      - name: Setup SSH
         run: |
-          aws rds create-db-snapshot \
-            --db-instance-identifier pdo-production \
-            --db-snapshot-identifier pdo-pre-deploy-$(date +%Y%m%d-%H%M%S)
-        env:
-          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          AWS_DEFAULT_REGION: ap-southeast-3
+          mkdir -p ~/.ssh
+          echo "${{ secrets.DEPLOY_SSH_KEY }}" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          ssh-keyscan -H 54.206.23.51 >> ~/.ssh/known_hosts
 
-      - name: Deploy Backend to Production EC2
-        uses: appleboy/ssh-action@v1
+      - name: Deploy to server
+        run: |
+          ssh -i ~/.ssh/deploy_key ubuntu@54.206.23.51 'bash -s' < ./scripts/deploy.sh
+        env:
+          REGISTRY: ${{ env.REGISTRY }}
+          IMAGE_NAME_API: ${{ env.IMAGE_NAME_API }}
+          IMAGE_NAME_WEB: ${{ env.IMAGE_NAME_WEB }}
+          GITHUB_ACTOR: ${{ github.actor }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Run health checks
+        run: |
+          bash ./scripts/health-check.sh
+        continue-on-error: true
+
+      - name: Notify Slack - Success
+        if: success()
+        uses: slackapi/slack-github-action@v1.24.0
         with:
-          host: ${{ secrets.PROD_EC2_HOST }}
-          username: ubuntu
-          key: ${{ secrets.EC2_SSH_PRIVATE_KEY }}
-          script: |
-            cd /var/www/pdo-api
-            git pull origin main
-            composer install --no-dev --optimize-autoloader
-            php artisan migrate --force
-            php artisan config:cache
-            php artisan route:cache
-            php artisan event:cache
-            php artisan queue:restart
-            sudo systemctl reload php8.4-fpm
-            echo "✅ Production deploy selesai: $(date)"
+          payload: |
+            {
+              "text": "✅ Production deployment successful",
+              "blocks": [
+                {
+                  "type": "section",
+                  "text": {
+                    "type": "mrkdwn",
+                    "text": "*✅ Production Deployment Successful*\n*Repository:* ${{ github.repository }}\n*Branch:* main\n*Commit:* ${{ github.sha }}\n*Author:* ${{ github.actor }}\n*Message:* ${{ github.event.head_commit.message }}"
+                  }
+                },
+                {
+                  "type": "actions",
+                  "elements": [
+                    {
+                      "type": "button",
+                      "text": {
+                        "type": "plain_text",
+                        "text": "View Workflow"
+                      },
+                      "url": "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+                    },
+                    {
+                      "type": "button",
+                      "text": {
+                        "type": "plain_text",
+                        "text": "View Application"
+                      },
+                      "url": "https://pdo.barumun-plantation.com"
+                    }
+                  ]
+                }
+              ]
+            }
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          SLACK_WEBHOOK_TYPE: INCOMING_WEBHOOK
+
+      - name: Notify Slack - Failure
+        if: failure()
+        uses: slackapi/slack-github-action@v1.24.0
+        with:
+          payload: |
+            {
+              "text": "❌ Production deployment failed",
+              "blocks": [
+                {
+                  "type": "section",
+                  "text": {
+                    "type": "mrkdwn",
+                    "text": "*❌ Production Deployment Failed*\n*Repository:* ${{ github.repository }}\n*Branch:* main\n*Commit:* ${{ github.sha }}\n*Author:* ${{ github.actor }}"
+                  }
+                },
+                {
+                  "type": "actions",
+                  "elements": [
+                    {
+                      "type": "button",
+                      "text": {
+                        "type": "plain_text",
+                        "text": "View Workflow"
+                      },
+                      "url": "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+                    }
+                  ]
+                }
+              ]
+            }
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          SLACK_WEBHOOK_TYPE: INCOMING_WEBHOOK
