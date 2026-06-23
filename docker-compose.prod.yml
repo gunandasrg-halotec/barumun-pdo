@@ -1,6 +1,19 @@
 services:
 
-  # ── Redis ─────────────────────────────────────────────────────────────────────
+  # ── Database (PostgreSQL) ─────────────────────────────
+  db:
+    image: postgres:16-alpine
+    restart: always
+    environment:
+      POSTGRES_DB: ${DB_DATABASE:-pdodb}
+      POSTGRES_USER: ${DB_USERNAME:-pdo_user}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-secret}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+
+  # ── Redis ─────────────────────────────────────────────
   redis:
     image: redis:7-alpine
     restart: always
@@ -19,8 +32,8 @@ services:
     ports:
       - "8000:80"
     depends_on:
-      redis:
-        condition: service_started
+      - db
+      - redis
 
   # ── Frontend (React — static via Nginx) ───────────────────────────────────────
   web:
@@ -36,4 +49,5 @@ services:
       - api
 
 volumes:
+  pgdata:
   redisdata:
