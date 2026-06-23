@@ -231,12 +231,15 @@ export interface PdoSupplementaryHeader {
 // ─── Dashboard ───────────────────────────────────────────────────────────────
 
 export interface DashboardUnitSummary {
-  unit_id:          string
-  unit_code:        string
-  unit_name:        string
-  total_amount:     number
-  total_transferred:number
-  total_realized:   number
+  unit_id:               string
+  unit_code:             string
+  unit_name:             string
+  total_amount:          number
+  total_transferred:     number
+  total_realized:        number
+  transferred_rek_kebun: number
+  transferred_pribadi:   number
+  transferred_vendor:    number
 }
 
 export interface DashboardSummary {

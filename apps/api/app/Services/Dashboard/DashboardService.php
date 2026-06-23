@@ -66,19 +66,17 @@ class DashboardService
         ", $params);
         $byDest = collect($destRows)->pluck('subtotal', 'transfer_destination');
 
-        // Pengajuan & realisasi per plantation unit
+        // Pengajuan & realisasi per plantation unit (tanpa transfer agar tidak multiply rows)
         $unitRows = DB::select("
             SELECT
                 pu.id   AS unit_id,
                 pu.code AS unit_code,
                 pu.name AS unit_name,
-                COALESCE(SUM(pd.amount), 0)  AS total_amount,
-                COALESCE(SUM(te.amount), 0)  AS total_transferred,
-                COALESCE(SUM(re.amount), 0)  AS total_realized
+                COALESCE(SUM(pd.amount), 0) AS total_amount,
+                COALESCE(SUM(re.amount), 0) AS total_realized
             FROM pdo_headers ph
             JOIN plantation_units pu ON pu.id = ph.plantation_unit_id
             LEFT JOIN pdo_details pd ON pd.pdo_header_id = ph.id
-            LEFT JOIN transfer_entries te ON te.pdo_detail_id = pd.id
             LEFT JOIN realization_entries re ON re.pdo_detail_id = pd.id
             WHERE ph.company_id = ?
               AND ph.period_month = ?
@@ -87,6 +85,48 @@ class DashboardService
             GROUP BY pu.id, pu.code, pu.name
             ORDER BY pu.code
         ", $params);
+
+        // Transfer per unit per destination
+        $unitDestRows = DB::select("
+            SELECT
+                pu.id AS unit_id,
+                te.transfer_destination,
+                COALESCE(SUM(te.amount), 0) AS subtotal
+            FROM pdo_headers ph
+            JOIN plantation_units pu ON pu.id = ph.plantation_unit_id
+            LEFT JOIN pdo_details pd ON pd.pdo_header_id = ph.id
+            LEFT JOIN transfer_entries te ON te.pdo_detail_id = pd.id
+            WHERE ph.company_id = ?
+              AND ph.period_month = ?
+              AND ph.period_year  = ?
+              AND te.id IS NOT NULL
+              {$unitClause}
+            GROUP BY pu.id, te.transfer_destination
+        ", $params);
+
+        // Index transfer per unit
+        $transferByUnit = [];
+        foreach ($unitDestRows as $row) {
+            $transferByUnit[$row->unit_id][$row->transfer_destination] = (int) $row->subtotal;
+        }
+
+        $byUnit = array_map(function ($r) use ($transferByUnit) {
+            $t = $transferByUnit[$r->unit_id] ?? [];
+            $rekKebun = (int) ($t['rek_kebun'] ?? 0);
+            $pribadi  = (int) ($t['pribadi']   ?? 0);
+            $vendor   = (int) ($t['vendor']    ?? 0);
+            return [
+                'unit_id'               => $r->unit_id,
+                'unit_code'             => $r->unit_code,
+                'unit_name'             => $r->unit_name,
+                'total_amount'          => (int) $r->total_amount,
+                'total_transferred'     => $rekKebun + $pribadi + $vendor,
+                'total_realized'        => (int) $r->total_realized,
+                'transferred_rek_kebun' => $rekKebun,
+                'transferred_pribadi'   => $pribadi,
+                'transferred_vendor'    => $vendor,
+            ];
+        }, $unitRows);
 
         return [
             'period'              => ['month' => (int) $month, 'year' => (int) $year],
@@ -102,14 +142,7 @@ class DashboardService
                 'pribadi'   => (int) ($byDest['pribadi']   ?? 0),
                 'vendor'    => (int) ($byDest['vendor']    ?? 0),
             ],
-            'by_unit' => array_map(fn ($r) => [
-                'unit_id'          => $r->unit_id,
-                'unit_code'        => $r->unit_code,
-                'unit_name'        => $r->unit_name,
-                'total_amount'     => (int) $r->total_amount,
-                'total_transferred'=> (int) $r->total_transferred,
-                'total_realized'   => (int) $r->total_realized,
-            ], $unitRows),
+            'by_unit' => $byUnit,
         ];
     }
 

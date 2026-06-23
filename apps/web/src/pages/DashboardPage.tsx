@@ -342,24 +342,46 @@ export function DashboardPage() {
         </div>
       </Modal>
 
-      {/* ── Modal Transfer per Tujuan ── */}
+      {/* ── Modal Transfer per Unit per Tujuan ── */}
       <Modal
         open={activeModal === 'transfer'}
         onClose={() => setActiveModal(null)}
-        title={`Detail Transfer — ${MONTHS[month]} ${year}`}
-        width="w-[560px]"
+        title={`Detail Transfer per Kebun — ${MONTHS[month]} ${year}`}
+        width="w-[720px]"
       >
-        <div className="flex flex-col gap-3 mb-4">
-          {([['rek_kebun', 'Rekening Kebun'], ['pribadi', 'Rekening Pribadi'], ['vendor', 'Vendor']] as const).map(([key, label]) => (
-            <div key={key} className="flex items-center justify-between border border-line rounded-card px-4 py-3 bg-[#f7faf7]">
-              <span className="text-sm font-[700]">{label}</span>
-              <span className="text-sm font-[850]">{fmt(summary?.transferred_by_destination?.[key] ?? 0)}</span>
-            </div>
-          ))}
-          <div className="flex items-center justify-between border-t border-line pt-3 mt-1">
-            <span className="text-sm font-[850] text-ink">Total Transfer</span>
-            <span className="text-sm font-[950] text-green">{fmt(summary?.total_transferred ?? 0)}</span>
-          </div>
+        <div className="overflow-auto border border-line rounded-card mb-4">
+          <table className="w-full border-collapse text-sm">
+            <thead>
+              <tr>
+                {['Unit Kebun', 'Rek. Kebun', 'Pribadi', 'Vendor', 'Total'].map((h) => (
+                  <th key={h} className="px-3 py-2 text-left text-[11px] font-bold uppercase tracking-wider text-muted bg-[#f7faf7]">{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {!summary?.by_unit?.length ? (
+                <tr><td colSpan={5} className="px-3 py-6 text-center text-muted">Tidak ada data transfer</td></tr>
+              ) : summary.by_unit.map((u) => (
+                <tr key={u.unit_id} className="border-t border-line hover:bg-[#fbfdfb]">
+                  <td className="px-3 py-2 font-bold">{u.unit_code} — {u.unit_name}</td>
+                  <td className="px-3 py-2 text-right">{u.transferred_rek_kebun > 0 ? fmt(u.transferred_rek_kebun) : '—'}</td>
+                  <td className="px-3 py-2 text-right">{u.transferred_pribadi > 0 ? fmt(u.transferred_pribadi) : '—'}</td>
+                  <td className="px-3 py-2 text-right">{u.transferred_vendor > 0 ? fmt(u.transferred_vendor) : '—'}</td>
+                  <td className="px-3 py-2 text-right font-bold">{fmt(u.total_transferred)}</td>
+                </tr>
+              ))}
+              {/* Baris total */}
+              {(summary?.by_unit?.length ?? 0) > 0 && (
+                <tr className="border-t-2 border-line bg-[#f7faf7] font-bold">
+                  <td className="px-3 py-2">Total</td>
+                  <td className="px-3 py-2 text-right">{fmt(summary?.transferred_by_destination?.rek_kebun ?? 0)}</td>
+                  <td className="px-3 py-2 text-right">{fmt(summary?.transferred_by_destination?.pribadi ?? 0)}</td>
+                  <td className="px-3 py-2 text-right">{fmt(summary?.transferred_by_destination?.vendor ?? 0)}</td>
+                  <td className="px-3 py-2 text-right text-green">{fmt(summary?.total_transferred ?? 0)}</td>
+                </tr>
+              )}
+            </tbody>
+          </table>
         </div>
         <div className="flex justify-end">
           <Button variant="secondary" onClick={() => setActiveModal(null)}>Tutup</Button>
