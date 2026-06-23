@@ -8,8 +8,13 @@ use App\Models\PdoDetail;
 use App\Models\PdoHeader;
 use App\Models\PlantationUnit;
 use App\Models\User;
+use Illuminate\Http\Client\ConnectionException;
+use Illuminate\Http\Client\Response;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Http;
+use Illuminate\Validation\ValidationException;
 
 class PdoService
 {
@@ -215,6 +220,9 @@ class PdoService
             'unit'           => $data['unit'] ?? $item->default_unit, // snapshot
             'rate'           => $data['rate'] ?? $item->default_rate, // snapshot
             'amount'         => $data['amount'],
+            'external_source_system' => $item->mode_input === ExpenseItem::MODE_AUTO_EXTERNAL ? $item->external_source_system : null,
+            'external_component' => $item->mode_input === ExpenseItem::MODE_AUTO_EXTERNAL ? $item->external_component : null,
+            'external_component_key' => $item->mode_input === ExpenseItem::MODE_AUTO_EXTERNAL ? $item->external_component_key : null,
             'notes'          => $data['notes'] ?? null,
             'display_order'  => $data['display_order'] ?? $this->nextDisplayOrder($pdo),
         ]);
@@ -273,6 +281,87 @@ class PdoService
         $this->syncGrandTotal($pdo);
     }
 
+    public function pullExternalCost(PdoHeader $pdo, PdoDetail $detail, User $actor): PdoDetail
+    {
+        $this->assertDraft($pdo);
+        $this->assertDetailBelongsToPdo($pdo, $detail);
+
+        $detail->loadMissing('expenseItem');
+
+        $item = $detail->expenseItem;
+
+        if (! $item instanceof ExpenseItem || $item->mode_input !== ExpenseItem::MODE_AUTO_EXTERNAL) {
+            throw ValidationException::withMessages([
+                'expense_item_id' => 'Item ini bukan Auto External sehingga tidak bisa Ambil Data.',
+            ]);
+        }
+
+        if (! filled($pdo->plantationUnit?->payroll_estate_external_id)) {
+            throw ValidationException::withMessages([
+                'plantation_unit_id' => 'Payroll Estate Mapping belum diatur untuk kebun ini.',
+            ]);
+        }
+
+        if (! filled($item->external_source_system) || ! filled($item->external_component)) {
+            throw ValidationException::withMessages([
+                'expense_item_id' => 'Cost Mapping Payroll belum diatur untuk item biaya ini.',
+            ]);
+        }
+
+        $response = $this->requestPayrollCost(
+            year: $pdo->period_year,
+            month: $pdo->period_month,
+            estateExternalId: $pdo->plantationUnit->payroll_estate_external_id,
+            component: $item->external_component,
+            componentKey: $item->external_component_key,
+        );
+
+        if ($response->successful()) {
+            return DB::transaction(function () use ($actor, $detail, $item, $pdo, $response) {
+                $old = $detail->toArray();
+                $payload = $response->json();
+
+                $detail->update([
+                    'amount' => (int) data_get($payload, 'amount', 0),
+                    'external_source_system' => $item->external_source_system,
+                    'external_component' => $item->external_component,
+                    'external_component_key' => $item->external_component_key,
+                    'external_amount_pulled_at' => Carbon::now(),
+                    'external_payload' => $payload,
+                ]);
+
+                $this->syncGrandTotal($pdo);
+
+                AuditLog::record(
+                    actor: $actor,
+                    entityType: 'pdo_details',
+                    entityId: $detail->id,
+                    action: 'EXTERNAL_PULL',
+                    oldValues: $old,
+                    newValues: $detail->fresh()->toArray()
+                );
+
+                return $detail->fresh()->load('expenseItem');
+            });
+        }
+
+        $message = (string) data_get($response->json(), 'error', 'Payroll tidak dapat dihubungi saat ini.');
+
+        if (in_array($response->status(), [404, 422], true)) {
+            throw ValidationException::withMessages([
+                'expense_item_id' => $message,
+            ]);
+        }
+
+        abort(response()->json([
+            'success' => false,
+            'error' => [
+                'code' => 'PAYROLL_UNAVAILABLE',
+                'message' => $message,
+            ],
+        ], 503));
+    }
+
     // ─────────────────────────────────────────────────────
     // PRIVATE HELPERS
     // ─────────────────────────────────────────────────────
@@ -306,6 +395,9 @@ class PdoService
                 'unit'           => $item->default_unit,
                 'rate'           => $item->default_rate,
                 'amount'         => 0,
+                'external_source_system' => $item->mode_input === ExpenseItem::MODE_AUTO_EXTERNAL ? $item->external_source_system : null,
+                'external_component' => $item->mode_input === ExpenseItem::MODE_AUTO_EXTERNAL ? $item->external_component : null,
+                'external_component_key' => $item->mode_input === ExpenseItem::MODE_AUTO_EXTERNAL ? $item->external_component_key : null,
                 'display_order'  => $order + 1,
             ]);
         }
@@ -325,6 +417,56 @@ class PdoService
     private function nextDisplayOrder(PdoHeader $pdo): int
     {
         return ($pdo->details()->max('display_order') ?? 0) + 1;
+    }
+
+    private function assertDetailBelongsToPdo(PdoHeader $pdo, PdoDetail $detail): void
+    {
+        if ($detail->pdo_header_id !== $pdo->id) {
+            abort(404);
+        }
+    }
+
+    private function requestPayrollCost(
+        int $year,
+        int $month,
+        string $estateExternalId,
+        string $component,
+        ?string $componentKey,
+    ): Response {
+        $baseUrl = rtrim((string) getenv('PAYROLL_INTERNAL_API_BASE_URL'), '/');
+        $token = (string) getenv('PAYROLL_INTERNAL_API_TOKEN');
+
+        if ($baseUrl === '' || $token === '') {
+            abort(response()->json([
+                'success' => false,
+                'error' => [
+                    'code' => 'PAYROLL_UNAVAILABLE',
+                    'message' => 'Konfigurasi Payroll internal API belum lengkap.',
+                ],
+            ], 503));
+        }
+
+        try {
+            return Http::acceptJson()
+                ->asJson()
+                ->withToken($token)
+                ->timeout(15)
+                ->get($baseUrl.'/internal/payroll-costs', array_filter([
+                    'year' => $year,
+                    'month' => $month,
+                    'estate_external_id' => $estateExternalId,
+                    'component' => $component,
+                    'component_key' => $componentKey,
+                ], static fn (mixed $value): bool => $value !== null));
+        } catch (ConnectionException) {
+            abort(response()->json([
+                'success' => false,
+                'error' => [
+                    'code' => 'PAYROLL_UNAVAILABLE',
+                    'message' => 'Payroll tidak dapat dihubungi saat ini.',
+                ],
+            ], 503));
+        }
     }
 
     private function syncGrandTotal(PdoHeader $pdo): void

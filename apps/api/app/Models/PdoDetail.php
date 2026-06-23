@@ -28,6 +28,11 @@ class PdoDetail extends Model
         'unit',
         'rate',
         'amount',
+        'external_source_system',
+        'external_component',
+        'external_component_key',
+        'external_amount_pulled_at',
+        'external_payload',
         'notes',
         'display_order',
     ];
@@ -38,6 +43,8 @@ class PdoDetail extends Model
             'quantity'      => 'float',
             'rate'          => 'integer',
             'amount'        => 'integer',
+            'external_amount_pulled_at' => 'datetime',
+            'external_payload' => 'array',
             'display_order' => 'integer',
         ];
     }

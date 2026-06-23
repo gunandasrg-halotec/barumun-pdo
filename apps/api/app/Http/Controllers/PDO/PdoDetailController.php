@@ -42,4 +42,16 @@ class PdoDetailController extends Controller
 
         return response()->json(['success' => true, 'message' => 'Item PDO berhasil dihapus.']);
     }
+
+    public function pullExternalCost(Request $request, PdoHeader $pdo, PdoDetail $detail): JsonResponse
+    {
+        $updated = $this->service->pullExternalCost($pdo, $detail, $request->user());
+
+        return response()->json([
+            'success' => true,
+            'data' => $updated,
+            'grand_total' => $pdo->fresh()->grand_total_amount,
+            'message' => 'Data Payroll berhasil diambil.',
+        ]);
+    }
 }
