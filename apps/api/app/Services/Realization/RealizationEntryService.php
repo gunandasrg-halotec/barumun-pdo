@@ -152,6 +152,20 @@ class RealizationEntryService
     {
         $pdo = $entry->pdoDetail->pdoHeader;
 
+        // BR-AUTH-001: Verify PDO belongs to user's company and unit
+        if ($pdo->company_id !== $actor->company_id) {
+            abort(response()->json([
+                'success' => false,
+                'error'   => ['code' => 'COMPANY_MISMATCH', 'message' => 'Anda tidak memiliki akses ke realisasi ini.'],
+            ], 403));
+        }
+        if ($actor->plantation_unit_id && $pdo->plantation_unit_id !== $actor->plantation_unit_id) {
+            abort(response()->json([
+                'success' => false,
+                'error'   => ['code' => 'UNIT_MISMATCH', 'message' => 'Realisasi hanya bisa diubah untuk PDO unit Anda sendiri.'],
+            ], 403));
+        }
+
         if ($pdo->isClosed()) {
             abort(response()->json([
                 'success' => false,
@@ -214,6 +228,20 @@ class RealizationEntryService
     public function destroy(RealizationEntry $entry, User $actor): void
     {
         $pdo = $entry->pdoDetail->pdoHeader;
+
+        // BR-AUTH-001: Verify PDO belongs to user's company and unit
+        if ($pdo->company_id !== $actor->company_id) {
+            abort(response()->json([
+                'success' => false,
+                'error'   => ['code' => 'COMPANY_MISMATCH', 'message' => 'Anda tidak memiliki akses ke realisasi ini.'],
+            ], 403));
+        }
+        if ($actor->plantation_unit_id && $pdo->plantation_unit_id !== $actor->plantation_unit_id) {
+            abort(response()->json([
+                'success' => false,
+                'error'   => ['code' => 'UNIT_MISMATCH', 'message' => 'Realisasi hanya bisa dihapus untuk PDO unit Anda sendiri.'],
+            ], 403));
+        }
 
         if ($pdo->isClosed()) {
             abort(response()->json([
