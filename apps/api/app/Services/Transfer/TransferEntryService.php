@@ -81,6 +81,9 @@ class TransferEntryService
         }
 
         return DB::transaction(function () use ($detail, $data, $actor) {
+            // Lock detail row to prevent race condition on cumulative validation
+            $detail = PdoDetail::lockForUpdate()->findOrFail($detail->id);
+
             // BR-TRANSFER-002: cek agar tidak over-transfer
             $currentTotal = $detail->transferEntries()->sum('amount');
             $newTotal     = $currentTotal + $data['amount'];
@@ -140,6 +143,7 @@ class TransferEntryService
                 if (($row['amount'] ?? 0) <= 0) continue;
 
                 $detail = PdoDetail::where('pdo_header_id', $pdo->id)
+                    ->lockForUpdate()
                     ->findOrFail($row['pdo_detail_id']);
 
                 $currentTotal = $detail->transferEntries()->sum('amount');
@@ -258,6 +262,9 @@ class TransferEntryService
         $detail = $entry->pdoDetail;
 
         return DB::transaction(function () use ($entry, $data, $actor, $detail) {
+            // Lock detail row to prevent race condition on cumulative validation
+            $detail = PdoDetail::lockForUpdate()->findOrFail($detail->id);
+
             // BR-TRANSFER-002: validasi ulang total setelah koreksi
             if (isset($data['amount'])) {
                 $currentTotal = $detail->transferEntries()

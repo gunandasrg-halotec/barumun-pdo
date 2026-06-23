@@ -94,6 +94,9 @@ class RealizationEntryService
         }
 
         return DB::transaction(function () use ($detail, $data, $actor) {
+            // Lock detail row to prevent race condition on cumulative validation
+            $detail = PdoDetail::lockForUpdate()->findOrFail($detail->id);
+
             $totalRealized    = $detail->realizationEntries()->sum('amount');
             $totalTransferred = $detail->transferEntries()->sum('amount');
             $newTotal         = $totalRealized + $data['amount'];
@@ -184,6 +187,9 @@ class RealizationEntryService
         $detail = $entry->pdoDetail;
 
         return DB::transaction(function () use ($entry, $data, $actor, $detail) {
+            // Lock detail row to prevent race condition on cumulative validation
+            $detail = PdoDetail::lockForUpdate()->findOrFail($detail->id);
+
             // BR-REAL-002 & BR-REAL-003: validasi ulang jika amount berubah
             if (isset($data['amount'])) {
                 $totalRealized    = $detail->realizationEntries()->where('id', '!=', $entry->id)->sum('amount');
