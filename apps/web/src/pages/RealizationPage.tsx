@@ -10,7 +10,7 @@ import { EmptyState } from '@/components/ui/EmptyState'
 import { useToastStore } from '@/store/toast.store'
 import { fmt, fmtDate } from '@/lib/format'
 import { Plus, Upload, AlertCircle } from 'lucide-react'
-import type { ApiResponse, RealizationEntry, PdoHeader, PdoDetail } from '@/types'
+import type { ApiResponse, RealizationEntry, PdoHeader, PdoDetail, User } from '@/types'
 
 const schema = z.object({
   pdo_header_id:    z.string().uuid('Pilih PDO'),
@@ -32,6 +32,14 @@ export function RealizationPage() {
   const [uploadId, setUploadId]   = useState<string | null>(null)
   const [file, setFile]           = useState<File | null>(null)
 
+  const { data: currentUser } = useQuery({
+    queryKey: ['auth/me'],
+    queryFn: async () => {
+      const res = await api.get<ApiResponse<User>>('/auth/me')
+      return res.data.data
+    },
+  })
+
   const { data: realizations, isLoading } = useQuery({
     queryKey: ['realizations'],
     queryFn: async () => {
@@ -52,8 +60,8 @@ export function RealizationPage() {
     resolver: zodResolver(schema),
     defaultValues: {
       transaction_date: new Date().toISOString().split('T')[0],
-      payment_method: 'tunai',
-      funding_source: 'kas_kebun',
+      payment_method: currentUser?.role?.code === 'STAFF_PURCHASING' ? 'transfer' : 'tunai',
+      funding_source: currentUser?.role?.code === 'STAFF_PURCHASING' ? 'rekening_utama' : 'kas_kebun',
     },
   })
 
@@ -105,6 +113,23 @@ export function RealizationPage() {
   const PAYMENT_LABEL: Record<string, string> = {
     tunai: 'Tunai', transfer: 'Transfer Bank', kas_kecil: 'Kas Kecil',
   }
+
+  const getAvailablePaymentMethods = () => {
+    if (currentUser?.role?.code === 'STAFF_PURCHASING') {
+      return ['transfer']
+    }
+    return ['tunai', 'transfer', 'kas_kecil']
+  }
+
+  const getAvailableFundingSources = () => {
+    if (currentUser?.role?.code === 'STAFF_PURCHASING') {
+      return ['rekening_utama']
+    }
+    return ['kas_kebun', 'rekening_kebun']
+  }
+
+  const availablePaymentMethods = getAvailablePaymentMethods()
+  const availableFundingSources = getAvailableFundingSources()
 
   return (
     <div>
@@ -228,17 +253,19 @@ export function RealizationPage() {
             <div>
               <label className="label">Metode Pembayaran</label>
               <select {...register('payment_method')} className="input-base">
-                <option value="tunai">Tunai</option>
-                <option value="transfer">Transfer Bank</option>
-                <option value="kas_kecil">Kas Kecil</option>
+                <option value="">Pilih metode...</option>
+                {availablePaymentMethods.includes('tunai') && <option value="tunai">Tunai</option>}
+                {availablePaymentMethods.includes('transfer') && <option value="transfer">Transfer Bank</option>}
+                {availablePaymentMethods.includes('kas_kecil') && <option value="kas_kecil">Kas Kecil</option>}
               </select>
             </div>
             <div>
               <label className="label">Sumber Dana</label>
               <select {...register('funding_source')} className="input-base">
-                <option value="kas_kebun">Kas Kebun</option>
-                <option value="rekening_kebun">Rekening Kebun</option>
-                <option value="rekening_utama">Rekening Utama</option>
+                <option value="">Pilih sumber...</option>
+                {availableFundingSources.includes('kas_kebun') && <option value="kas_kebun">Kas Kebun</option>}
+                {availableFundingSources.includes('rekening_kebun') && <option value="rekening_kebun">Rekening Kebun</option>}
+                {availableFundingSources.includes('rekening_utama') && <option value="rekening_utama">Rekening Utama</option>}
               </select>
             </div>
           </div>
