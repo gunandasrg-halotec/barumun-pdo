@@ -8,11 +8,40 @@ import { Button } from '@/components/ui/Button'
 import { Modal } from '@/components/ui/Modal'
 import { EmptyState } from '@/components/ui/EmptyState'
 import { api } from '@/lib/api'
-import { fmt, fmtPeriode } from '@/lib/format'
+import { fmt, fmtPeriode, fmtDate } from '@/lib/format'
 import { isKerani, isMgrKeu } from '@/lib/auth'
 import { useToastStore } from '@/store/toast.store'
 import type { ApiResponse, PdoHeader, PlantationUnit, RoleCode } from '@/types'
 import { Search, FileDown } from 'lucide-react'
+
+// ─── types untuk modal transfer detail ────────────────────────────────────────
+
+interface TransferEntry {
+  id:                   string
+  transfer_date:        string
+  amount:               number
+  transfer_destination: string
+  reference_number:     string | null
+  notes:                string | null
+}
+
+interface TransferDetailItem {
+  pdo_detail_id: string
+  description:   string
+  expense_item:  { id: string; code: string; name: string } | null
+  entries:       TransferEntry[]
+}
+
+interface TransferDetailResponse {
+  pdo_number:      string
+  details:         TransferDetailItem[]
+}
+
+const DEST_LABEL: Record<string, string> = {
+  rek_kebun: 'Rek. Kebun',
+  pribadi:   'Pribadi',
+  vendor:    'Vendor',
+}
 
 const MONTHS = ['', 'Januari', 'Februari', 'Maret', 'April', 'Mei', 'Juni', 'Juli', 'Agustus', 'September', 'Oktober', 'November', 'Desember']
 const YEARS  = Array.from({ length: 5 }, (_, i) => new Date().getFullYear() - i + 1)
@@ -31,6 +60,7 @@ export function PdoListPage() {
   const [closingPdo, setClosingPdo]       = useState<PdoHeader | null>(null)
   const [closeDate, setCloseDate]         = useState('')
   const [closeNotes, setCloseNotes]       = useState('')
+  const [transferDetailPdo, setTransferDetailPdo] = useState<PdoHeader | null>(null)
 
   const { data: units } = useQuery({
     queryKey: ['plantation-units'],
@@ -49,6 +79,24 @@ export function PdoListPage() {
   })
 
   const closePdo = useClosePdo(closingPdo?.id ?? '')
+
+  const { data: transferDetail, isLoading: transferLoading } = useQuery({
+    queryKey: ['pdo-transfer-detail', transferDetailPdo?.id],
+    queryFn: async () => {
+      const res = await api.get<ApiResponse<TransferDetailResponse>>(`/pdo/${transferDetailPdo!.id}/transfers`)
+      return res.data.data
+    },
+    enabled: !!transferDetailPdo,
+  })
+
+  const flatEntries = transferDetail?.details.flatMap((d) =>
+    d.entries.map((e) => ({ ...e, item_name: d.expense_item?.name ?? d.description }))
+  ) ?? []
+
+  const destTotals = flatEntries.reduce<Record<string, number>>((acc, e) => {
+    acc[e.transfer_destination] = (acc[e.transfer_destination] ?? 0) + e.amount
+    return acc
+  }, {})
 
   const handleClose = async () => {
     if (!closingPdo || !closeDate) return
@@ -163,7 +211,18 @@ export function PdoListPage() {
                   <td className="px-4 py-3 text-sm">{pdo.plantation_unit?.code ?? '—'}</td>
                   <td className="px-4 py-3 text-sm">{fmtPeriode(pdo.period_month, pdo.period_year)}</td>
                   <td className="px-4 py-3 text-sm">{fmt(pdo.total_amount)}</td>
-                  <td className="px-4 py-3 text-sm">{fmt(pdo.total_transferred)}</td>
+                  <td className="px-4 py-3 text-sm">
+                    {pdo.status === 'final' && (pdo.total_transferred ?? 0) > 0 ? (
+                      <button
+                        className="font-bold text-green hover:underline"
+                        onClick={() => setTransferDetailPdo(pdo)}
+                      >
+                        {fmt(pdo.total_transferred)}
+                      </button>
+                    ) : (
+                      fmt(pdo.total_transferred)
+                    )}
+                  </td>
                   <td className="px-4 py-3 text-sm">{fmt(pdo.total_realized)}</td>
                   <td className="px-4 py-3 text-sm">{fmt(pdo.balance)}</td>
                   <td className="px-4 py-3">
@@ -211,6 +270,64 @@ export function PdoListPage() {
           </tbody>
         </table>
       </div>
+
+      {/* Modal Riwayat Transfer */}
+      <Modal
+        open={!!transferDetailPdo}
+        onClose={() => setTransferDetailPdo(null)}
+        title={`Riwayat Transfer — ${transferDetailPdo?.pdo_number}`}
+      >
+        {transferLoading ? (
+          <div className="flex justify-center py-8 text-muted text-sm">Memuat data...</div>
+        ) : (
+          <div className="flex flex-col gap-5">
+            {/* Summary per destinasi */}
+            <div className="grid grid-cols-3 gap-3">
+              {(['rek_kebun', 'pribadi', 'vendor'] as const).map((dest) => (
+                <div key={dest} className="border border-line rounded-card p-3 bg-[#f7faf7]">
+                  <p className="text-[11px] font-bold uppercase tracking-wider text-muted mb-1">{DEST_LABEL[dest]}</p>
+                  <p className="text-base font-[850] text-ink">{fmt(destTotals[dest] ?? 0)}</p>
+                </div>
+              ))}
+            </div>
+
+            {/* Tabel riwayat flat */}
+            <div className="overflow-auto border border-line rounded-card">
+              <table className="w-full border-collapse text-sm" style={{ minWidth: 560 }}>
+                <thead>
+                  <tr>
+                    {['Tanggal', 'Item', 'Tujuan Transfer', 'Jumlah'].map((h) => (
+                      <th key={h} className="px-3 py-2 text-left text-[11px] font-bold uppercase tracking-wider text-muted bg-[#f7faf7]">
+                        {h}
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {flatEntries.length === 0 ? (
+                    <tr><td colSpan={4} className="px-3 py-6 text-center text-muted">Belum ada data transfer</td></tr>
+                  ) : (
+                    flatEntries
+                      .sort((a, b) => a.transfer_date.localeCompare(b.transfer_date))
+                      .map((e) => (
+                        <tr key={e.id} className="border-t border-line hover:bg-[#fbfdfb]">
+                          <td className="px-3 py-2 whitespace-nowrap">{fmtDate(e.transfer_date)}</td>
+                          <td className="px-3 py-2">{e.item_name}</td>
+                          <td className="px-3 py-2 whitespace-nowrap">{DEST_LABEL[e.transfer_destination] ?? e.transfer_destination}</td>
+                          <td className="px-3 py-2 text-right font-bold whitespace-nowrap">{fmt(e.amount)}</td>
+                        </tr>
+                      ))
+                  )}
+                </tbody>
+              </table>
+            </div>
+
+            <div className="flex justify-end">
+              <Button variant="secondary" onClick={() => setTransferDetailPdo(null)}>Tutup</Button>
+            </div>
+          </div>
+        )}
+      </Modal>
 
       {/* Modal Tutup PDO */}
       <Modal
