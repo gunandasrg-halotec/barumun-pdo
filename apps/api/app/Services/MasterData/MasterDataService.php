@@ -6,6 +6,7 @@ use App\Models\AuditLog;
 use App\Models\ExpenseCategory;
 use App\Models\ExpenseItem;
 use App\Models\ExpenseSubcategory;
+use App\Models\PlantationUnit;
 use App\Models\User;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
 use Illuminate\Database\Eloquent\Collection;
@@ -269,6 +270,14 @@ class MasterDataService
             $this->assertNoDuplicateItemCode($data['code'], $subcategoryId, $item->id);
         }
 
+        $modeInput = $data['mode_input'] ?? $item->mode_input;
+
+        if ($modeInput !== ExpenseItem::MODE_AUTO_EXTERNAL) {
+            $data['external_source_system'] = null;
+            $data['external_component'] = null;
+            $data['external_component_key'] = null;
+        }
+
         // BR-MASTER-005: perubahan is_routine hanya berlaku ke depan (tidak ada aksi khusus —
         // PDO yang sudah ada memakai snapshot di pdo_details, jadi cukup update saja)
 
@@ -285,6 +294,26 @@ class MasterDataService
         );
 
         return $item->fresh()->load('subcategory.category');
+    }
+
+    public function updatePlantationUnitPayrollMapping(PlantationUnit $unit, array $data, User $actor): PlantationUnit
+    {
+        $old = $unit->toArray();
+
+        $unit->update([
+            'payroll_estate_external_id' => $data['payroll_estate_external_id'] ?? null,
+        ]);
+
+        AuditLog::record(
+            actor: $actor,
+            entityType: 'plantation_units',
+            entityId: $unit->id,
+            action: 'UPDATE',
+            oldValues: $old,
+            newValues: $unit->fresh()->toArray()
+        );
+
+        return $unit->fresh();
     }
 
     public function deleteItem(ExpenseItem $item, User $actor): void

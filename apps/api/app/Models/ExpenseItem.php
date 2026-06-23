@@ -22,6 +22,29 @@ class ExpenseItem extends Model
     const MODE_MANUAL        = 'manual';
     const MODE_AUTO_EXTERNAL = 'auto_external';
 
+    const EXTERNAL_SOURCE_PAYROLL = 'payroll';
+
+    const PAYROLL_COMPONENT_HARVEST_TBS_TOTAL = 'harvest_tbs_total';
+    const PAYROLL_COMPONENT_RELAYED_TBS_TOTAL = 'relayed_tbs_total';
+    const PAYROLL_COMPONENT_HARVEST_BONUS_TOTAL = 'harvest_bonus_total';
+    const PAYROLL_COMPONENT_LOOSE_FRUIT_TOTAL = 'loose_fruit_total';
+    const PAYROLL_COMPONENT_MAINTENANCE_TOTAL = 'maintenance_total';
+    const PAYROLL_COMPONENT_BASE_PAYROLL_TOTAL = 'base_payroll_total';
+    const PAYROLL_COMPONENT_ADDITIONAL_WAGES_TOTAL = 'additional_wages_total';
+    const PAYROLL_COMPONENT_ADDITIONAL_WAGE_TYPE_TOTAL = 'additional_wage_type_total';
+
+    /** @var array<int,string> */
+    public const PAYROLL_COMPONENT_OPTIONS = [
+        self::PAYROLL_COMPONENT_HARVEST_TBS_TOTAL,
+        self::PAYROLL_COMPONENT_RELAYED_TBS_TOTAL,
+        self::PAYROLL_COMPONENT_HARVEST_BONUS_TOTAL,
+        self::PAYROLL_COMPONENT_LOOSE_FRUIT_TOTAL,
+        self::PAYROLL_COMPONENT_MAINTENANCE_TOTAL,
+        self::PAYROLL_COMPONENT_BASE_PAYROLL_TOTAL,
+        self::PAYROLL_COMPONENT_ADDITIONAL_WAGES_TOTAL,
+        self::PAYROLL_COMPONENT_ADDITIONAL_WAGE_TYPE_TOTAL,
+    ];
+
     protected $fillable = [
         'subcategory_id',
         'code',
@@ -30,6 +53,9 @@ class ExpenseItem extends Model
         'default_unit',
         'default_rate',
         'mode_input',
+        'external_source_system',
+        'external_component',
+        'external_component_key',
         'split_transfer',
         'split_transfer_plantation_unit_ids',
         'is_routine',
@@ -37,6 +63,21 @@ class ExpenseItem extends Model
         'is_active',
         'notes',
     ];
+
+    public static function payrollComponents(): array
+    {
+        return self::PAYROLL_COMPONENT_OPTIONS;
+    }
+
+    public static function payrollSourceSystems(): array
+    {
+        return [self::EXTERNAL_SOURCE_PAYROLL];
+    }
+
+    public static function requiresComponentKey(string $component): bool
+    {
+        return $component === self::PAYROLL_COMPONENT_ADDITIONAL_WAGE_TYPE_TOTAL;
+    }
 
     protected function casts(): array
     {

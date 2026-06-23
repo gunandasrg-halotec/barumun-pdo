@@ -16,7 +16,13 @@ class PlantationUnit extends Model
     public $incrementing = false;
     protected $keyType = 'string';
 
-    protected $fillable = ['company_id', 'code', 'name', 'is_active'];
+    protected $fillable = [
+        'company_id',
+        'code',
+        'name',
+        'payroll_estate_external_id',
+        'is_active',
+    ];
 
     protected function casts(): array
     {

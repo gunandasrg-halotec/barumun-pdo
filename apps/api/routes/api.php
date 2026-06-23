@@ -18,6 +18,7 @@ use App\Http\Controllers\Reports\ReportController;
 use App\Http\Controllers\Reports\RecapController;
 use App\Http\Controllers\Settings\SystemSettingController;
 use App\Http\Controllers\Users\UserController;
+use App\Http\Controllers\MasterData\PlantationUnitController;
 use Illuminate\Support\Facades\Route;
 
 // ─────────────────────────────────────────────────────
@@ -42,7 +43,8 @@ Route::prefix('v1')->middleware(['auth:sanctum', 'ensure.unit.access'])->group(f
     // ── Users & Roles (ADMIN only) ────────────────────
     Route::apiResource('users', UserController::class);
     Route::get('roles',            [UserController::class, 'roles']);
-    Route::get('plantation-units', [UserController::class, 'plantationUnits']);
+    Route::get('plantation-units', [PlantationUnitController::class, 'index']);
+    Route::put('plantation-units/{plantation_unit}', [PlantationUnitController::class, 'updatePayrollEstateMapping']);
 
     // ── Master Data — Kategori ────────────────────────
     Route::apiResource('expense-categories', ExpenseCategoryController::class);
