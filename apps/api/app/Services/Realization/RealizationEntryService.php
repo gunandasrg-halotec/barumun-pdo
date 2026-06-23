@@ -66,6 +66,14 @@ class RealizationEntryService
         $detail = PdoDetail::findOrFail($data['pdo_detail_id']);
         $pdo    = $detail->pdoHeader;
 
+        // BR-AUTH-001: Verify PDO belongs to user's unit (row-level security)
+        if ($actor->plantation_unit_id && $pdo->plantation_unit_id !== $actor->plantation_unit_id) {
+            abort(response()->json([
+                'success' => false,
+                'error'   => ['code' => 'UNIT_MISMATCH', 'message' => 'Realisasi hanya bisa dicatat untuk PDO unit Anda sendiri.'],
+            ], 403));
+        }
+
         // BR-REAL-001
         if (! $pdo->isFinal()) {
             abort(response()->json([
