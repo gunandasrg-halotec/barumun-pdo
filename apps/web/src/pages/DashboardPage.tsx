@@ -329,7 +329,7 @@ export function DashboardPage() {
           <tbody>
             {!summary?.by_unit?.length ? (
               <tr><td colSpan={2} className="px-3 py-6 text-center text-muted">Tidak ada data</td></tr>
-            ) : (summary.by_unit as any[]).map((u) => (
+            ) : summary.by_unit.map((u) => (
               <tr key={u.unit_id} className="border-t border-line hover:bg-[#fbfdfb]">
                 <td className="px-3 py-2 font-bold">{u.unit_code} — {u.unit_name}</td>
                 <td className="px-3 py-2 text-right">{fmt(u.total_amount)}</td>
@@ -353,7 +353,7 @@ export function DashboardPage() {
           {([['rek_kebun', 'Rekening Kebun'], ['pribadi', 'Rekening Pribadi'], ['vendor', 'Vendor']] as const).map(([key, label]) => (
             <div key={key} className="flex items-center justify-between border border-line rounded-card px-4 py-3 bg-[#f7faf7]">
               <span className="text-sm font-[700]">{label}</span>
-              <span className="text-sm font-[850]">{fmt((summary?.transferred_by_destination as any)?.[key] ?? 0)}</span>
+              <span className="text-sm font-[850]">{fmt(summary?.transferred_by_destination?.[key] ?? 0)}</span>
             </div>
           ))}
           <div className="flex items-center justify-between border-t border-line pt-3 mt-1">
@@ -384,7 +384,7 @@ export function DashboardPage() {
           <tbody>
             {!summary?.by_unit?.length ? (
               <tr><td colSpan={2} className="px-3 py-6 text-center text-muted">Tidak ada data</td></tr>
-            ) : (summary.by_unit as any[]).map((u) => (
+            ) : summary.by_unit.map((u) => (
               <tr key={u.unit_id} className="border-t border-line hover:bg-[#fbfdfb]">
                 <td className="px-3 py-2 font-bold">{u.unit_code} — {u.unit_name}</td>
                 <td className="px-3 py-2 text-right">{fmt(u.total_realized)}</td>
