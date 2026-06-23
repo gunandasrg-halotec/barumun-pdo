@@ -31,6 +31,7 @@ export function RealizationPage() {
   const [open, setOpen]           = useState(false)
   const [uploadId, setUploadId]   = useState<string | null>(null)
   const [file, setFile]           = useState<File | null>(null)
+  const [apiError, setApiError]   = useState<string | null>(null)
 
   const { data: currentUser } = useQuery({
     queryKey: ['auth/me'],
@@ -82,6 +83,7 @@ export function RealizationPage() {
       return api.post<ApiResponse<RealizationEntry>>('/realization-entries', payload)
     },
     onSuccess: (res) => {
+      setApiError(null)
       toast('Realisasi berhasil dicatat')
       qc.invalidateQueries({ queryKey: ['realizations'] })
       const entry = res.data.data
@@ -89,7 +91,11 @@ export function RealizationPage() {
       reset()
       setUploadId(entry.id)
     },
-    onError: () => toast('Gagal menyimpan realisasi', 'error'),
+    onError: (error: any) => {
+      const message = error?.response?.data?.message || error?.message || 'Gagal menyimpan realisasi'
+      setApiError(message)
+      toast(message, 'error')
+    },
   })
 
   const uploadBukti = useMutation({
@@ -200,7 +206,7 @@ export function RealizationPage() {
       </div>
 
       {/* Modal Input Realisasi */}
-      <Modal open={open} onClose={() => { setOpen(false); reset() }} title="Input Realisasi Biaya">
+      <Modal open={open} onClose={() => { setOpen(false); reset(); setApiError(null) }} title="Input Realisasi Biaya">
         <form onSubmit={handleSubmit((d) => save.mutate(d))} className="flex flex-col gap-4">
           <div>
             <label className="label">Pilih PDO (status Final)</label>
@@ -225,6 +231,13 @@ export function RealizationPage() {
             </select>
             {errors.pdo_detail_id && <p className="field-error">{errors.pdo_detail_id.message}</p>}
           </div>
+
+          {apiError && (
+            <div className="p-3 bg-red-50 border border-red-200 rounded text-sm text-red-700">
+              <p className="font-bold mb-1">Kesalahan server:</p>
+              <p>{apiError}</p>
+            </div>
+          )}
 
           {Object.keys(errors).length > 0 && (
             <div className="p-3 bg-red-50 border border-red-200 rounded text-sm text-red-700">
