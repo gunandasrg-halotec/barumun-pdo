@@ -268,6 +268,11 @@ class PdoService
 
     public function updateDetail(PdoHeader $pdo, PdoDetail $detail, array $data, User $actor): PdoDetail
     {
+        // Verify detail belongs to the PDO in the URL
+        if ($detail->pdo_header_id !== $pdo->id) {
+            abort(404);
+        }
+
         $this->assertDraft($pdo);
 
         $old = $detail->toArray();
@@ -289,6 +294,11 @@ class PdoService
 
     public function deleteDetail(PdoHeader $pdo, PdoDetail $detail, User $actor): void
     {
+        // Verify detail belongs to the PDO in the URL
+        if ($detail->pdo_header_id !== $pdo->id) {
+            abort(404);
+        }
+
         $this->assertDraft($pdo);
 
         $old = $detail->toArray();
