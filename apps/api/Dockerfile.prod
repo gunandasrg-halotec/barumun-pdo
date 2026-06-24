@@ -35,12 +35,18 @@ RUN composer install --no-dev --optimize-autoloader --classmap-authoritative \
 # ── Stage 2: Production image (PHP-FPM) ───────────────────────────────────────
 FROM php:8.4-fpm-alpine
 
-# Install system dependencies & PHP extensions
+# Install system dependencies & PHP extensions.
+# NOTE: current docker-php-ext-install auto-purges its build toolchain
+# (.phpize-deps) when it finishes, which would leave `pecl install redis` with no
+# autoconf (phpize fails). Install $PHPIZE_DEPS as a kept virtual package so it
+# survives through pecl, then remove it at the end.
 RUN apk add --no-cache \
         nginx supervisor \
         postgresql-dev libpng-dev libzip-dev \
+    && apk add --no-cache --virtual .build-deps $PHPIZE_DEPS \
     && docker-php-ext-install pdo pdo_pgsql gd bcmath zip opcache \
     && pecl install redis && docker-php-ext-enable redis \
+    && apk del .build-deps \
     && rm -rf /tmp/pear
 
 # PHP-FPM & opcache tuning
