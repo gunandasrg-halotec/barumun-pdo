@@ -24,8 +24,13 @@ COPY apps/api/database/ ./database/
 COPY apps/api/routes/   ./routes/
 COPY apps/api/bootstrap/ ./bootstrap/
 
-# Optimise autoloader for production
-RUN composer dump-autoload --optimize --no-dev --classmap-authoritative
+# Optimise for production. Use `composer install --no-dev` (not just
+# dump-autoload --no-dev) so dev-only packages such as laravel/pail are actually
+# removed from vendor; otherwise package:discover tries to load their service
+# providers (e.g. PailServiceProvider) which are excluded from the no-dev
+# autoloader, and the build fails.
+RUN composer install --no-dev --optimize-autoloader --classmap-authoritative \
+        --no-interaction --ignore-platform-reqs
 
 # ── Stage 2: Production image (PHP-FPM) ───────────────────────────────────────
 FROM php:8.4-fpm-alpine
