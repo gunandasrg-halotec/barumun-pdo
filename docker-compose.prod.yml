@@ -18,6 +18,11 @@ services:
       - docker/api/.env.production
     ports:
       - "8000:80"
+    # The database is AWS RDS, reached through pgbouncer running on the host at
+    # :6432 (DB_HOST=host.docker.internal in .env.production). On Linux this name
+    # only resolves with an explicit host-gateway mapping.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     depends_on:
       redis:
         condition: service_started
