@@ -3,34 +3,26 @@ FROM composer:2 AS vendor
 
 WORKDIR /app
 
-# Install Laravel skeleton dependencies.
-# NOTE: --ignore-platform-reqs is required because the composer:2 image now ships
-# PHP 8.5, while phpoffice/phpspreadsheet (pulled in via maatwebsite/excel) pins
-# php <8.5.0. Ignoring platform reqs here is safe: the vendor dir is executed in
-# the php:8.4-fpm-alpine runtime stage below, which satisfies every constraint.
-RUN composer create-project laravel/laravel . \
-    --prefer-dist --no-progress --no-interaction --ignore-platform-reqs \
-    && composer require \
-        laravel/sanctum \
-        league/flysystem-aws-s3-v3 \
-        maatwebsite/excel \
-        barryvdh/laravel-dompdf \
-        sentry/sentry-laravel \
-        --no-interaction --no-progress --ignore-platform-reqs
+# Reproducible install: apps/api is a complete Laravel application with a
+# committed composer.lock, so we install the EXACT pinned versions instead of
+# scaffolding a fresh project on every build (which silently pulled newer,
+# incompatible releases and broke production).
+#
+# Dependency layer first for build caching:
+COPY apps/api/composer.json apps/api/composer.lock ./
+# --ignore-platform-reqs: the composer image runs PHP 8.5 while
+# phpoffice/phpspreadsheet (via maatwebsite/excel) pins php <8.5.0. The runtime
+# stage below is php:8.4-fpm-alpine, which satisfies every constraint, so the
+# installed vendor dir is correct for production.
+# --no-scripts here because the full app isn't copied yet (package:discover runs
+# after the COPY below).
+RUN composer install --no-dev --no-scripts --no-autoloader \
+        --prefer-dist --no-interaction --ignore-platform-reqs
 
-# Copy application code on top of the skeleton
-COPY apps/api/app/      ./app/
-COPY apps/api/database/ ./database/
-COPY apps/api/routes/   ./routes/
-COPY apps/api/bootstrap/ ./bootstrap/
-
-# Optimise for production. Use `composer install --no-dev` (not just
-# dump-autoload --no-dev) so dev-only packages such as laravel/pail are actually
-# removed from vendor; otherwise package:discover tries to load their service
-# providers (e.g. PailServiceProvider) which are excluded from the no-dev
-# autoloader, and the build fails.
-RUN composer install --no-dev --optimize-autoloader --classmap-authoritative \
-        --no-interaction --ignore-platform-reqs
+# Now the rest of the application, then build the optimised autoloader (this runs
+# package:discover with the app present).
+COPY apps/api/ ./
+RUN composer dump-autoload --optimize --classmap-authoritative --no-dev
 
 # ── Stage 2: Production image (PHP-FPM) ───────────────────────────────────────
 FROM php:8.4-fpm-alpine
