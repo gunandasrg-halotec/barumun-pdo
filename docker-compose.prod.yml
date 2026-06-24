@@ -28,10 +28,13 @@ services:
       context: .
       dockerfile: apps/web/Dockerfile.prod
       args:
-        VITE_API_URL: ${VITE_API_URL:-https://api.pdo.barumunpalma.co.id}
+        VITE_API_URL: ${VITE_API_URL:-https://pdo.barumun-plantation.com}
     restart: always
+    # Host nginx terminates TLS and reverse-proxies "/" to 127.0.0.1:8080 and
+    # "/api/" to 127.0.0.1:8000. Web must therefore publish on 8080, not 80
+    # (host nginx already owns 80/443).
     ports:
-      - "80:80"
+      - "8080:80"
     depends_on:
       - api
 
