@@ -1,9 +1,10 @@
 name: Deploy to Production
 
+# Manual trigger only. Auto-deploy on every push to main was disabled after an
+# unattended deploy took production down: pushing code does not rebuild and
+# restart prod unless a human explicitly runs this workflow.
 on:
-  push:
-    branches:
-      - main
+  workflow_dispatch:
 
 jobs:
   deploy:
