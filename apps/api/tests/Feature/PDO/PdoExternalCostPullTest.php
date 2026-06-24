@@ -14,6 +14,7 @@ use App\Models\Role;
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\Log;
 use Laravel\Sanctum\Sanctum;
 use Tests\TestCase;
 
@@ -23,8 +24,8 @@ class PdoExternalCostPullTest extends TestCase
 
     public function test_kerani_can_pull_external_cost_for_draft_auto_external_detail(): void
     {
-        putenv('PAYROLL_INTERNAL_API_BASE_URL=http://payroll.test');
-        putenv('PAYROLL_INTERNAL_API_TOKEN=test-payroll-token');
+        $this->setPayrollApiConfig('http://payroll.test', 'test-payroll-token');
+        Log::spy();
 
         $kerani = $this->keraniUser();
         $pdo = $this->draftPdo($kerani);
@@ -82,12 +83,27 @@ class PdoExternalCostPullTest extends TestCase
             'action' => 'EXTERNAL_PULL',
             'actor_user_id' => $kerani->id,
         ]);
+
+        Log::shouldHaveReceived('info')
+            ->with('PDO external pull started', \Mockery::on(fn (array $context): bool => $context['pdo_id'] === $pdo->id
+                && $context['pdo_detail_id'] === $detail->id
+                && $context['actor_user_id'] === $kerani->id
+                && $context['payroll_estate_external_id'] === 'EST-001'
+                && $context['external_component'] === ExpenseItem::PAYROLL_COMPONENT_BASE_PAYROLL_TOTAL))
+            ->once();
+
+        Log::shouldHaveReceived('info')
+            ->with('PDO external pull succeeded', \Mockery::on(fn (array $context): bool => $context['pdo_id'] === $pdo->id
+                && $context['pdo_detail_id'] === $detail->id
+                && $context['amount'] === 1250000
+                && $context['payroll_status'] === 'ok'
+                && $context['http_status'] === 200))
+            ->once();
     }
 
     public function test_successful_zero_amount_is_stored_as_valid_pull(): void
     {
-        putenv('PAYROLL_INTERNAL_API_BASE_URL=http://payroll.test');
-        putenv('PAYROLL_INTERNAL_API_TOKEN=test-payroll-token');
+        $this->setPayrollApiConfig('http://payroll.test', 'test-payroll-token');
 
         $kerani = $this->keraniUser();
         $pdo = $this->draftPdo($kerani);
@@ -123,8 +139,7 @@ class PdoExternalCostPullTest extends TestCase
 
     public function test_pull_rejects_non_draft_pdo_without_calling_payroll(): void
     {
-        putenv('PAYROLL_INTERNAL_API_BASE_URL=http://payroll.test');
-        putenv('PAYROLL_INTERNAL_API_TOKEN=test-payroll-token');
+        $this->setPayrollApiConfig('http://payroll.test', 'test-payroll-token');
 
         $kerani = $this->keraniUser();
         $pdo = $this->draftPdo($kerani);
@@ -144,8 +159,7 @@ class PdoExternalCostPullTest extends TestCase
 
     public function test_pull_rejects_non_auto_external_detail_without_calling_payroll(): void
     {
-        putenv('PAYROLL_INTERNAL_API_BASE_URL=http://payroll.test');
-        putenv('PAYROLL_INTERNAL_API_TOKEN=test-payroll-token');
+        $this->setPayrollApiConfig('http://payroll.test', 'test-payroll-token');
 
         $kerani = $this->keraniUser();
         $pdo = $this->draftPdo($kerani);
@@ -168,8 +182,7 @@ class PdoExternalCostPullTest extends TestCase
 
     public function test_pull_rejects_missing_payroll_estate_mapping_without_calling_payroll(): void
     {
-        putenv('PAYROLL_INTERNAL_API_BASE_URL=http://payroll.test');
-        putenv('PAYROLL_INTERNAL_API_TOKEN=test-payroll-token');
+        $this->setPayrollApiConfig('http://payroll.test', 'test-payroll-token');
 
         $kerani = $this->keraniUser(payrollEstateExternalId: null);
         $pdo = $this->draftPdo($kerani);
@@ -192,8 +205,7 @@ class PdoExternalCostPullTest extends TestCase
 
     public function test_pull_rejects_missing_cost_mapping_without_calling_payroll(): void
     {
-        putenv('PAYROLL_INTERNAL_API_BASE_URL=http://payroll.test');
-        putenv('PAYROLL_INTERNAL_API_TOKEN=test-payroll-token');
+        $this->setPayrollApiConfig('http://payroll.test', 'test-payroll-token');
 
         $kerani = $this->keraniUser();
         $pdo = $this->draftPdo($kerani);
@@ -218,10 +230,39 @@ class PdoExternalCostPullTest extends TestCase
         Http::assertNothingSent();
     }
 
+    public function test_pull_rejects_missing_payroll_api_config_without_calling_payroll(): void
+    {
+        $this->setPayrollApiConfig(null, null);
+        Log::spy();
+
+        $kerani = $this->keraniUser();
+        $pdo = $this->draftPdo($kerani);
+        $detail = $this->autoExternalDetail($pdo);
+
+        Http::fake();
+
+        Sanctum::actingAs($kerani);
+
+        $this->postJson("/api/v1/pdo/{$pdo->id}/details/{$detail->id}/pull-external-cost")
+            ->assertStatus(503)
+            ->assertJsonPath('error.code', 'PAYROLL_UNAVAILABLE')
+            ->assertJsonPath('error.message', 'Konfigurasi Payroll internal API belum lengkap.');
+
+        Http::assertNothingSent();
+
+        Log::shouldHaveReceived('error')
+            ->with('PDO external pull config missing', \Mockery::on(fn (array $context): bool => $context['year'] === 2026
+                && $context['month'] === 6
+                && $context['estate_external_id'] === 'EST-001'
+                && $context['component'] === ExpenseItem::PAYROLL_COMPONENT_BASE_PAYROLL_TOTAL
+                && array_key_exists('component_key', $context)))
+            ->once();
+    }
+
     public function test_payroll_unavailable_does_not_mutate_detail(): void
     {
-        putenv('PAYROLL_INTERNAL_API_BASE_URL=http://payroll.test');
-        putenv('PAYROLL_INTERNAL_API_TOKEN=test-payroll-token');
+        $this->setPayrollApiConfig('http://payroll.test', 'test-payroll-token');
+        Log::spy();
 
         $kerani = $this->keraniUser();
         $pdo = $this->draftPdo($kerani);
@@ -247,12 +288,18 @@ class PdoExternalCostPullTest extends TestCase
         $this->assertNull($detail->external_amount_pulled_at);
         $this->assertNull($detail->external_payload);
         $this->assertSame(0, $pdo->grand_total_amount);
+
+        Log::shouldHaveReceived('warning')
+            ->with('PDO external pull failed', \Mockery::on(fn (array $context): bool => $context['pdo_id'] === $pdo->id
+                && $context['pdo_detail_id'] === $detail->id
+                && $context['http_status'] === 503
+                && $context['error_message'] === 'Payroll sedang tidak tersedia.'))
+            ->once();
     }
 
     public function test_repull_overwrites_previous_draft_amount_and_metadata(): void
     {
-        putenv('PAYROLL_INTERNAL_API_BASE_URL=http://payroll.test');
-        putenv('PAYROLL_INTERNAL_API_TOKEN=test-payroll-token');
+        $this->setPayrollApiConfig('http://payroll.test', 'test-payroll-token');
 
         $kerani = $this->keraniUser();
         $pdo = $this->draftPdo($kerani);
@@ -293,6 +340,44 @@ class PdoExternalCostPullTest extends TestCase
         $this->assertSame('2026-06', $detail->external_payload['period']);
         $this->assertSame(1750000, $pdo->grand_total_amount);
         $this->assertSame(1, AuditLog::query()->where('entity_type', 'pdo_details')->where('entity_id', $detail->id)->where('action', 'EXTERNAL_PULL')->count());
+    }
+
+    public function test_pull_uses_config_values_even_when_process_env_is_empty(): void
+    {
+        putenv('PAYROLL_INTERNAL_API_BASE_URL');
+        putenv('PAYROLL_INTERNAL_API_TOKEN');
+        $this->setPayrollApiConfig('http://payroll.test', 'test-payroll-token');
+
+        $kerani = $this->keraniUser();
+        $pdo = $this->draftPdo($kerani);
+        $detail = $this->autoExternalDetail($pdo);
+
+        Http::fake([
+            'http://payroll.test/internal/payroll-costs*' => Http::response([
+                'status' => 'ok',
+                'amount' => 1250000,
+                'employee_count' => 12,
+                'component' => ExpenseItem::PAYROLL_COMPONENT_BASE_PAYROLL_TOTAL,
+                'component_label' => 'Gaji Pokok',
+                'period' => '2026-06',
+                'estate_external_id' => 'EST-001',
+                'generated_at' => '2026-06-23T10:00:00+07:00',
+            ], 200),
+        ]);
+
+        Sanctum::actingAs($kerani);
+
+        $this->postJson("/api/v1/pdo/{$pdo->id}/details/{$detail->id}/pull-external-cost")
+            ->assertOk()
+            ->assertJsonPath('data.amount', 1250000);
+
+        Http::assertSentCount(1);
+    }
+
+    private function setPayrollApiConfig(?string $baseUrl, ?string $token): void
+    {
+        config()->set('services.payroll_internal_api.base_url', $baseUrl);
+        config()->set('services.payroll_internal_api.token', $token);
     }
 
     private function keraniUser(?string $payrollEstateExternalId = 'EST-001'): User

@@ -14,6 +14,7 @@ use Illuminate\Contracts\Pagination\LengthAwarePaginator;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Validation\ValidationException;
 
 class PdoService
@@ -289,20 +290,29 @@ class PdoService
         $detail->loadMissing('expenseItem');
 
         $item = $detail->expenseItem;
+        $logContext = $this->externalPullLogContext($pdo, $detail, $actor, $item instanceof ExpenseItem ? $item : null);
+
+        Log::info('PDO external pull started', $logContext);
 
         if (! $item instanceof ExpenseItem || $item->mode_input !== ExpenseItem::MODE_AUTO_EXTERNAL) {
+            Log::warning('PDO external pull rejected: detail not auto external', $logContext);
+
             throw ValidationException::withMessages([
                 'expense_item_id' => 'Item ini bukan Auto External sehingga tidak bisa Ambil Data.',
             ]);
         }
 
         if (! filled($pdo->plantationUnit?->payroll_estate_external_id)) {
+            Log::warning('PDO external pull rejected: payroll estate mapping missing', $logContext);
+
             throw ValidationException::withMessages([
                 'plantation_unit_id' => 'Payroll Estate Mapping belum diatur untuk kebun ini.',
             ]);
         }
 
         if (! filled($item->external_source_system) || ! filled($item->external_component)) {
+            Log::warning('PDO external pull rejected: cost mapping missing', $logContext);
+
             throw ValidationException::withMessages([
                 'expense_item_id' => 'Cost Mapping Payroll belum diatur untuk item biaya ini.',
             ]);
@@ -341,11 +351,34 @@ class PdoService
                     newValues: $detail->fresh()->toArray()
                 );
 
+                Log::info('PDO external pull succeeded', $this->externalPullLogContext(
+                    $pdo,
+                    $detail->fresh(),
+                    $actor,
+                    $item,
+                    [
+                        'amount' => (int) data_get($payload, 'amount', 0),
+                        'payroll_status' => data_get($payload, 'status'),
+                        'http_status' => $response->status(),
+                    ]
+                ));
+
                 return $detail->fresh()->load('expenseItem');
             });
         }
 
         $message = (string) data_get($response->json(), 'error', 'Payroll tidak dapat dihubungi saat ini.');
+
+        Log::warning('PDO external pull failed', $this->externalPullLogContext(
+            $pdo,
+            $detail,
+            $actor,
+            $item,
+            [
+                'http_status' => $response->status(),
+                'error_message' => $message,
+            ]
+        ));
 
         if (in_array($response->status(), [404, 422], true)) {
             throw ValidationException::withMessages([
@@ -433,10 +466,18 @@ class PdoService
         string $component,
         ?string $componentKey,
     ): Response {
-        $baseUrl = rtrim((string) getenv('PAYROLL_INTERNAL_API_BASE_URL'), '/');
-        $token = (string) getenv('PAYROLL_INTERNAL_API_TOKEN');
+        $baseUrl = rtrim((string) config('services.payroll_internal_api.base_url', ''), '/');
+        $token = (string) config('services.payroll_internal_api.token', '');
 
         if ($baseUrl === '' || $token === '') {
+            Log::error('PDO external pull config missing', [
+                'year' => $year,
+                'month' => $month,
+                'estate_external_id' => $estateExternalId,
+                'component' => $component,
+                'component_key' => $componentKey,
+            ]);
+
             abort(response()->json([
                 'success' => false,
                 'error' => [
@@ -459,6 +500,14 @@ class PdoService
                     'component_key' => $componentKey,
                 ], static fn (mixed $value): bool => $value !== null));
         } catch (ConnectionException) {
+            Log::error('PDO external pull connection failed', [
+                'year' => $year,
+                'month' => $month,
+                'estate_external_id' => $estateExternalId,
+                'component' => $component,
+                'component_key' => $componentKey,
+            ]);
+
             abort(response()->json([
                 'success' => false,
                 'error' => [
@@ -474,5 +523,27 @@ class PdoService
         $pdo->updateQuietly([
             'grand_total_amount' => $pdo->details()->sum('amount'),
         ]);
+    }
+
+    private function externalPullLogContext(
+        PdoHeader $pdo,
+        PdoDetail $detail,
+        User $actor,
+        ?ExpenseItem $item,
+        array $extra = [],
+    ): array {
+        return array_merge([
+            'pdo_id' => $pdo->id,
+            'pdo_detail_id' => $detail->id,
+            'actor_user_id' => $actor->id,
+            'plantation_unit_id' => $pdo->plantation_unit_id,
+            'period_year' => $pdo->period_year,
+            'period_month' => $pdo->period_month,
+            'expense_item_id' => $detail->expense_item_id,
+            'payroll_estate_external_id' => $pdo->plantationUnit?->payroll_estate_external_id,
+            'external_source_system' => $item?->external_source_system,
+            'external_component' => $item?->external_component,
+            'external_component_key' => $item?->external_component_key,
+        ], $extra);
     }
 }
