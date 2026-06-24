@@ -3,16 +3,20 @@ FROM composer:2 AS vendor
 
 WORKDIR /app
 
-# Install Laravel skeleton dependencies
+# Install Laravel skeleton dependencies.
+# NOTE: --ignore-platform-reqs is required because the composer:2 image now ships
+# PHP 8.5, while phpoffice/phpspreadsheet (pulled in via maatwebsite/excel) pins
+# php <8.5.0. Ignoring platform reqs here is safe: the vendor dir is executed in
+# the php:8.4-fpm-alpine runtime stage below, which satisfies every constraint.
 RUN composer create-project laravel/laravel . \
-    --prefer-dist --no-progress --no-interaction --quiet \
+    --prefer-dist --no-progress --no-interaction --ignore-platform-reqs \
     && composer require \
         laravel/sanctum \
         league/flysystem-aws-s3-v3 \
         maatwebsite/excel \
         barryvdh/laravel-dompdf \
         sentry/sentry-laravel \
-        --no-interaction --quiet
+        --no-interaction --no-progress --ignore-platform-reqs
 
 # Copy application code on top of the skeleton
 COPY apps/api/app/      ./app/

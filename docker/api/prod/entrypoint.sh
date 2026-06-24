@@ -1,11 +1,10 @@
 #!/bin/sh
+set -e
+
 cd /var/www/api
 
 echo "[PDO] Menjalankan migrasi database..."
-php artisan migrate --force --no-interaction || {
-  echo "[PDO] Migration failed - may already be applied or database issue"
-  echo "[PDO] Attempting to continue..."
-}
+php artisan migrate --force --no-interaction
 
 echo "[PDO] Caching konfigurasi untuk produksi..."
 php artisan config:cache

@@ -1,19 +1,6 @@
 services:
 
-  # ── Database (PostgreSQL) ─────────────────────────────
-  db:
-    image: postgres:16-alpine
-    restart: always
-    environment:
-      POSTGRES_DB: pdodb
-      POSTGRES_USER: mhdrefdi
-      POSTGRES_PASSWORD: lPcfKFrex9Hp2JasvOl7
-    volumes:
-      - pgdata:/var/lib/postgresql/data
-    ports:
-      - "5432:5432"
-
-  # ── Redis ─────────────────────────────────────────────
+  # ── Redis ─────────────────────────────────────────────────────────────────────
   redis:
     image: redis:7-alpine
     restart: always
@@ -32,8 +19,8 @@ services:
     ports:
       - "8000:80"
     depends_on:
-      - db
-      - redis
+      redis:
+        condition: service_started
 
   # ── Frontend (React — static via Nginx) ───────────────────────────────────────
   web:
@@ -49,5 +36,4 @@ services:
       - api
 
 volumes:
-  pgdata:
   redisdata:
