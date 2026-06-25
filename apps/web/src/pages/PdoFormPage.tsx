@@ -118,6 +118,7 @@ export function PdoFormPage() {
       api.get<ApiResponse<PdoDetail[]>>(`/pdo/${id}/details`).then((res) => {
         const details = res.data.data
         details.forEach((detail) => append({
+          id: detail.id,
           expense_item_id: detail.expense_item_id,
           description: detail.description,
           quantity: detail.quantity,
