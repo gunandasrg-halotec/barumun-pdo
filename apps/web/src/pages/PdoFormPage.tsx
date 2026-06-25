@@ -42,9 +42,7 @@ const editSchema = z.object({
   details:            z.array(detailSchema).min(1, 'Minimal 1 item biaya'),
 })
 
-const schema = editSchema
-
-type Form = z.infer<typeof schema>
+type Form = z.infer<typeof editSchema>
 
 // [F] Per-row cascade state: tracks category and subcategory selection per detail row
 type RowSelection = { categoryId: string; subcategoryId: string }
@@ -81,7 +79,6 @@ export function PdoFormPage() {
 
   const now = new Date()
   const { register, control, handleSubmit, watch, reset, setValue, formState: { errors } } = useForm<Form>({
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     resolver: zodResolver(isEdit ? editSchema : createSchema) as any,
     defaultValues: {
       plantation_unit_id: user?.plantation_unit?.id ?? '',

@@ -138,7 +138,13 @@ class PdoDetail extends Model
             return false;
         }
 
-        return $this->storedExternalMappingFingerprint() !== $this->currentExternalMappingFingerprint();
+        $storedFingerprint = $this->storedExternalMappingFingerprint();
+
+        if ($this->isLegacyExternalSnapshot($storedFingerprint)) {
+            return false;
+        }
+
+        return $storedFingerprint !== $this->currentExternalMappingFingerprint();
     }
 
     public function getIsExternalReadOnlyAttribute(): bool
@@ -179,6 +185,17 @@ class PdoDetail extends Model
     {
         return $this->external_amount_pulled_at !== null
             && is_array($this->external_payload);
+    }
+
+    private function isLegacyExternalSnapshot(array $storedFingerprint): bool
+    {
+        foreach ($storedFingerprint as $value) {
+            if ($value !== null) {
+                return false;
+            }
+        }
+
+        return true;
     }
 
     private function currentExpenseItem(): ?ExpenseItem

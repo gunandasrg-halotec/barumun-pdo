@@ -4,6 +4,7 @@ namespace App\Http\Requests\MasterData;
 
 use App\Models\Role;
 use Illuminate\Foundation\Http\FormRequest;
+use Illuminate\Http\Exceptions\HttpResponseException;
 
 class UpdatePlantationUnitPayrollMappingRequest extends FormRequest
 {
@@ -17,5 +18,16 @@ class UpdatePlantationUnitPayrollMappingRequest extends FormRequest
         return [
             'payroll_estate_external_id' => ['nullable', 'string', 'max:255'],
         ];
+    }
+
+    protected function failedAuthorization(): void
+    {
+        throw new HttpResponseException(response()->json([
+            'success' => false,
+            'error' => [
+                'code' => 'FORBIDDEN',
+                'message' => 'Anda tidak memiliki izin untuk memperbarui Payroll Estate Mapping.',
+            ],
+        ], 403));
     }
 }

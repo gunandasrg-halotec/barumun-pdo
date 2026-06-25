@@ -68,9 +68,13 @@ return Application::configure(basePath: dirname(__DIR__))
 
                 return response()->json([
                     'success' => false,
+                    'errors' => collect($e->errors())
+                        ->map(fn ($messages) => array_values($messages))
+                        ->toArray(),
                     'error'   => [
                         'code'    => 'VALIDATION_ERROR',
                         'message' => 'Data tidak valid.',
+                        'errors'  => $e->errors(),
                         'details' => $details,
                     ],
                 ], 422);

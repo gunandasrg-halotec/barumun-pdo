@@ -183,7 +183,11 @@ class MasterDataServiceTest extends TestCase
 
         // Simulasi item sudah pernah dipakai di PDO
         $unit = PlantationUnit::factory()->create(['company_id' => $this->companyId]);
-        $pdo  = PdoHeader::factory()->create(['company_id' => $this->companyId, 'plantation_unit_id' => $unit->id]);
+        $pdo  = PdoHeader::factory()->create([
+            'company_id' => $this->companyId,
+            'plantation_unit_id' => $unit->id,
+            'status' => PdoHeader::STATUS_CLOSED,
+        ]);
         DB::table('pdo_details')->insert([
             'id'              => (string) \Illuminate\Support\Str::uuid(),
             'pdo_header_id'   => $pdo->id,
