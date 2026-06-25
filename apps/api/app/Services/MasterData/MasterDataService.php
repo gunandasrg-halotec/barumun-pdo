@@ -296,7 +296,11 @@ class MasterDataService
         // PDO yang sudah ada memakai snapshot di pdo_details, jadi cukup update saja)
 
         $old = $item->toArray();
+        $oldModeInput = $item->mode_input;
         $item->update($data);
+        $freshItem = $item->fresh();
+
+        $this->syncDraftDetailExternalOwnership($item, $oldModeInput, $freshItem);
 
         AuditLog::record(
             actor: $actor,
@@ -304,10 +308,10 @@ class MasterDataService
             entityId: $item->id,
             action: 'UPDATE',
             oldValues: $old,
-            newValues: $item->fresh()->toArray()
+            newValues: $freshItem->toArray()
         );
 
-        return $item->fresh()->load('subcategory.category');
+        return $freshItem->load('subcategory.category');
     }
 
     public function updatePlantationUnitPayrollMapping(PlantationUnit $unit, array $data, User $actor): PlantationUnit
@@ -328,6 +332,40 @@ class MasterDataService
         );
 
         return $unit->fresh();
+    }
+
+    private function syncDraftDetailExternalOwnership(ExpenseItem $originalItem, string $oldModeInput, ExpenseItem $freshItem): void
+    {
+        if ($oldModeInput === $freshItem->mode_input) {
+            return;
+        }
+
+        $draftDetails = \DB::table('pdo_details')
+            ->join('pdo_headers', 'pdo_headers.id', '=', 'pdo_details.pdo_header_id')
+            ->where('pdo_details.expense_item_id', $originalItem->id)
+            ->where('pdo_headers.status', PdoHeader::STATUS_DRAFT);
+
+        if ($freshItem->mode_input === ExpenseItem::MODE_AUTO_EXTERNAL) {
+            $draftDetails->update([
+                'external_source_system' => $freshItem->external_source_system,
+                'external_component' => $freshItem->external_component,
+                'external_component_key' => $freshItem->external_component_key,
+                'external_amount_pulled_at' => null,
+                'external_payload' => null,
+                'updated_at' => now(),
+            ]);
+
+            return;
+        }
+
+        $draftDetails->update([
+            'external_source_system' => null,
+            'external_component' => null,
+            'external_component_key' => null,
+            'external_amount_pulled_at' => null,
+            'external_payload' => null,
+            'updated_at' => now(),
+        ]);
     }
 
     public function deleteItem(ExpenseItem $item, User $actor): void

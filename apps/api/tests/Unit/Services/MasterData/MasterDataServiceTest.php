@@ -6,6 +6,7 @@ use App\Models\Company;
 use App\Models\AuditLog;
 use App\Models\PlantationUnit;
 use App\Models\PdoHeader;
+use App\Models\PdoDetail;
 use App\Models\ExpenseCategory;
 use App\Models\ExpenseItem;
 use App\Models\ExpenseSubcategory;
@@ -248,6 +249,102 @@ class MasterDataServiceTest extends TestCase
         ], $this->adminUser);
 
         $this->assertEquals(ExpenseItem::MODE_AUTO_EXTERNAL, $item->mode_input);
+    }
+
+    public function test_auto_external_reversion_clears_draft_external_snapshot_but_keeps_values(): void
+    {
+        $category = ExpenseCategory::factory()->create(['company_id' => $this->companyId]);
+        $sub = ExpenseSubcategory::factory()->create(['category_id' => $category->id]);
+        $item = ExpenseItem::factory()->create([
+            'subcategory_id' => $sub->id,
+            'mode_input' => ExpenseItem::MODE_AUTO_EXTERNAL,
+            'external_source_system' => ExpenseItem::EXTERNAL_SOURCE_PAYROLL,
+            'external_component' => ExpenseItem::PAYROLL_COMPONENT_BASE_PAYROLL_TOTAL,
+            'external_role' => ExpenseItem::PAYROLL_ROLE_PEMANEN,
+        ]);
+
+        $unit = PlantationUnit::factory()->create(['company_id' => $this->companyId]);
+        $pdo = PdoHeader::factory()->create([
+            'company_id' => $this->companyId,
+            'plantation_unit_id' => $unit->id,
+            'status' => PdoHeader::STATUS_DRAFT,
+        ]);
+        $detail = PdoDetail::factory()->create([
+            'pdo_header_id' => $pdo->id,
+            'expense_item_id' => $item->id,
+            'quantity' => 11,
+            'unit' => 'HK',
+            'amount' => 1100000,
+            'external_source_system' => ExpenseItem::EXTERNAL_SOURCE_PAYROLL,
+            'external_component' => ExpenseItem::PAYROLL_COMPONENT_BASE_PAYROLL_TOTAL,
+            'external_amount_pulled_at' => now(),
+            'external_payload' => [
+                'status' => 'ok',
+                'source_system' => ExpenseItem::EXTERNAL_SOURCE_PAYROLL,
+                'component' => ExpenseItem::PAYROLL_COMPONENT_BASE_PAYROLL_TOTAL,
+                'component_key' => null,
+                'role' => ExpenseItem::PAYROLL_ROLE_PEMANEN,
+            ],
+        ]);
+
+        $this->service->updateItem($item, [
+            'mode_input' => ExpenseItem::MODE_MANUAL,
+        ], $this->adminUser);
+
+        $detail->refresh();
+
+        $this->assertSame(11.0, $detail->quantity);
+        $this->assertSame('HK', $detail->unit);
+        $this->assertSame(1100000, $detail->amount);
+        $this->assertNull($detail->external_source_system);
+        $this->assertNull($detail->external_component);
+        $this->assertNull($detail->external_amount_pulled_at);
+        $this->assertNull($detail->external_payload);
+    }
+
+    public function test_manual_promotion_marks_draft_detail_for_fresh_pull(): void
+    {
+        $category = ExpenseCategory::factory()->create(['company_id' => $this->companyId]);
+        $sub = ExpenseSubcategory::factory()->create(['category_id' => $category->id]);
+        $item = ExpenseItem::factory()->create([
+            'subcategory_id' => $sub->id,
+            'mode_input' => ExpenseItem::MODE_MANUAL,
+        ]);
+
+        $unit = PlantationUnit::factory()->create(['company_id' => $this->companyId]);
+        $pdo = PdoHeader::factory()->create([
+            'company_id' => $this->companyId,
+            'plantation_unit_id' => $unit->id,
+            'status' => PdoHeader::STATUS_DRAFT,
+        ]);
+        $detail = PdoDetail::factory()->create([
+            'pdo_header_id' => $pdo->id,
+            'expense_item_id' => $item->id,
+            'quantity' => 9,
+            'unit' => 'HK',
+            'amount' => 900000,
+            'external_source_system' => ExpenseItem::EXTERNAL_SOURCE_PAYROLL,
+            'external_component' => ExpenseItem::PAYROLL_COMPONENT_BASE_PAYROLL_TOTAL,
+            'external_amount_pulled_at' => now(),
+            'external_payload' => ['status' => 'ok'],
+        ]);
+
+        $this->service->updateItem($item, [
+            'mode_input' => ExpenseItem::MODE_AUTO_EXTERNAL,
+            'external_source_system' => ExpenseItem::EXTERNAL_SOURCE_PAYROLL,
+            'external_component' => ExpenseItem::PAYROLL_COMPONENT_BASE_PAYROLL_TOTAL,
+            'external_role' => ExpenseItem::PAYROLL_ROLE_BHL,
+        ], $this->adminUser);
+
+        $detail->refresh();
+
+        $this->assertSame(9.0, $detail->quantity);
+        $this->assertSame('HK', $detail->unit);
+        $this->assertSame(900000, $detail->amount);
+        $this->assertSame(ExpenseItem::EXTERNAL_SOURCE_PAYROLL, $detail->external_source_system);
+        $this->assertSame(ExpenseItem::PAYROLL_COMPONENT_BASE_PAYROLL_TOTAL, $detail->external_component);
+        $this->assertNull($detail->external_amount_pulled_at);
+        $this->assertNull($detail->external_payload);
     }
 
     // ─────────────────────────────────────────────────────
