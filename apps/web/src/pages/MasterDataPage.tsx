@@ -1,20 +1,25 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useCategories, useSubcategories, useItems, useUsers } from '@/hooks/useMasterData'
 import { useAuthStore } from '@/store/auth.store'
+import { useToastStore } from '@/store/toast.store'
+import { api } from '@/lib/api'
 import { Badge } from '@/components/ui/Badge'
 import { Button } from '@/components/ui/Button'
 import { EmptyState } from '@/components/ui/EmptyState'
 import { fmt } from '@/lib/format'
 import { isAdmin, canEditMasterData } from '@/lib/auth'
-import type { RoleCode } from '@/types'
+import type { ApiResponse, PlantationUnit, RoleCode } from '@/types'
 import { ChevronDown, ChevronRight } from 'lucide-react'
 
-type Tab = 'hierarki' | 'items' | 'users'
+type Tab = 'hierarki' | 'items' | 'kebun' | 'users'
 
 export function MasterDataPage() {
   const user     = useAuthStore((s) => s.user)
   const navigate = useNavigate()
+  const toast    = useToastStore((s) => s.push)
+  const qc       = useQueryClient()
   const role     = user?.role.code as RoleCode | undefined
   const admin    = role ? isAdmin(role) : false
   const canEdit  = role ? canEditMasterData(role) : false
@@ -22,11 +27,41 @@ export function MasterDataPage() {
   const [tab, setTab]                   = useState<Tab>('hierarki')
   const [expandedCats, setExpandedCats] = useState<Set<string>>(new Set())
   const [expandedSubs, setExpandedSubs] = useState<Set<string>>(new Set())
+  const [payrollMappings, setPayrollMappings] = useState<Record<string, string>>({})
 
   const { data: categories } = useCategories({ is_active: undefined })
   const { data: subcategories } = useSubcategories({ is_active: undefined })
   const { data: items } = useItems({ is_active: undefined })
   const { data: users } = useUsers()
+  const { data: units } = useQuery({
+    queryKey: ['plantation-units'],
+    queryFn: async () => {
+      const res = await api.get<ApiResponse<PlantationUnit[]>>('/plantation-units', { params: { exclude_ho: true } })
+      return res.data.data
+    },
+    enabled: admin,
+  })
+
+  useEffect(() => {
+    if (!units) return
+    setPayrollMappings(Object.fromEntries(
+      units.map((unit) => [unit.id, unit.payroll_estate_external_id ?? ''])
+    ))
+  }, [units])
+
+  const updatePayrollMapping = useMutation({
+    mutationFn: async (unit: PlantationUnit) => {
+      const res = await api.put<ApiResponse<PlantationUnit>>(`/plantation-units/${unit.id}`, {
+        payroll_estate_external_id: payrollMappings[unit.id] || null,
+      })
+      return res.data.data
+    },
+    onSuccess: () => {
+      toast('Payroll Estate Mapping tersimpan')
+      qc.invalidateQueries({ queryKey: ['plantation-units'] })
+    },
+    onError: () => toast('Gagal menyimpan Payroll Estate Mapping', 'error'),
+  })
 
   const toggleCat = (id: string) => setExpandedCats((s) => {
     const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n
@@ -56,7 +91,7 @@ export function MasterDataPage() {
 
       {/* Tabs */}
       <div className="flex gap-1 mb-5 border-b border-line">
-        {(['hierarki', 'items', 'users'] as Tab[]).map((t) => (
+        {(['hierarki', 'items', ...(admin ? ['kebun'] as const : []), 'users'] as Tab[]).map((t) => (
           <button
             key={t}
             onClick={() => setTab(t)}
@@ -64,7 +99,13 @@ export function MasterDataPage() {
               tab === t ? 'border-green text-green' : 'border-transparent text-muted hover:text-ink'
             }`}
           >
-            {t === 'hierarki' ? 'Hierarki Biaya' : t === 'items' ? 'Item Biaya' : 'User & Role'}
+            {t === 'hierarki'
+              ? 'Hierarki Biaya'
+              : t === 'items'
+                ? 'Item Biaya'
+                : t === 'kebun'
+                  ? 'Kebun'
+                  : 'User & Role'}
           </button>
         ))}
       </div>
@@ -257,6 +298,53 @@ export function MasterDataPage() {
                   </tr>
                 )
               })}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {/* Tab: Kebun */}
+      {tab === 'kebun' && admin && (
+        <div className="overflow-auto border border-line rounded-drawer bg-white">
+          <table className="w-full border-collapse">
+            <thead>
+              <tr>
+                {['Kode', 'Kebun', 'Payroll Estate Mapping', 'Aksi'].map((h) => (
+                  <th key={h} className="px-4 py-3 text-left text-[11px] font-bold uppercase tracking-wider text-[#526257] bg-[#f7faf7] sticky top-0">
+                    {h}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {!units?.length ? (
+                <tr><td colSpan={4} className="p-6"><EmptyState /></td></tr>
+              ) : units.map((unit) => (
+                <tr key={unit.id} className="border-t border-line hover:bg-[#fbfdfb]">
+                  <td className="px-4 py-3 text-sm font-bold">{unit.code}</td>
+                  <td className="px-4 py-3 text-sm">{unit.name}</td>
+                  <td className="px-4 py-3">
+                    <input
+                      className="input-base max-w-xs"
+                      value={payrollMappings[unit.id] ?? ''}
+                      onChange={(event) => setPayrollMappings((current) => ({
+                        ...current,
+                        [unit.id]: event.target.value,
+                      }))}
+                      placeholder="Estate ID Payroll"
+                    />
+                  </td>
+                  <td className="px-4 py-3">
+                    <Button
+                      size="sm"
+                      loading={updatePayrollMapping.isPending}
+                      onClick={() => updatePayrollMapping.mutate(unit)}
+                    >
+                      Simpan
+                    </Button>
+                  </td>
+                </tr>
+              ))}
             </tbody>
           </table>
         </div>

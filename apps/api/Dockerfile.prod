@@ -16,6 +16,7 @@ RUN composer create-project laravel/laravel . \
 
 # Copy application code on top of the skeleton
 COPY apps/api/app/      ./app/
+COPY apps/api/config/services.php ./config/services.php
 COPY apps/api/database/ ./database/
 COPY apps/api/routes/   ./routes/
 COPY apps/api/bootstrap/ ./bootstrap/

@@ -1,5 +1,4 @@
 services:
-
   # ── Database ──────────────────────────────────────────────────────────────────
   db:
     image: postgres:16-alpine
@@ -10,7 +9,7 @@ services:
     volumes:
       - pgdata:/var/lib/postgresql/data
     ports:
-      - "5432:5432"
+      - "5433:5432"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U pdo_user -d pdo_db"]
       interval: 5s
@@ -25,6 +24,7 @@ services:
     volumes:
       # Overlay kode custom kita ke atas scaffold Laravel (hot-reload)
       - ./apps/api/app:/var/www/api/app
+      - ./apps/api/config/services.php:/var/www/api/config/services.php
       - ./apps/api/database:/var/www/api/database
       - ./apps/api/tests:/var/www/api/tests
       - ./apps/api/routes/api.php:/var/www/api/routes/api.php
@@ -35,6 +35,9 @@ services:
       - api_storage:/var/www/api/storage
     env_file:
       - docker/api/.env.docker
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+      - "gaji.test:host-gateway"
     ports:
       - "8000:8000"
     depends_on:

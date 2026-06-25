@@ -29,6 +29,14 @@ grep -q "^DB_PORT=" .env     || echo "DB_PORT=${DB_PORT:-5432}"           >> .en
 grep -q "^DB_DATABASE=" .env || echo "DB_DATABASE=${DB_DATABASE:-pdo_db}" >> .env
 grep -q "^DB_USERNAME=" .env || echo "DB_USERNAME=${DB_USERNAME:-pdo_user}" >> .env
 grep -q "^DB_PASSWORD=" .env || echo "DB_PASSWORD=${DB_PASSWORD:-secret}"  >> .env
+grep -q "^PAYROLL_INTERNAL_API_BASE_URL=" .env || echo "PAYROLL_INTERNAL_API_BASE_URL=${PAYROLL_INTERNAL_API_BASE_URL:-}" >> .env
+grep -q "^PAYROLL_INTERNAL_API_TOKEN=" .env || echo "PAYROLL_INTERNAL_API_TOKEN=${PAYROLL_INTERNAL_API_TOKEN:-}" >> .env
+
+DB_HOST_VALUE="${DB_HOST:-db}"
+DB_PORT_VALUE="${DB_PORT:-5432}"
+DB_DATABASE_VALUE="${DB_DATABASE:-pdo_db}"
+DB_USERNAME_VALUE="${DB_USERNAME:-pdo_user}"
+DB_PASSWORD_VALUE="${DB_PASSWORD:-secret}"
 
 # Generate APP_KEY jika belum ada
 if [ -z "$APP_KEY" ] || grep -q "^APP_KEY=$" .env 2>/dev/null; then
@@ -39,6 +47,36 @@ fi
 # Publish Sanctum config
 php artisan vendor:publish --provider="Laravel\Sanctum\SanctumServiceProvider" \
     --tag="sanctum-config" --no-interaction 2>/dev/null || true
+
+echo "[PDO] Menunggu database siap..."
+DB_READY=0
+for attempt in $(seq 1 30); do
+    if DB_HOST="$DB_HOST_VALUE" DB_PORT="$DB_PORT_VALUE" DB_DATABASE="$DB_DATABASE_VALUE" DB_USERNAME="$DB_USERNAME_VALUE" DB_PASSWORD="$DB_PASSWORD_VALUE" php -r '
+        try {
+            new PDO(
+                sprintf("pgsql:host=%s;port=%s;dbname=%s", getenv("DB_HOST"), getenv("DB_PORT"), getenv("DB_DATABASE")),
+                getenv("DB_USERNAME"),
+                getenv("DB_PASSWORD"),
+                [PDO::ATTR_TIMEOUT => 2]
+            );
+            exit(0);
+        } catch (Throwable $e) {
+            fwrite(STDERR, $e->getMessage() . PHP_EOL);
+            exit(1);
+        }
+    ' >/dev/null 2>&1; then
+        DB_READY=1
+        break
+    fi
+
+    echo "[PDO] Database belum siap, retry ${attempt}/30..."
+    sleep 2
+done
+
+if [ "$DB_READY" -ne 1 ]; then
+    echo "[PDO] Database gagal dihubungi."
+    exit 1
+fi
 
 echo "[PDO] Menjalankan migrasi database..."
 php artisan migrate --force --no-interaction

@@ -21,6 +21,7 @@ WORKDIR /var/www/api
 # Copy kode custom kita ke dalam scaffold
 # Saat docker compose up, direktori ini di-override oleh bind mount dari host
 COPY apps/api/app/ ./app/
+COPY apps/api/config/services.php ./config/services.php
 COPY apps/api/database/ ./database/
 COPY apps/api/routes/api.php ./routes/api.php
 COPY apps/api/bootstrap/app.php ./bootstrap/app.php

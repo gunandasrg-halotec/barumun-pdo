@@ -166,6 +166,9 @@ MAIL_FROM_ADDRESS=noreply@<DOMAIN_ANDA>
 MAIL_FROM_NAME="PDO Barumun Palma Nauli"
 
 SENTRY_LARAVEL_DSN=               # Opsional: isi dari sentry.io untuk error monitoring
+
+PAYROLL_INTERNAL_API_BASE_URL=https://<DOMAIN_GAJI_INTERNAL>   # WAJIB jika pakai Ambil Data Payroll
+PAYROLL_INTERNAL_API_TOKEN=<TOKEN_INTERNAL_PAYROLL>            # WAJIB jika pakai Ambil Data Payroll
 ```
 
 Generate `APP_KEY` (jalankan sekali saja, simpan hasilnya):
