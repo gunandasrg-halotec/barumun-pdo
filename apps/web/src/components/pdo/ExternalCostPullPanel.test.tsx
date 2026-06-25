@@ -188,4 +188,31 @@ describe('ExternalCostPullPanel', () => {
     expect(screen.getByText('Snapshot external sudah stale. Ambil Data ulang sebelum submit PDO.')).toBeInTheDocument()
     expect(screen.getByText('Nilai volume, satuan, dan jumlah dikunci selama item masih Auto External aktif.')).toBeInTheDocument()
   })
+
+  it('keeps pull button label visible while disabled before draft saved', () => {
+    render(
+      <ExternalCostPullPanel
+        errorMessage={undefined}
+        isPulling={false}
+        onPull={vi.fn()}
+        snapshot={{
+          external_amount_pulled_at: null,
+          external_component: 'base_payroll_total',
+          is_auto_external_active: true,
+          needs_pull: true,
+          is_stale_external_snapshot: false,
+          is_external_read_only: true,
+          external_payload: null,
+        }}
+      />,
+    )
+
+    expect(screen.getByTestId('pull-external-button')).toBeDisabled()
+    expect(screen.getByTestId('pull-external-button')).toHaveClass(
+      'disabled:opacity-100',
+      'disabled:bg-[#dbeafe]',
+      'disabled:text-[#1e3a8a]',
+      'disabled:border-[#93c5fd]',
+    )
+  })
 })

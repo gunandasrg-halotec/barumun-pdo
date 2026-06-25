@@ -32,16 +32,16 @@ export function ExternalCostPullPanel({
   const showReadOnly = snapshot?.is_external_read_only
 
   return (
-    <div className="mt-3 p-3 bg-blue-50 border border-blue-200 rounded space-y-3">
+    <div className="mt-3 p-3 rounded space-y-3 border border-[#bfdbfe] bg-[#eff6ff]">
       <div className="flex flex-col gap-3 desk:flex-row desk:items-center desk:justify-between">
-        <p className="text-sm text-blue-700">
+        <p className="text-sm text-[#1d4ed8]">
           <strong>Auto External:</strong> Data volume, satuan, harga, dan jumlah diambil dari Payroll.
         </p>
         <Button
           type="button"
           size="sm"
           data-testid="pull-external-button"
-          className="bg-blue-600 text-white hover:bg-blue-700"
+          className="border border-transparent bg-[#2563eb] text-white hover:bg-[#1d4ed8] disabled:border-[#93c5fd] disabled:bg-[#dbeafe] disabled:text-[#1e3a8a] disabled:opacity-100 disabled:hover:bg-[#dbeafe]"
           loading={isPulling}
           disabled={!snapshot?.id}
           onClick={onPull}
@@ -51,29 +51,29 @@ export function ExternalCostPullPanel({
       </div>
 
       {showNeedsPull && (
-        <p className="text-sm font-semibold text-amber-700">
+        <p className="text-sm font-semibold text-[#b45309]">
           Baris ini wajib Ambil Data dulu sebelum submit PDO.
         </p>
       )}
 
       {showStale && (
-        <p className="text-sm font-semibold text-red-700">
+        <p className="text-sm font-semibold text-[#b91c1c]">
           Snapshot external sudah stale. Ambil Data ulang sebelum submit PDO.
         </p>
       )}
 
       {showReadOnly && (
-        <p className="text-sm text-blue-800">
+        <p className="text-sm text-[#1e3a8a]">
           Nilai volume, satuan, dan jumlah dikunci selama item masih Auto External aktif.
         </p>
       )}
 
       {errorMessage && (
-        <p className="text-sm font-semibold text-red-700">{errorMessage}</p>
+        <p className="text-sm font-semibold text-[#b91c1c]">{errorMessage}</p>
       )}
 
       {hasPulledMetadata ? (
-        <div className="grid grid-cols-1 desk:grid-cols-2 gap-2 text-sm text-blue-900">
+        <div className="grid grid-cols-1 desk:grid-cols-2 gap-2 text-sm text-[#1e3a8a]">
           <p data-testid="external-component"><strong>Komponen:</strong> {payload?.component_label ?? snapshot?.external_component ?? '—'}</p>
           <p data-testid="external-period"><strong>Periode Sumber:</strong> {payload?.period ?? '—'}</p>
           <p data-testid="external-status"><strong>Status Sumber:</strong> {payload?.status ?? 'ok'}</p>
@@ -82,7 +82,7 @@ export function ExternalCostPullPanel({
           <p data-testid="external-estate"><strong>Estate Payroll:</strong> {payload?.estate_external_id ?? '—'}</p>
         </div>
       ) : (
-        <p className="text-sm text-blue-800">Belum ada data Payroll ditarik untuk baris ini.</p>
+        <p className="text-sm text-[#1e3a8a]">Belum ada data Payroll ditarik untuk baris ini.</p>
       )}
     </div>
   )
