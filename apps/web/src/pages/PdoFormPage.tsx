@@ -78,7 +78,7 @@ export function PdoFormPage() {
   const pullExternalCost = usePullExternalCost(id ?? '')
 
   const now = new Date()
-  const { register, control, handleSubmit, watch, reset, setValue, formState: { errors } } = useForm<Form>({
+  const { register, control, handleSubmit, watch, reset, setValue, getValues, formState: { errors } } = useForm<Form>({
     resolver: zodResolver(isEdit ? editSchema : createSchema) as any,
     defaultValues: {
       plantation_unit_id: user?.plantation_unit?.id ?? '',
@@ -251,9 +251,13 @@ export function PdoFormPage() {
     }
   }
 
-  // Auto-calculate amount = quantity * rate
+  // Auto-calculate amount = quantity * rate.
+  // PENTING: gunakan getValues() bukan detailValues (watch snapshot). Saat onChange
+  // dipanggil, form store sudah diupdate tapi komponen belum re-render — detailValues
+  // masih nilai lama sehingga qty/rate terbaca null dan amount selalu 0.
+  // getValues() membaca form store secara synchronous, selalu nilai terkini.
   const calculateAmount = (idx: number) => {
-    const detail = detailValues?.[idx]
+    const detail = getValues(`details.${idx}`)
     if (!detail) return
     const selectedItem = items?.find((entry) => entry.id === detail.expense_item_id)
     if (selectedItem?.mode_input === 'auto_external') return
