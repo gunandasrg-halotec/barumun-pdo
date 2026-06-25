@@ -17,6 +17,8 @@ export const canRecordReal    = (role: RoleCode) => role === 'KERANI' || role ==
 export const isCrossUnit      = (role: RoleCode) => ROLES_CROSS_UNIT.includes(role)
 export const isAdmin          = (role: RoleCode) => role === 'ADMIN'
 export const isKerani         = (role: RoleCode) => role === 'KERANI'
+export const isAsisteKebun    = (role: RoleCode) => role === 'ASISTEN_KEBUN'
+export const canDeleteDraftPdo = (role: RoleCode) => role === 'KERANI' || role === 'ASISTEN_KEBUN'
 export const isMgrKeu         = (role: RoleCode) => role === 'MANAJER_KEUANGAN'
 export const isPurchasing     = (role: RoleCode) => role === 'STAFF_PURCHASING'
 export const canEditMasterData = (role: RoleCode) => role === 'ADMIN' || role === 'STAFF_KEUANGAN'

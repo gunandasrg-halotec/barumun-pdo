@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { useQuery } from '@tanstack/react-query'
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { usePdoList, useClosePdo } from '@/hooks/usePdo'
 import { useAuthStore } from '@/store/auth.store'
 import { PdoStatusBadge } from '@/components/ui/Badge'
@@ -9,7 +9,7 @@ import { Modal } from '@/components/ui/Modal'
 import { EmptyState } from '@/components/ui/EmptyState'
 import { api } from '@/lib/api'
 import { fmt, fmtPeriode, fmtDate } from '@/lib/format'
-import { isKerani, isMgrKeu } from '@/lib/auth'
+import { isKerani, isMgrKeu, canDeleteDraftPdo } from '@/lib/auth'
 import { useToastStore } from '@/store/toast.store'
 import type { ApiResponse, PdoHeader, PlantationUnit, RoleCode } from '@/types'
 import { Search, FileDown } from 'lucide-react'
@@ -58,6 +58,7 @@ export function PdoListPage() {
   const [monthFilter, setMonthFilter]     = useState('')
   const [unitFilter, setUnitFilter]       = useState('')
   const [closingPdo, setClosingPdo]       = useState<PdoHeader | null>(null)
+  const [deletingPdo, setDeletingPdo]     = useState<PdoHeader | null>(null)
   const [closeDate, setCloseDate]         = useState('')
   const [closeNotes, setCloseNotes]       = useState('')
   const [transferDetailPdo, setTransferDetailPdo] = useState<PdoHeader | null>(null)
@@ -79,6 +80,16 @@ export function PdoListPage() {
   })
 
   const closePdo = useClosePdo(closingPdo?.id ?? '')
+  const queryClient = useQueryClient()
+  const deletePdo = useMutation({
+    mutationFn: (id: string) => api.delete(`/pdo/${id}`),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['pdo', 'list'] })
+      toast('PDO berhasil dihapus')
+      setDeletingPdo(null)
+    },
+    onError: () => toast('Gagal menghapus PDO', 'error'),
+  })
 
   const { data: transferDetail, isLoading: transferLoading } = useQuery({
     queryKey: ['pdo-transfer-detail', transferDetailPdo?.id],
@@ -251,6 +262,14 @@ export function PdoListPage() {
                           Edit
                         </button>
                       )}
+                      {role && canDeleteDraftPdo(role) && pdo.status === 'draft' && (
+                        <button
+                          className="text-sm font-bold text-red hover:underline"
+                          onClick={() => setDeletingPdo(pdo)}
+                        >
+                          Hapus
+                        </button>
+                      )}
                       {role && isMgrKeu(role) && pdo.status === 'final' && (
                         <button
                           className="text-sm font-bold text-red hover:underline"
@@ -328,6 +347,28 @@ export function PdoListPage() {
             </div>
           </div>
         )}
+      </Modal>
+
+      {/* Modal Hapus PDO */}
+      <Modal
+        open={!!deletingPdo}
+        onClose={() => setDeletingPdo(null)}
+        title={`Hapus PDO: ${deletingPdo?.pdo_number}`}
+      >
+        <p className="text-sm text-muted mb-6">
+          PDO <span className="font-bold text-ink">{deletingPdo?.pdo_number}</span> akan dihapus secara permanen.
+          Tindakan ini tidak dapat dibatalkan.
+        </p>
+        <div className="flex justify-end gap-2">
+          <Button variant="secondary" onClick={() => setDeletingPdo(null)}>Batal</Button>
+          <Button
+            variant="danger"
+            loading={deletePdo.isPending}
+            onClick={() => deletingPdo && deletePdo.mutate(deletingPdo.id)}
+          >
+            Hapus PDO
+          </Button>
+        </div>
       </Modal>
 
       {/* Modal Tutup PDO */}
