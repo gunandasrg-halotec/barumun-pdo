@@ -3,36 +3,42 @@ FROM composer:2 AS vendor
 
 WORKDIR /app
 
-# Install Laravel skeleton dependencies
-RUN composer create-project laravel/laravel . \
-    --prefer-dist --no-progress --no-interaction --quiet \
-    && composer require \
-        laravel/sanctum \
-        league/flysystem-aws-s3-v3 \
-        maatwebsite/excel \
-        barryvdh/laravel-dompdf \
-        sentry/sentry-laravel \
-        --no-interaction --quiet
+# Reproducible install: apps/api is a complete Laravel application with a
+# committed composer.lock, so we install the EXACT pinned versions instead of
+# scaffolding a fresh project on every build (which silently pulled newer,
+# incompatible releases and broke production).
+#
+# Dependency layer first for build caching:
+COPY apps/api/composer.json apps/api/composer.lock ./
+# --ignore-platform-reqs: the composer image runs PHP 8.5 while
+# phpoffice/phpspreadsheet (via maatwebsite/excel) pins php <8.5.0. The runtime
+# stage below is php:8.4-fpm-alpine, which satisfies every constraint, so the
+# installed vendor dir is correct for production.
+# --no-scripts here because the full app isn't copied yet (package:discover runs
+# after the COPY below).
+RUN composer install --no-dev --no-scripts --no-autoloader \
+        --prefer-dist --no-interaction --ignore-platform-reqs
 
-# Copy application code on top of the skeleton
-COPY apps/api/app/      ./app/
-COPY apps/api/config/services.php ./config/services.php
-COPY apps/api/database/ ./database/
-COPY apps/api/routes/   ./routes/
-COPY apps/api/bootstrap/ ./bootstrap/
-
-# Optimise autoloader for production
-RUN composer dump-autoload --optimize --no-dev --classmap-authoritative
+# Now the rest of the application, then build the optimised autoloader (this runs
+# package:discover with the app present).
+COPY apps/api/ ./
+RUN composer dump-autoload --optimize --classmap-authoritative --no-dev
 
 # ── Stage 2: Production image (PHP-FPM) ───────────────────────────────────────
 FROM php:8.4-fpm-alpine
 
-# Install system dependencies & PHP extensions
+# Install system dependencies & PHP extensions.
+# NOTE: current docker-php-ext-install auto-purges its build toolchain
+# (.phpize-deps) when it finishes, which would leave `pecl install redis` with no
+# autoconf (phpize fails). Install $PHPIZE_DEPS as a kept virtual package so it
+# survives through pecl, then remove it at the end.
 RUN apk add --no-cache \
         nginx supervisor \
         postgresql-dev libpng-dev libzip-dev \
+    && apk add --no-cache --virtual .build-deps $PHPIZE_DEPS \
     && docker-php-ext-install pdo pdo_pgsql gd bcmath zip opcache \
     && pecl install redis && docker-php-ext-enable redis \
+    && apk del .build-deps \
     && rm -rf /tmp/pear
 
 # PHP-FPM & opcache tuning

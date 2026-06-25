@@ -2,6 +2,7 @@
 
 namespace App\Models;
 
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Concerns\HasUuids;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
@@ -62,6 +63,25 @@ class PdoDetail extends Model
             'display_order' => 'integer',
         ];
     }
+
+    // ─── Global Scope (unit access) ───────────────────
+
+    /**
+     * Row-level security: KERANI and ASISTEN can only access PDO details
+     * from PDOs belonging to their assigned plantation unit.
+     */
+    protected static function booted(): void
+    {
+        static::addGlobalScope('unit_access', function (Builder $builder) {
+            if (app()->bound('current_unit_id')) {
+                $builder->whereHas('pdoHeader', fn ($q) =>
+                    $q->where('plantation_unit_id', app('current_unit_id'))
+                );
+            }
+        });
+    }
+
+    // ─── Relasi ───────────────────────────────────────
 
     public function pdoHeader(): BelongsTo
     {

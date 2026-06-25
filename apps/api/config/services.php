@@ -39,5 +39,4 @@ return [
         'base_url' => env('PAYROLL_INTERNAL_API_BASE_URL'),
         'token' => env('PAYROLL_INTERNAL_API_TOKEN'),
     ],
-
 ];

@@ -14,10 +14,13 @@ class RealizationEntryService
 {
     /**
      * Daftar semua entri realisasi (dengan filter opsional).
+     * Scoped by company_id; unit-bound roles also scoped by unit.
      */
-    public function list(array $filters = []): Collection
+    public function list(User $actor, array $filters = []): Collection
     {
         return RealizationEntry::with(['pdoDetail.expenseItem', 'recorder', 'attachments'])
+            ->whereHas('pdoDetail.pdoHeader', fn ($q) => $q->where('company_id', $actor->company_id))
+            ->when($actor->plantation_unit_id, fn ($q) => $q->whereHas('pdoDetail.pdoHeader', fn ($qq) => $qq->where('plantation_unit_id', $actor->plantation_unit_id)))
             ->when(isset($filters['pdo_detail_id']), fn ($q) => $q->where('pdo_detail_id', $filters['pdo_detail_id']))
             ->orderByDesc('transaction_date')
             ->get();
@@ -66,6 +69,14 @@ class RealizationEntryService
         $detail = PdoDetail::findOrFail($data['pdo_detail_id']);
         $pdo    = $detail->pdoHeader;
 
+        // BR-AUTH-001: Verify PDO belongs to user's unit (row-level security)
+        if ($actor->plantation_unit_id && $pdo->plantation_unit_id !== $actor->plantation_unit_id) {
+            abort(response()->json([
+                'success' => false,
+                'error'   => ['code' => 'UNIT_MISMATCH', 'message' => 'Realisasi hanya bisa dicatat untuk PDO unit Anda sendiri.'],
+            ], 403));
+        }
+
         // BR-REAL-001
         if (! $pdo->isFinal()) {
             abort(response()->json([
@@ -83,6 +94,9 @@ class RealizationEntryService
         }
 
         return DB::transaction(function () use ($detail, $data, $actor) {
+            // Lock detail row to prevent race condition on cumulative validation
+            $detail = PdoDetail::lockForUpdate()->findOrFail($detail->id);
+
             $totalRealized    = $detail->realizationEntries()->sum('amount');
             $totalTransferred = $detail->transferEntries()->sum('amount');
             $newTotal         = $totalRealized + $data['amount'];
@@ -141,6 +155,20 @@ class RealizationEntryService
     {
         $pdo = $entry->pdoDetail->pdoHeader;
 
+        // BR-AUTH-001: Verify PDO belongs to user's company and unit
+        if ($pdo->company_id !== $actor->company_id) {
+            abort(response()->json([
+                'success' => false,
+                'error'   => ['code' => 'COMPANY_MISMATCH', 'message' => 'Anda tidak memiliki akses ke realisasi ini.'],
+            ], 403));
+        }
+        if ($actor->plantation_unit_id && $pdo->plantation_unit_id !== $actor->plantation_unit_id) {
+            abort(response()->json([
+                'success' => false,
+                'error'   => ['code' => 'UNIT_MISMATCH', 'message' => 'Realisasi hanya bisa diubah untuk PDO unit Anda sendiri.'],
+            ], 403));
+        }
+
         if ($pdo->isClosed()) {
             abort(response()->json([
                 'success' => false,
@@ -159,6 +187,9 @@ class RealizationEntryService
         $detail = $entry->pdoDetail;
 
         return DB::transaction(function () use ($entry, $data, $actor, $detail) {
+            // Lock detail row to prevent race condition on cumulative validation
+            $detail = PdoDetail::lockForUpdate()->findOrFail($detail->id);
+
             // BR-REAL-002 & BR-REAL-003: validasi ulang jika amount berubah
             if (isset($data['amount'])) {
                 $totalRealized    = $detail->realizationEntries()->where('id', '!=', $entry->id)->sum('amount');
@@ -203,6 +234,20 @@ class RealizationEntryService
     public function destroy(RealizationEntry $entry, User $actor): void
     {
         $pdo = $entry->pdoDetail->pdoHeader;
+
+        // BR-AUTH-001: Verify PDO belongs to user's company and unit
+        if ($pdo->company_id !== $actor->company_id) {
+            abort(response()->json([
+                'success' => false,
+                'error'   => ['code' => 'COMPANY_MISMATCH', 'message' => 'Anda tidak memiliki akses ke realisasi ini.'],
+            ], 403));
+        }
+        if ($actor->plantation_unit_id && $pdo->plantation_unit_id !== $actor->plantation_unit_id) {
+            abort(response()->json([
+                'success' => false,
+                'error'   => ['code' => 'UNIT_MISMATCH', 'message' => 'Realisasi hanya bisa dihapus untuk PDO unit Anda sendiri.'],
+            ], 403));
+        }
 
         if ($pdo->isClosed()) {
             abort(response()->json([

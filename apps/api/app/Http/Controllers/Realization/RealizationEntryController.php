@@ -19,7 +19,7 @@ class RealizationEntryController extends Controller
     public function index(Request $request): JsonResponse
     {
         $filters = $request->only(['pdo_detail_id']);
-        $data    = $this->service->list($filters);
+        $data    = $this->service->list($request->user(), $filters);
 
         return response()->json(['success' => true, 'data' => $data]);
     }

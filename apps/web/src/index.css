@@ -152,4 +152,47 @@
   .supp-separator td {
     @apply bg-[#dbeafe] text-[#1d4ed8] font-bold text-sm;
   }
+
+  /* ── Form container responsive padding (breakpoints below) ── */
+  .form-container {
+    @apply px-4 py-0;
+  }
+
+  /* ── Form wrapper with max-width ── */
+  .form-wrapper {
+    @apply mx-auto w-full max-w-2xl;
+  }
+
+  /* ── Responsive typography adjustments ── */
+  @media (max-width: 640px) {
+    .card { @apply p-4; }
+  }
+}
+
+@layer utilities {
+  /* Base (mobile) padding; responsive steps handled via media queries below.
+     Note: Tailwind rejects responsive variants (sm:/lg:) inside @apply within
+     @layer utilities, so the breakpoints are expressed as plain CSS. */
+  .px-responsive { @apply px-4; }
+  .page-container { @apply px-4 py-6 max-w-7xl mx-auto; }
+  .form-container-narrow { @apply w-full max-w-2xl mx-auto px-4; }
+}
+
+/* ── Responsive horizontal padding (sm: 1.5rem, lg: 2rem) ── */
+@media (min-width: 640px) {
+  .form-container,
+  .px-responsive,
+  .page-container,
+  .form-container-narrow {
+    padding-left: 1.5rem;
+    padding-right: 1.5rem;
+  }
+}
+@media (min-width: 1024px) {
+  .form-container,
+  .px-responsive,
+  .page-container {
+    padding-left: 2rem;
+    padding-right: 2rem;
+  }
 }

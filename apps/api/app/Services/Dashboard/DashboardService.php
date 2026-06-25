@@ -31,15 +31,38 @@ class DashboardService
 
         $params = array_merge([$companyId, $month, $year], $unitIds ?? []);
 
-        $monthlyStats = DB::selectOne("
+        // Query amount separately dari transfer/realization untuk avoid row multiplication
+        $amountStats = DB::selectOne("
             SELECT
-                COALESCE(SUM(pd.amount), 0)  AS total_amount,
-                COALESCE(SUM(te.amount), 0)  AS total_transferred,
+                COALESCE(SUM(pd.amount), 0)  AS total_amount
+            FROM pdo_headers ph
+            LEFT JOIN pdo_details pd ON pd.pdo_header_id = ph.id
+            WHERE ph.company_id = ?
+              AND ph.period_month = ?
+              AND ph.period_year  = ?
+              {$unitClause}
+        ", $params);
+
+        // Query transfer amount
+        $transferStats = DB::selectOne("
+            SELECT
+                COALESCE(SUM(te.amount), 0)  AS total_transferred
+            FROM pdo_headers ph
+            LEFT JOIN pdo_details pd ON pd.pdo_header_id = ph.id
+            LEFT JOIN transfer_entries te ON te.pdo_detail_id = pd.id
+            WHERE ph.company_id = ?
+              AND ph.period_month = ?
+              AND ph.period_year  = ?
+              {$unitClause}
+        ", $params);
+
+        // Query realization amount & items without proof
+        $realizationStats = DB::selectOne("
+            SELECT
                 COALESCE(SUM(re.amount), 0)  AS total_realized,
                 COUNT(DISTINCT CASE WHEN re.proof_number IS NULL OR re.proof_number = '' THEN re.id END) AS items_without_proof
             FROM pdo_headers ph
             LEFT JOIN pdo_details pd ON pd.pdo_header_id = ph.id
-            LEFT JOIN transfer_entries te ON te.pdo_detail_id = pd.id
             LEFT JOIN realization_entries re ON re.pdo_detail_id = pd.id
             WHERE ph.company_id = ?
               AND ph.period_month = ?
@@ -47,9 +70,98 @@ class DashboardService
               {$unitClause}
         ", $params);
 
+        $monthlyStats = (object) [
+            'total_amount' => $amountStats->total_amount,
+            'total_transferred' => $transferStats->total_transferred,
+            'total_realized' => $realizationStats->total_realized,
+            'items_without_proof' => $realizationStats->items_without_proof,
+        ];
+
         $totalTransferred = (int) $monthlyStats->total_transferred;
         $totalRealized    = (int) $monthlyStats->total_realized;
         $pendingForUser   = $this->pendingPdoCount($user);
+
+        // Transfer breakdown per destination
+        $destRows = DB::select("
+            SELECT te.transfer_destination, COALESCE(SUM(te.amount), 0) AS subtotal
+            FROM pdo_headers ph
+            LEFT JOIN pdo_details pd ON pd.pdo_header_id = ph.id
+            LEFT JOIN transfer_entries te ON te.pdo_detail_id = pd.id
+            WHERE ph.company_id = ?
+              AND ph.period_month = ?
+              AND ph.period_year  = ?
+              AND te.id IS NOT NULL
+              {$unitClause}
+            GROUP BY te.transfer_destination
+        ", $params);
+        $byDest = collect($destRows)->pluck('subtotal', 'transfer_destination');
+
+        // Pengajuan & realisasi per plantation unit (tanpa transfer agar tidak multiply rows)
+        // Note: LEFT JOIN plantation_units untuk include PDOs tanpa unit (consistency dengan global query)
+        $unitRows = DB::select("
+            SELECT
+                pu.id   AS unit_id,
+                pu.code AS unit_code,
+                pu.name AS unit_name,
+                COALESCE(SUM(pd.amount), 0) AS total_amount,
+                COALESCE(SUM(re.amount), 0) AS total_realized
+            FROM pdo_headers ph
+            LEFT JOIN plantation_units pu ON pu.id = ph.plantation_unit_id
+            LEFT JOIN pdo_details pd ON pd.pdo_header_id = ph.id
+            LEFT JOIN realization_entries re ON re.pdo_detail_id = pd.id
+            WHERE ph.company_id = ?
+              AND ph.period_month = ?
+              AND ph.period_year  = ?
+              {$unitClause}
+            GROUP BY pu.id, pu.code, pu.name
+            ORDER BY COALESCE(pu.code, 'zzz')
+        ", $params);
+
+        // Transfer per unit per destination
+        $unitDestRows = DB::select("
+            SELECT
+                pu.id AS unit_id,
+                te.transfer_destination,
+                COALESCE(SUM(te.amount), 0) AS subtotal
+            FROM pdo_headers ph
+            LEFT JOIN plantation_units pu ON pu.id = ph.plantation_unit_id
+            LEFT JOIN pdo_details pd ON pd.pdo_header_id = ph.id
+            LEFT JOIN transfer_entries te ON te.pdo_detail_id = pd.id
+            WHERE ph.company_id = ?
+              AND ph.period_month = ?
+              AND ph.period_year  = ?
+              AND te.id IS NOT NULL
+              {$unitClause}
+            GROUP BY pu.id, te.transfer_destination
+        ", $params);
+
+        // Index transfer per unit
+        $transferByUnit = [];
+        foreach ($unitDestRows as $row) {
+            $transferByUnit[$row->unit_id][$row->transfer_destination] = (int) $row->subtotal;
+        }
+
+        $byUnit = array_values(array_filter(array_map(function ($r) use ($transferByUnit) {
+            // Skip rows dengan unit_id NULL
+            if (! $r->unit_id) {
+                return null;
+            }
+            $t = $transferByUnit[$r->unit_id] ?? [];
+            $rekKebun = (int) ($t['rek_kebun'] ?? 0);
+            $pribadi  = (int) ($t['pribadi']   ?? 0);
+            $vendor   = (int) ($t['vendor']    ?? 0);
+            return [
+                'unit_id'               => $r->unit_id,
+                'unit_code'             => $r->unit_code,
+                'unit_name'             => $r->unit_name,
+                'total_amount'          => (int) $r->total_amount,
+                'total_transferred'     => $rekKebun + $pribadi + $vendor,
+                'total_realized'        => (int) $r->total_realized,
+                'transferred_rek_kebun' => $rekKebun,
+                'transferred_pribadi'   => $pribadi,
+                'transferred_vendor'    => $vendor,
+            ];
+        }, $unitRows)));
 
         return [
             'period'              => ['month' => (int) $month, 'year' => (int) $year],
@@ -60,6 +172,12 @@ class DashboardService
             'balance'             => $totalTransferred - $totalRealized,
             'items_without_proof' => (int) $monthlyStats->items_without_proof,
             'pending_pdo_count'   => $pendingForUser,
+            'transferred_by_destination' => [
+                'rek_kebun' => (int) ($byDest['rek_kebun'] ?? 0),
+                'pribadi'   => (int) ($byDest['pribadi']   ?? 0),
+                'vendor'    => (int) ($byDest['vendor']    ?? 0),
+            ],
+            'by_unit' => $byUnit,
         ];
     }
 

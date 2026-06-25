@@ -169,19 +169,52 @@ class PdoService
         // BR-PDO-003: hanya bisa edit saat draft
         $this->assertDraft($pdo);
 
-        $old = $pdo->toArray();
-        $pdo->update($data);
+        return DB::transaction(function () use ($pdo, $data, $actor) {
+            $old = $pdo->toArray();
+            $pdo->update(['notes' => $data['notes'] ?? $pdo->notes]);
 
-        AuditLog::record(
-            actor: $actor,
-            entityType: 'pdo_headers',
-            entityId: $pdo->id,
-            action: 'UPDATE',
-            oldValues: $old,
-            newValues: $pdo->fresh()->toArray()
-        );
+            AuditLog::record(
+                actor: $actor,
+                entityType: 'pdo_headers',
+                entityId: $pdo->id,
+                action: 'UPDATE',
+                oldValues: $old,
+                newValues: $pdo->fresh()->toArray()
+            );
 
-        return $pdo->fresh();
+            // Update masing-masing detail jika dikirim
+            foreach ($data['details'] ?? [] as $detailData) {
+                $detail = PdoDetail::where('id', $detailData['id'])
+                    ->where('pdo_header_id', $pdo->id)
+                    ->first();
+
+                if (! $detail) continue;
+
+                $oldDetail = $detail->toArray();
+                $detail->update([
+                    'description'   => $detailData['description']   ?? $detail->description,
+                    'quantity'      => array_key_exists('quantity', $detailData) ? $detailData['quantity'] : $detail->quantity,
+                    'unit'          => array_key_exists('unit', $detailData) ? $detailData['unit'] : $detail->unit,
+                    'rate'          => array_key_exists('rate', $detailData) ? $detailData['rate'] : $detail->rate,
+                    'amount'        => $detailData['amount'] ?? $detail->amount,
+                    'notes'         => $detailData['notes'] ?? $detail->notes,
+                    'display_order' => $detailData['display_order'] ?? $detail->display_order,
+                ]);
+
+                AuditLog::record(
+                    actor: $actor,
+                    entityType: 'pdo_details',
+                    entityId: $detail->id,
+                    action: 'UPDATE',
+                    oldValues: $oldDetail,
+                    newValues: $detail->fresh()->toArray()
+                );
+            }
+
+            $this->syncGrandTotal($pdo);
+
+            return $pdo->fresh();
+        });
     }
 
     public function deletePdo(PdoHeader $pdo, User $actor): void
@@ -251,6 +284,11 @@ class PdoService
 
     public function updateDetail(PdoHeader $pdo, PdoDetail $detail, array $data, User $actor): PdoDetail
     {
+        // Verify detail belongs to the PDO in the URL
+        if ($detail->pdo_header_id !== $pdo->id) {
+            abort(404);
+        }
+
         $this->assertDraft($pdo);
 
         $old = $detail->toArray();
@@ -272,6 +310,11 @@ class PdoService
 
     public function deleteDetail(PdoHeader $pdo, PdoDetail $detail, User $actor): void
     {
+        // Verify detail belongs to the PDO in the URL
+        if ($detail->pdo_header_id !== $pdo->id) {
+            abort(404);
+        }
+
         $this->assertDraft($pdo);
 
         $old = $detail->toArray();

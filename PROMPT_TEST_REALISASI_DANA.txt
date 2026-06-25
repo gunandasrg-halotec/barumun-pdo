@@ -1,0 +1,275 @@
+TASK: Test the Realisasi Dana (Fund Realization) menu in PDO application
+
+SETUP DATA:
+- Use PDO: PDO-2026-10-BN-001 (Status: Final, Unit: Binanga)
+- Test Items:
+  * Upah Potong Buah TBS: Rp 1.000.000 (fully transferred)
+  * Herbisida Sistemik: Rp 2.000.000 (fully transferred)
+  * Upah Babat Piringan: Rp 1.500.000 (fully transferred)
+- Total Transfer Available: Rp 4.500.000
+
+---
+
+TEST 0: ROLE-BASED ACCESS & PERMISSIONS
+
+Verify only KERANI and STAFF_PURCHASING can access Realisasi Dana menu:
+1. Login as ADMIN → Should NOT see "Input Realisasi" button or get 403 error
+2. Login as KERANI (aswan@barumun-plantation.com, TestPass123!) → Should see and access menu
+3. Login as STAFF_PURCHASING (purchasing@barumunpalma.co.id, TestPass123!) → Should see and access menu
+
+Expected: Only KERANI and STAFF_PURCHASING can record realisasi entries.
+
+---
+
+TEST 0B: KERANI ROLE - PAYMENT METHOD & FUNDING SOURCE RESTRICTIONS
+
+Login as KERANI (aswan@barumun-plantation.com, password: TestPass123!)
+
+Check available options in form:
+1. Metode Pembayaran dropdown:
+   - Expected: Tunai, Transfer Bank, Kas Kecil (all 3 options)
+   - Actual: [Document what shows]
+
+2. Sumber Dana dropdown:
+   - Expected: Kas Kebun, Rekening Kebun (ONLY these 2)
+   - NOT available: Rekening Utama (should not show)
+   - Actual: [Document what shows]
+
+Enter and submit one test realization with these restrictions in mind.
+Result: ACCEPTED or REJECTED? [Document any validation error]
+
+---
+
+TEST 0C: STAFF_PURCHASING ROLE - PAYMENT METHOD & FUNDING SOURCE RESTRICTIONS
+
+Login as STAFF_PURCHASING (purchasing@barumunpalma.co.id, password: TestPass123!)
+
+Check available options in form:
+1. Metode Pembayaran dropdown:
+   - Expected: Transfer Bank (ONLY this option)
+   - NOT available: Tunai, Kas Kecil (should not show)
+   - Actual: [Document what shows]
+
+2. Sumber Dana dropdown:
+   - Expected: Rekening Utama (ONLY this option)
+   - NOT available: Kas Kebun, Rekening Kebun (should not show)
+   - Actual: [Document what shows]
+
+Try to submit realization with restricted combinations.
+Result: ACCEPTED or REJECTED? [Document if validation prevents invalid combinations]
+
+---
+
+TEST 1: ALL PAYMENT METHOD × FUNDING SOURCE COMBINATIONS (KERANI)
+Run these 9 entries. Each should be ACCEPTED without error.
+Use Transaction Date: 2026-10-01 for all, and different Proof Numbers (REF-TEST-001 to REF-TEST-009).
+
+| # | Item | Amount | Metode | Sumber | Proof # | Result |
+|1|Upah Potong|Rp 100.000|Tunai|Kas Kebun|REF-TEST-001|?|
+|2|Herbisida|Rp 100.000|Tunai|Rekening Kebun|REF-TEST-002|?|
+|3|Upah Babat|Rp 100.000|Tunai|Rekening Utama|REF-TEST-003|?|
+|4|Upah Potong|Rp 100.000|Transfer|Kas Kebun|REF-TEST-004|?|
+|5|Herbisida|Rp 100.000|Transfer|Rekening Kebun|REF-TEST-005|?|
+|6|Upah Babat|Rp 100.000|Transfer|Rekening Utama|REF-TEST-006|?|
+|7|Upah Potong|Rp 100.000|Kas Kecil|Kas Kebun|REF-TEST-007|?|
+|8|Herbisida|Rp 100.000|Kas Kecil|Rekening Kebun|REF-TEST-008|?|
+|9|Upah Babat|Rp 100.000|Kas Kecil|Rekening Utama|REF-TEST-009|?|
+
+For each entry:
+1. Click "Input Realisasi" button
+2. Select PDO: PDO-2026-10-BN-001
+3. Select Item, enter amount, date, payment method, funding source, proof number
+4. Click Simpan
+5. Document: ACCEPTED or REJECTED (if rejected, copy error message)
+6. Check: After accepting, entry appears in table below? YES/NO
+7. Check: Metode and Sumber Dana columns show correct labels? YES/NO
+
+QUESTION: Do all 9 combinations work? If not, which ones fail?
+
+---
+
+TEST 2: MULTIPLE REALIZATIONS ON SAME ITEM
+Item: Upah Potong Buah TBS (Allocated: Rp 1.000.000)
+Make 3 entries for same item on different dates:
+
+| Entry | Date | Amount | Metode | Sumber | Proof # |
+|A|2026-10-05|Rp 300.000|Tunai|Kas Kebun|REF-MULTI-A|
+|B|2026-10-10|Rp 400.000|Transfer|Rekening Kebun|REF-MULTI-B|
+|C|2026-10-15|Rp 300.000|Kas Kecil|Rekening Utama|REF-MULTI-C|
+
+TOTAL per item = Rp 1.000.000 (equals allocated amount)
+
+For each:
+1. Submit entry
+2. Document: ACCEPTED or REJECTED
+3. After all 3: Check table shows all 3 entries? YES/NO
+4. Can you click item and see breakdown of 3 separate realizations? YES/NO
+5. Total realization shown for this item = Rp 1.000.000? YES/NO
+6. Cumulative shown per item = Rp 1.000.000 (equals amount allocated)? YES/NO
+
+QUESTION: Can same item be realized multiple times? How does system display cumulative per item?
+
+---
+
+TEST 3: REALIZATION EXCEEDING ITEM AMOUNT (with cumulative check)
+Item: Herbisida Sistemik (Allocated: Rp 2.000.000, Transferred: Rp 2.000.000)
+
+Try to submit:
+| Entry | Amount | Proof # | Expected |
+|A|Rp 900.000|REF-EXCEED-A| Should accept (< item amount) |
+|B|Rp 800.000|REF-EXCEED-B| Test: Will system accept? (Total = Rp 1.7M > Rp 2M item amount) |
+|C|Rp 200.000|REF-EXCEED-C| Test: After B, can still submit? (Total = Rp 1.9M) |
+
+For Entry A: Submit → ACCEPT? YES/NO
+
+For Entry B: Submit →
+- ACCEPTED? YES/NO. If YES, continue to test C.
+- REJECTED? YES/NO. If REJECTED, copy error message and STOP test here.
+
+For Entry C (only if B accepted): Submit →
+- ACCEPTED? YES/NO
+- REJECTED? YES/NO. Copy error message if rejected.
+
+AFTER ALL SUBMISSIONS (regardless of acceptance):
+1. Check "Total Realisasi" for Herbisida item in table = what amount?
+2. Compare: Is it ≤ Rp 2.000.000 (item allocated)? YES/NO
+3. Compare: Is global cumulative realization ≤ Rp 4.500.000 (total transfer)? YES/NO
+
+QUESTIONS:
+- Does system allow single item realization > item allocated amount? YES/NO
+- What's the error message (if rejected)?
+- How does cumulative realization limit work? Per-item or global?
+
+---
+
+TEST 4: CUMULATIVE TRANSFER LIMIT (across multiple items)
+Test that global realization does NOT exceed global transfer (Rp 4.500.000 total)
+
+Create entries:
+| Item | Amount | Date | Proof # |
+|Upah Potong|Rp 800.000|2026-10-20|REF-CUM-001|
+|Herbisida|Rp 1.500.000|2026-10-21|REF-CUM-002|
+|Upah Babat|Rp 1.200.000|2026-10-22|REF-CUM-003|
+|Upah Babat|Rp 1.000.000|2026-10-23|REF-CUM-004|
+
+CUMULATIVE = Rp 4.500.000 (exactly = total transfer)
+
+Submit entries in order:
+1. Entry 1 (Rp 800k) → ACCEPT? YES/NO. Global total after = Rp 800k
+2. Entry 2 (Rp 1.5M) → ACCEPT? YES/NO. Global total after = Rp 2.3M
+3. Entry 3 (Rp 1.2M) → ACCEPT? YES/NO. Global total after = Rp 3.5M
+4. Entry 4 (Rp 1M) → ACCEPT? YES/NO. Global total after = Rp 4.5M
+
+Check table: Global cumulative realization shown = Rp 4.5M? YES/NO
+
+QUESTION: System allows global realization = global transfer amount? YES/NO
+
+---
+
+TEST 5: BEYOND CUMULATIVE LIMIT
+Try to add one more entry exceeding global transfer:
+
+Item: Upah Babat (even though already has Rp 1.2M + Rp 1M = Rp 2.2M realization)
+Amount: Rp 500.000
+Proof: REF-OVER-001
+
+Submit → ACCEPTED or REJECTED?
+If REJECTED: Copy error message.
+
+QUESTION: System prevents global realization from exceeding global transfer? YES/NO
+
+---
+
+TEST 6: FORM VALIDATION
+Test these invalid submissions (all on same item, Upah Potong):
+
+| Test | Action | Expected Result |
+|Empty PDO|Try submit without PDO selected| REJECT with error? |
+|Empty Item|Select PDO but no item| REJECT with error? |
+|Empty Date|Select item, no date| REJECT with error? |
+|Zero Amount|Fill all fields, amount = 0| ACCEPT or REJECT? |
+|Negative Amount|Fill all fields, amount = -100| ACCEPT or REJECT? |
+|No Payment Method|Fill all but payment method| REJECT with error? |
+|No Funding Source|Fill all but funding source| REJECT with error? |
+|No Proof Number|Fill all but proof number| REJECT with error? |
+
+For each, try submitting and document: ERROR MESSAGE or ACCEPTED
+
+QUESTION: Which fields are truly required? What are error messages?
+
+---
+
+TEST 7: UNIQUE PROOF NUMBERS
+Submit 2 entries with SAME proof number:
+
+Entry A: Item=Upah Potong, Amount=Rp 100k, Proof=REF-DUPLICATE
+Submit → ACCEPT
+
+Entry B: Item=Herbisida, Amount=Rp 100k, Proof=REF-DUPLICATE (same)
+Submit → ACCEPTED or REJECTED?
+If REJECTED: copy error message
+
+QUESTION: System validates proof number uniqueness? YES/NO
+
+---
+
+TEST 8: TABLE DISPLAY & DATA INTEGRITY
+After completing all tests above, check table:
+
+1. All entries you submitted appear in table? YES/NO (count how many visible)
+2. "No. Ref" column shows proof numbers correctly? YES/NO
+3. "Jumlah" column shows amounts in Rp format? YES/NO
+4. "Tanggal" column formatted as DD-MM-YYYY? YES/NO
+5. "Metode" column shows: Tunai / Transfer Bank / Kas Kecil? YES/NO (not "tunai"/"transfer"/"kas_kecil")
+6. "Sumber Dana" column shows: Kas Kebun / Rekening Kebun / Rekening Utama? YES/NO (not raw enum values)
+7. Can you filter/search by item? YES/NO
+8. Can you delete entry? YES/NO (document if button exists and works)
+9. Can you edit entry? YES/NO (document if button exists and works)
+
+DOCUMENT: Any data missing or incorrectly formatted? Any columns confusing?
+
+---
+
+SUMMARY TO REPORT AFTER TESTING:
+
+1. Payment Method × Funding Source: All 9 combinations work? YES/NO
+   - If NO, which combinations failed?
+
+2. Multiple Realizations: Can same item be realized multiple times? YES/NO
+   - How does system show cumulative per item?
+
+3. Single Item Limit: System allows realization > item allocated amount? YES/NO
+   - Error message?
+
+4. Global Transfer Limit: System allows total realization = total transfer? YES/NO
+   - System prevents exceeding? YES/NO
+
+5. Form Validation: Which fields validated as required?
+   - Error messages clear/helpful? YES/NO
+
+6. Proof Number: Validated as unique? YES/NO
+
+7. Table Display: Data formatted correctly? YES/NO
+   - Any columns confusing or missing?
+
+8. ANY BUGS OR ISSUES FOUND?
+   - List any unexpected behavior or error messages
+   - Suggest improvements for UX/validation
+
+9. WHICH TEST CASES PASSED vs FAILED?
+   - Test 1 (9 combinations): PASS/FAIL
+   - Test 2 (multiple per item): PASS/FAIL
+   - Test 3 (exceed item amount): PASS/FAIL
+   - Test 4 (global limit): PASS/FAIL
+   - Test 5 (over limit): PASS/FAIL
+   - Test 6 (validation): PASS/FAIL
+   - Test 7 (unique proof): PASS/FAIL
+   - Test 8 (table/display): PASS/FAIL
+
+---
+
+SCREENSHOT GUIDANCE:
+- Screenshot after each major test (Test 1, 2, 3, 4, 5, 7, 8) to document state
+- Screenshot any error messages for documentation
+- Screenshot final table with all entries visible
+- Screenshot to show cumulative totals per item and global

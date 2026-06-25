@@ -259,13 +259,31 @@ export interface PdoSupplementaryHeader {
 
 // ─── Dashboard ───────────────────────────────────────────────────────────────
 
+export interface DashboardUnitSummary {
+  unit_id:               string
+  unit_code:             string
+  unit_name:             string
+  total_amount:          number
+  total_transferred:     number
+  total_realized:        number
+  transferred_rek_kebun: number
+  transferred_pribadi:   number
+  transferred_vendor:    number
+}
+
 export interface DashboardSummary {
-  total_amount: number
-  total_transferred: number
-  total_realized: number
-  balance: number
-  items_without_proof: number
-  pending_pdo_count: number
+  total_amount:       number
+  total_transferred:  number
+  total_realized:     number
+  balance:            number
+  items_without_proof:number
+  pending_pdo_count:  number
+  transferred_by_destination: {
+    rek_kebun: number
+    pribadi:   number
+    vendor:    number
+  }
+  by_unit: DashboardUnitSummary[]
 }
 
 export interface CategorySummary {
