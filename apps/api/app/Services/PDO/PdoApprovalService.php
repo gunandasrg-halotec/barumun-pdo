@@ -54,12 +54,16 @@ class PdoApprovalService
             abort(response()->json(['success' => false, 'error' => ['code' => 'INVALID_STATUS', 'message' => 'PDO harus berstatus draft untuk di-submit.']], 409));
         }
 
-        $unpulledAutoExternalRows = $pdo->details()
-            ->whereHas('expenseItem', fn ($query) => $query->where('mode_input', ExpenseItem::MODE_AUTO_EXTERNAL))
-            ->where(fn ($query) => $query
-                ->whereNull('external_amount_pulled_at')
-                ->orWhereNull('external_payload'))
+        $details = $pdo->details()
+            ->with('expenseItem')
             ->orderBy('display_order')
+            ->get();
+
+        $details->each(fn ($detail) => $detail->setRelation('pdoHeader', $pdo));
+
+        $activeAutoExternalDetails = $details->filter(fn ($detail) => $detail->is_auto_external_active);
+        $unpulledAutoExternalRows = $activeAutoExternalDetails
+            ->filter(fn ($detail) => $detail->needs_pull)
             ->pluck('display_order');
 
         if ($unpulledAutoExternalRows->isNotEmpty()) {
@@ -69,20 +73,28 @@ class PdoApprovalService
             ]], 422));
         }
 
-        $hasPositiveAmount = $pdo->details()->where('amount', '>', 0)->exists();
-        $hasSuccessfulAutoExternalPull = $pdo->details()
-            ->whereHas('expenseItem', fn ($query) => $query->where('mode_input', ExpenseItem::MODE_AUTO_EXTERNAL))
-            ->whereNotNull('external_amount_pulled_at')
-            ->whereNotNull('external_payload')
-            ->exists();
+        $staleAutoExternalRows = $activeAutoExternalDetails
+            ->filter(fn ($detail) => $detail->is_stale_external_snapshot)
+            ->pluck('display_order');
+
+        if ($staleAutoExternalRows->isNotEmpty()) {
+            abort(response()->json(['success' => false, 'error' => [
+                'code' => 'EXTERNAL_SNAPSHOT_STALE',
+                'message' => 'Baris ' . $staleAutoExternalRows->implode(', ') . ' wajib Ambil Data ulang karena Cost Mapping master berubah.',
+            ]], 422));
+        }
+
+        $hasPositiveAmount = $details->contains(fn ($detail) => $detail->amount > 0);
+        $hasSuccessfulAutoExternalPull = $activeAutoExternalDetails
+            ->contains(fn ($detail) => $detail->hasSuccessfulExternalSnapshot());
 
         if (! $hasPositiveAmount && ! $hasSuccessfulAutoExternalPull) {
             abort(response()->json(['success' => false, 'error' => ['code' => 'PDO_EMPTY', 'message' => 'PDO tidak bisa disubmit karena tidak ada item dengan jumlah > 0.']], 422));
         }
 
         // [D] Semua baris wajib memiliki deskripsi tidak kosong
-        $missingDesc = $pdo->details()
-            ->where(fn ($q) => $q->whereNull('description')->orWhere('description', ''))
+        $missingDesc = $details
+            ->filter(fn ($detail) => $detail->description === null || $detail->description === '')
             ->pluck('display_order');
         if ($missingDesc->isNotEmpty()) {
             abort(response()->json(['success' => false, 'error' => [

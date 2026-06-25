@@ -81,6 +81,70 @@ class ExpenseItemMappingTest extends TestCase
             ->assertJsonValidationErrors(['external_component']);
     }
 
+    public function test_base_payroll_total_can_store_optional_external_role(): void
+    {
+        $admin = $this->adminUser();
+        $subcategory = $this->expenseSubcategory($admin->company_id);
+
+        Sanctum::actingAs($admin);
+
+        $response = $this->postJson('/api/v1/expense-items', [
+            'subcategory_id' => $subcategory->id,
+            'code' => 'EXT-003B',
+            'name' => 'Gaji Pokok Pemanen',
+            'mode_input' => ExpenseItem::MODE_AUTO_EXTERNAL,
+            'external_source_system' => ExpenseItem::EXTERNAL_SOURCE_PAYROLL,
+            'external_component' => ExpenseItem::PAYROLL_COMPONENT_BASE_PAYROLL_TOTAL,
+            'external_role' => ExpenseItem::PAYROLL_ROLE_PEMANEN,
+        ]);
+
+        $response->assertStatus(201)
+            ->assertJsonPath('data.external_component', ExpenseItem::PAYROLL_COMPONENT_BASE_PAYROLL_TOTAL)
+            ->assertJsonPath('data.external_role', ExpenseItem::PAYROLL_ROLE_PEMANEN);
+    }
+
+    public function test_invalid_external_role_is_rejected(): void
+    {
+        $admin = $this->adminUser();
+        $subcategory = $this->expenseSubcategory($admin->company_id);
+
+        Sanctum::actingAs($admin);
+
+        $response = $this->postJson('/api/v1/expense-items', [
+            'subcategory_id' => $subcategory->id,
+            'code' => 'EXT-003C',
+            'name' => 'Role Invalid',
+            'mode_input' => ExpenseItem::MODE_AUTO_EXTERNAL,
+            'external_source_system' => ExpenseItem::EXTERNAL_SOURCE_PAYROLL,
+            'external_component' => ExpenseItem::PAYROLL_COMPONENT_BASE_PAYROLL_TOTAL,
+            'external_role' => 'mandor',
+        ]);
+
+        $response->assertStatus(422)
+            ->assertJsonValidationErrors(['external_role']);
+    }
+
+    public function test_external_role_is_rejected_for_non_base_payroll_component(): void
+    {
+        $admin = $this->adminUser();
+        $subcategory = $this->expenseSubcategory($admin->company_id);
+
+        Sanctum::actingAs($admin);
+
+        $response = $this->postJson('/api/v1/expense-items', [
+            'subcategory_id' => $subcategory->id,
+            'code' => 'EXT-003D',
+            'name' => 'Role Invalid Component',
+            'mode_input' => ExpenseItem::MODE_AUTO_EXTERNAL,
+            'external_source_system' => ExpenseItem::EXTERNAL_SOURCE_PAYROLL,
+            'external_component' => ExpenseItem::PAYROLL_COMPONENT_HARVEST_TBS_TOTAL,
+            'external_role' => ExpenseItem::PAYROLL_ROLE_PEMANEN,
+        ]);
+
+        $response->assertStatus(422)
+            ->assertJsonValidationErrors(['external_role']);
+    }
+
     public function test_additional_wage_type_requires_component_key(): void
     {
         $admin = $this->adminUser();
@@ -135,13 +199,15 @@ class ExpenseItemMappingTest extends TestCase
             'mode_input' => ExpenseItem::MODE_AUTO_EXTERNAL,
             'external_source_system' => ExpenseItem::EXTERNAL_SOURCE_PAYROLL,
             'external_component' => ExpenseItem::PAYROLL_COMPONENT_BASE_PAYROLL_TOTAL,
+            'external_role' => ExpenseItem::PAYROLL_ROLE_BHL,
         ]);
 
         $response->assertStatus(200)
             ->assertJsonPath('success', true)
             ->assertJsonPath('data.mode_input', ExpenseItem::MODE_AUTO_EXTERNAL)
             ->assertJsonPath('data.external_source_system', ExpenseItem::EXTERNAL_SOURCE_PAYROLL)
-            ->assertJsonPath('data.external_component', ExpenseItem::PAYROLL_COMPONENT_BASE_PAYROLL_TOTAL);
+            ->assertJsonPath('data.external_component', ExpenseItem::PAYROLL_COMPONENT_BASE_PAYROLL_TOTAL)
+            ->assertJsonPath('data.external_role', ExpenseItem::PAYROLL_ROLE_BHL);
     }
 
     public function test_admin_can_update_payroll_estate_mapping_and_finance_cannot_modify(): void

@@ -12,11 +12,25 @@ class PdoDetail extends Model
 {
     use HasFactory, HasUuids;
 
+    private const EXTERNAL_FINGERPRINT_FIELDS = [
+        'source_system',
+        'component',
+        'component_key',
+        'role',
+    ];
+
     protected $primaryKey = 'id';
     public $incrementing = false;
     protected $keyType = 'string';
 
-    protected $appends = ['total_transferred', 'total_realized'];
+    protected $appends = [
+        'total_transferred',
+        'total_realized',
+        'is_auto_external_active',
+        'needs_pull',
+        'is_stale_external_snapshot',
+        'is_external_read_only',
+    ];
 
     protected $fillable = [
         'pdo_header_id',
@@ -85,5 +99,89 @@ class PdoDetail extends Model
             return (int) $this->realizationEntries->sum('amount');
         }
         return (int) $this->realizationEntries()->sum('amount');
+    }
+
+    public function getIsAutoExternalActiveAttribute(): bool
+    {
+        return $this->currentExpenseItem()?->mode_input === ExpenseItem::MODE_AUTO_EXTERNAL;
+    }
+
+    public function getNeedsPullAttribute(): bool
+    {
+        return $this->isDraftExternalRow()
+            && ! $this->hasSuccessfulExternalSnapshot();
+    }
+
+    public function getIsStaleExternalSnapshotAttribute(): bool
+    {
+        if (! $this->isDraftExternalRow() || ! $this->hasSuccessfulExternalSnapshot()) {
+            return false;
+        }
+
+        return $this->storedExternalMappingFingerprint() !== $this->currentExternalMappingFingerprint();
+    }
+
+    public function getIsExternalReadOnlyAttribute(): bool
+    {
+        return $this->isDraftExternalRow();
+    }
+
+    public function currentExternalMappingFingerprint(): array
+    {
+        $item = $this->currentExpenseItem();
+
+        if (! $item instanceof ExpenseItem) {
+            return [];
+        }
+
+        return [
+            'source_system' => $item->external_source_system,
+            'component' => $item->external_component,
+            'component_key' => $item->external_component_key,
+            'role' => ExpenseItem::supportsPayrollRole($item->external_component) ? $item->external_role : null,
+        ];
+    }
+
+    public function storedExternalMappingFingerprint(): array
+    {
+        $payload = is_array($this->external_payload) ? $this->external_payload : [];
+
+        $fingerprint = [];
+
+        foreach (self::EXTERNAL_FINGERPRINT_FIELDS as $field) {
+            $fingerprint[$field] = $payload[$field] ?? null;
+        }
+
+        return $fingerprint;
+    }
+
+    public function hasSuccessfulExternalSnapshot(): bool
+    {
+        return $this->external_amount_pulled_at !== null
+            && is_array($this->external_payload);
+    }
+
+    private function currentExpenseItem(): ?ExpenseItem
+    {
+        if ($this->relationLoaded('expenseItem')) {
+            return $this->expenseItem;
+        }
+
+        return $this->expenseItem()->first();
+    }
+
+    private function currentPdoHeader(): ?PdoHeader
+    {
+        if ($this->relationLoaded('pdoHeader')) {
+            return $this->pdoHeader;
+        }
+
+        return $this->pdoHeader()->first();
+    }
+
+    private function isDraftExternalRow(): bool
+    {
+        return $this->getIsAutoExternalActiveAttribute()
+            && $this->currentPdoHeader()?->isDraft() === true;
     }
 }

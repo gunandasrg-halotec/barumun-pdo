@@ -32,6 +32,7 @@ class UpdateExpenseItemRequest extends FormRequest
             'external_source_system'             => ['nullable', Rule::in(ExpenseItem::payrollSourceSystems())],
             'external_component'                 => ['nullable', Rule::in(ExpenseItem::payrollComponents())],
             'external_component_key'             => ['nullable', 'string', 'max:100'],
+            'external_role'                      => ['nullable', Rule::in(ExpenseItem::payrollRoles())],
             'split_transfer'                    => ['sometimes', 'boolean'],
             'split_transfer_plantation_unit_ids' => ['nullable', 'array'],
             'split_transfer_plantation_unit_ids.*' => ['uuid', 'exists:plantation_units,id'],
@@ -50,9 +51,10 @@ class UpdateExpenseItemRequest extends FormRequest
             $resolved      = is_string($item) ? \App\Models\ExpenseItem::find($item) : $item;
             $currentMode   = $resolved?->mode_input ?? ExpenseItem::MODE_MANUAL;
             $requestMode   = $this->input('mode_input', $currentMode);
-            $hasMappingField = $this->has('external_source_system') || $this->has('external_component') || $this->has('external_component_key');
+            $hasMappingField = $this->has('external_source_system') || $this->has('external_component') || $this->has('external_component_key') || $this->has('external_role');
             $isAutoExternal = $requestMode === ExpenseItem::MODE_AUTO_EXTERNAL;
             $isAdmin        = $this->user()?->hasRole(Role::ADMIN) ?? false;
+            $component = $this->input('external_component', $resolved?->external_component);
 
             if ($isAutoExternal) {
                 if (! $isAdmin) {
@@ -71,6 +73,10 @@ class UpdateExpenseItemRequest extends FormRequest
 
                 if ($this->input('external_component') === ExpenseItem::PAYROLL_COMPONENT_ADDITIONAL_WAGE_TYPE_TOTAL && ! $this->filled('external_component_key')) {
                     $validator->errors()->add('external_component_key', 'external_component_key wajib diisi untuk component additional_wage_type_total.');
+                }
+
+                if ($this->filled('external_role') && ! ExpenseItem::supportsPayrollRole($component)) {
+                    $validator->errors()->add('external_role', 'external_role hanya boleh diisi untuk component base_payroll_total.');
                 }
 
                 return;

@@ -59,6 +59,7 @@ export interface ExpenseSubcategory {
 }
 
 export type ModeInput = 'manual' | 'auto_external'
+export type PayrollRole = 'pemanen' | 'bhl' | 'supir' | 'pegawai'
 
 export interface ExpenseItem {
   id: string
@@ -73,6 +74,7 @@ export interface ExpenseItem {
   external_source_system?: string | null
   external_component?: string | null
   external_component_key?: string | null
+  external_role?: PayrollRole | null
   is_routine: boolean
   is_active: boolean
   notes: string | null
@@ -136,16 +138,25 @@ export interface PdoDetail {
   external_source_system?: string | null
   external_component?: string | null
   external_component_key?: string | null
+  is_auto_external_active?: boolean
+  needs_pull?: boolean
+  is_stale_external_snapshot?: boolean
+  is_external_read_only?: boolean
   external_amount_pulled_at?: string | null
   external_payload?: {
     status?: string
     amount?: number
-    employee_count?: number
+    unit?: string | null
+    volume?: number
     component?: string
     component_label?: string
+    component_key?: string | null
     period?: string
     estate_external_id?: string
     generated_at?: string | null
+    role?: PayrollRole | null
+    role_label?: string | null
+    source_system?: string | null
   } | null
   notes: string | null
   display_order: number

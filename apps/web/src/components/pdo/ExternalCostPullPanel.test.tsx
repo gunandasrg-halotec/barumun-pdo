@@ -11,6 +11,10 @@ interface HarnessResult {
     id: string
     external_amount_pulled_at: string | null
     external_component: string | null
+    is_auto_external_active?: boolean
+    needs_pull?: boolean
+    is_stale_external_snapshot?: boolean
+    is_external_read_only?: boolean
     external_payload: {
       status: string
       component_label: string
@@ -33,6 +37,10 @@ function Harness({
     id: 'detail-1',
     external_amount_pulled_at: null,
     external_component: 'base_payroll_total',
+    is_auto_external_active: true,
+    needs_pull: true,
+    is_stale_external_snapshot: false,
+    is_external_read_only: true,
     external_payload: null,
   })
   const [errorMessage, setErrorMessage] = useState<string>()
@@ -89,6 +97,10 @@ describe('ExternalCostPullPanel', () => {
         id: 'detail-1',
         external_amount_pulled_at: '2026-06-23T10:15:00+07:00',
         external_component: 'base_payroll_total',
+        is_auto_external_active: true,
+        needs_pull: false,
+        is_stale_external_snapshot: false,
+        is_external_read_only: true,
         external_payload: {
           status: 'ok',
           component_label: 'Gaji Pokok',
@@ -113,6 +125,10 @@ describe('ExternalCostPullPanel', () => {
         id: 'detail-1',
         external_amount_pulled_at: '2026-06-23T10:15:00+07:00',
         external_component: 'base_payroll_total',
+        is_auto_external_active: true,
+        needs_pull: false,
+        is_stale_external_snapshot: false,
+        is_external_read_only: true,
         external_payload: {
           status: 'empty',
           component_label: 'Gaji Pokok',
@@ -142,5 +158,34 @@ describe('ExternalCostPullPanel', () => {
 
     expect(await screen.findByText('Payroll Estate Mapping belum diatur untuk kebun ini.')).toBeInTheDocument()
     expect(screen.getByTestId('amount')).toHaveTextContent(fmt(100))
+  })
+
+  it('shows stale and needs-pull warnings from backend flags', () => {
+    render(
+      <ExternalCostPullPanel
+        errorMessage={undefined}
+        isPulling={false}
+        onPull={vi.fn()}
+        snapshot={{
+          id: 'detail-1',
+          external_amount_pulled_at: '2026-06-23T10:15:00+07:00',
+          external_component: 'base_payroll_total',
+          is_auto_external_active: true,
+          needs_pull: false,
+          is_stale_external_snapshot: true,
+          is_external_read_only: true,
+          external_payload: {
+            status: 'ok',
+            component_label: 'Gaji Pokok',
+            period: '2026-06',
+            estate_external_id: 'EST-001',
+            generated_at: '2026-06-23T10:00:00+07:00',
+          },
+        }}
+      />,
+    )
+
+    expect(screen.getByText('Snapshot external sudah stale. Ambil Data ulang sebelum submit PDO.')).toBeInTheDocument()
+    expect(screen.getByText('Nilai volume, satuan, dan jumlah dikunci selama item masih Auto External aktif.')).toBeInTheDocument()
   })
 })

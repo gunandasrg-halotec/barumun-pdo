@@ -50,7 +50,10 @@ class PdoService
 
     public function findPdo(string $id): PdoHeader
     {
-        return PdoHeader::with(['plantationUnit', 'creator', 'details.expenseItem'])->findOrFail($id);
+        $pdo = PdoHeader::with(['plantationUnit', 'creator', 'details.expenseItem'])->findOrFail($id);
+        $this->hydrateDetailsExternalState($pdo->details, $pdo);
+
+        return $pdo;
     }
 
     /**
@@ -64,6 +67,8 @@ class PdoService
             'creator',
             'details.expenseItem.subcategory.category',
         ])->findOrFail($id);
+
+        $this->hydrateDetailsExternalState($pdo->details, $pdo);
 
         // Group details by kategori → sub-kategori
         $grouped = [];
@@ -203,7 +208,9 @@ class PdoService
 
     public function listDetails(PdoHeader $pdo)
     {
-        return $pdo->details()->with(['expenseItem.subcategory.category', 'transferEntries', 'realizationEntries'])->get();
+        $details = $pdo->details()->with(['expenseItem.subcategory.category', 'transferEntries', 'realizationEntries'])->get();
+
+        return $this->hydrateDetailsExternalState($details, $pdo);
     }
 
     public function addDetail(PdoHeader $pdo, array $data, User $actor): PdoDetail
@@ -239,7 +246,7 @@ class PdoService
 
         $this->syncGrandTotal($pdo);
 
-        return $detail->load('expenseItem');
+        return $this->hydrateDetailExternalState($detail->load('expenseItem'), $pdo);
     }
 
     public function updateDetail(PdoHeader $pdo, PdoDetail $detail, array $data, User $actor): PdoDetail
@@ -260,7 +267,7 @@ class PdoService
 
         $this->syncGrandTotal($pdo);
 
-        return $detail->fresh()->load('expenseItem');
+        return $this->hydrateDetailExternalState($detail->fresh()->load('expenseItem'), $pdo);
     }
 
     public function deleteDetail(PdoHeader $pdo, PdoDetail $detail, User $actor): void
@@ -324,15 +331,18 @@ class PdoService
             estateExternalId: $pdo->plantationUnit->payroll_estate_external_id,
             component: $item->external_component,
             componentKey: $item->external_component_key,
+            role: ExpenseItem::supportsPayrollRole($item->external_component) ? $item->external_role : null,
         );
 
         if ($response->successful()) {
             return DB::transaction(function () use ($actor, $detail, $item, $pdo, $response) {
                 $old = $detail->toArray();
-                $payload = $response->json();
+                $payload = array_merge($response->json(), $detail->currentExternalMappingFingerprint());
 
                 $detail->update([
                     'amount' => (int) data_get($payload, 'amount', 0),
+                    'quantity' => (float) data_get($payload, 'volume', 0),
+                    'unit' => data_get($payload, 'unit'),
                     'external_source_system' => $item->external_source_system,
                     'external_component' => $item->external_component,
                     'external_component_key' => $item->external_component_key,
@@ -358,12 +368,14 @@ class PdoService
                     $item,
                     [
                         'amount' => (int) data_get($payload, 'amount', 0),
+                        'quantity' => (float) data_get($payload, 'volume', 0),
+                        'unit' => data_get($payload, 'unit'),
                         'payroll_status' => data_get($payload, 'status'),
                         'http_status' => $response->status(),
                     ]
                 ));
 
-                return $detail->fresh()->load('expenseItem');
+                return $this->hydrateDetailExternalState($detail->fresh()->load('expenseItem'), $pdo);
             });
         }
 
@@ -465,6 +477,7 @@ class PdoService
         string $estateExternalId,
         string $component,
         ?string $componentKey,
+        ?string $role,
     ): Response {
         $baseUrl = rtrim((string) config('services.payroll_internal_api.base_url', ''), '/');
         $token = (string) config('services.payroll_internal_api.token', '');
@@ -476,6 +489,7 @@ class PdoService
                 'estate_external_id' => $estateExternalId,
                 'component' => $component,
                 'component_key' => $componentKey,
+                'role' => $role,
             ]);
 
             abort(response()->json([
@@ -498,6 +512,7 @@ class PdoService
                     'estate_external_id' => $estateExternalId,
                     'component' => $component,
                     'component_key' => $componentKey,
+                    'role' => $role,
                 ], static fn (mixed $value): bool => $value !== null));
         } catch (ConnectionException) {
             Log::error('PDO external pull connection failed', [
@@ -506,6 +521,7 @@ class PdoService
                 'estate_external_id' => $estateExternalId,
                 'component' => $component,
                 'component_key' => $componentKey,
+                'role' => $role,
             ]);
 
             abort(response()->json([
@@ -544,6 +560,23 @@ class PdoService
             'external_source_system' => $item?->external_source_system,
             'external_component' => $item?->external_component,
             'external_component_key' => $item?->external_component_key,
+            'external_role' => ExpenseItem::supportsPayrollRole($item?->external_component) ? $item?->external_role : null,
         ], $extra);
+    }
+
+    private function hydrateDetailsExternalState(iterable $details, PdoHeader $pdo): iterable
+    {
+        foreach ($details as $detail) {
+            $this->hydrateDetailExternalState($detail, $pdo);
+        }
+
+        return $details;
+    }
+
+    private function hydrateDetailExternalState(PdoDetail $detail, PdoHeader $pdo): PdoDetail
+    {
+        $detail->setRelation('pdoHeader', $pdo);
+
+        return $detail;
     }
 }

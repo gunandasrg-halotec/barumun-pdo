@@ -35,12 +35,15 @@ class PdoExternalCostPullTest extends TestCase
             'http://payroll.test/internal/payroll-costs*' => Http::response([
                 'status' => 'ok',
                 'amount' => 1250000,
-                'employee_count' => 12,
+                'unit' => 'HK',
+                'volume' => 12,
                 'component' => ExpenseItem::PAYROLL_COMPONENT_BASE_PAYROLL_TOTAL,
                 'component_label' => 'Gaji Pokok',
                 'period' => '2026-06',
                 'estate_external_id' => 'EST-001',
                 'generated_at' => '2026-06-23T10:00:00+07:00',
+                'role' => ExpenseItem::PAYROLL_ROLE_PEMANEN,
+                'role_label' => 'Pemanen',
             ], 200),
         ]);
 
@@ -54,8 +57,12 @@ class PdoExternalCostPullTest extends TestCase
             ->assertJsonPath('data.external_source_system', ExpenseItem::EXTERNAL_SOURCE_PAYROLL)
             ->assertJsonPath('data.external_component', ExpenseItem::PAYROLL_COMPONENT_BASE_PAYROLL_TOTAL)
             ->assertJsonPath('data.external_component_key', null)
+            ->assertJsonPath('data.quantity', 12)
+            ->assertJsonPath('data.unit', 'HK')
             ->assertJsonPath('data.external_payload.amount', 1250000)
             ->assertJsonPath('data.external_payload.component_label', 'Gaji Pokok')
+            ->assertJsonPath('data.external_payload.source_system', ExpenseItem::EXTERNAL_SOURCE_PAYROLL)
+            ->assertJsonPath('data.external_payload.role', ExpenseItem::PAYROLL_ROLE_PEMANEN)
             ->assertJsonPath('grand_total', 1250000);
 
         Http::assertSent(function ($request): bool {
@@ -64,18 +71,23 @@ class PdoExternalCostPullTest extends TestCase
                 && $request['year'] === 2026
                 && $request['month'] === 6
                 && $request['estate_external_id'] === 'EST-001'
-                && $request['component'] === ExpenseItem::PAYROLL_COMPONENT_BASE_PAYROLL_TOTAL;
+                && $request['component'] === ExpenseItem::PAYROLL_COMPONENT_BASE_PAYROLL_TOTAL
+                && $request['role'] === ExpenseItem::PAYROLL_ROLE_PEMANEN;
         });
 
         $detail->refresh();
         $pdo->refresh();
 
         $this->assertSame(1250000, $detail->amount);
+        $this->assertSame(12.0, $detail->quantity);
+        $this->assertSame('HK', $detail->unit);
         $this->assertSame(ExpenseItem::EXTERNAL_SOURCE_PAYROLL, $detail->external_source_system);
         $this->assertSame(ExpenseItem::PAYROLL_COMPONENT_BASE_PAYROLL_TOTAL, $detail->external_component);
         $this->assertNull($detail->external_component_key);
         $this->assertNotNull($detail->external_amount_pulled_at);
         $this->assertSame(1250000, $pdo->grand_total_amount);
+        $this->assertSame(ExpenseItem::PAYROLL_ROLE_PEMANEN, $detail->external_payload['role']);
+        $this->assertSame(ExpenseItem::EXTERNAL_SOURCE_PAYROLL, $detail->external_payload['source_system']);
 
         $this->assertDatabaseHas('audit_logs', [
             'entity_type' => 'pdo_details',
@@ -113,7 +125,8 @@ class PdoExternalCostPullTest extends TestCase
             '*' => Http::response([
                 'status' => 'empty',
                 'amount' => 0,
-                'employee_count' => 0,
+                'unit' => 'HK',
+                'volume' => 0,
                 'component' => ExpenseItem::PAYROLL_COMPONENT_BASE_PAYROLL_TOTAL,
                 'component_label' => 'Gaji Pokok',
                 'period' => '2026-06',
@@ -128,12 +141,16 @@ class PdoExternalCostPullTest extends TestCase
 
         $response->assertOk()
             ->assertJsonPath('data.amount', 0)
+            ->assertJsonPath('data.quantity', 0)
+            ->assertJsonPath('data.unit', 'HK')
             ->assertJsonPath('data.external_payload.status', 'empty')
             ->assertJsonPath('grand_total', 0);
 
         $detail->refresh();
 
         $this->assertSame(0, $detail->amount);
+        $this->assertSame(0.0, $detail->quantity);
+        $this->assertSame('HK', $detail->unit);
         $this->assertNotNull($detail->external_amount_pulled_at);
     }
 
@@ -317,7 +334,8 @@ class PdoExternalCostPullTest extends TestCase
             '*' => Http::response([
                 'status' => 'ok',
                 'amount' => 1750000,
-                'employee_count' => 14,
+                'unit' => 'HK',
+                'volume' => 14,
                 'component' => ExpenseItem::PAYROLL_COMPONENT_BASE_PAYROLL_TOTAL,
                 'component_label' => 'Gaji Pokok',
                 'period' => '2026-06',
@@ -337,6 +355,8 @@ class PdoExternalCostPullTest extends TestCase
         $pdo->refresh();
 
         $this->assertSame(1750000, $detail->amount);
+        $this->assertSame(14.0, $detail->quantity);
+        $this->assertSame('HK', $detail->unit);
         $this->assertSame('2026-06', $detail->external_payload['period']);
         $this->assertSame(1750000, $pdo->grand_total_amount);
         $this->assertSame(1, AuditLog::query()->where('entity_type', 'pdo_details')->where('entity_id', $detail->id)->where('action', 'EXTERNAL_PULL')->count());
@@ -356,7 +376,8 @@ class PdoExternalCostPullTest extends TestCase
             'http://payroll.test/internal/payroll-costs*' => Http::response([
                 'status' => 'ok',
                 'amount' => 1250000,
-                'employee_count' => 12,
+                'unit' => 'HK',
+                'volume' => 12,
                 'component' => ExpenseItem::PAYROLL_COMPONENT_BASE_PAYROLL_TOTAL,
                 'component_label' => 'Gaji Pokok',
                 'period' => '2026-06',
@@ -372,6 +393,46 @@ class PdoExternalCostPullTest extends TestCase
             ->assertJsonPath('data.amount', 1250000);
 
         Http::assertSentCount(1);
+    }
+
+    public function test_detail_flags_show_stale_snapshot_when_mapping_changes(): void
+    {
+        $kerani = $this->keraniUser();
+        $pdo = $this->draftPdo($kerani);
+        $detail = $this->autoExternalDetail($pdo, externalRole: ExpenseItem::PAYROLL_ROLE_PEMANEN);
+
+        $detail->update([
+            'amount' => 700000,
+            'quantity' => 7,
+            'unit' => 'HK',
+            'external_source_system' => ExpenseItem::EXTERNAL_SOURCE_PAYROLL,
+            'external_component' => ExpenseItem::PAYROLL_COMPONENT_BASE_PAYROLL_TOTAL,
+            'external_payload' => [
+                'status' => 'ok',
+                'amount' => 700000,
+                'unit' => 'HK',
+                'volume' => 7,
+                'component' => ExpenseItem::PAYROLL_COMPONENT_BASE_PAYROLL_TOTAL,
+                'component_label' => 'Gaji Pokok',
+                'source_system' => ExpenseItem::EXTERNAL_SOURCE_PAYROLL,
+                'component_key' => null,
+                'role' => ExpenseItem::PAYROLL_ROLE_PEMANEN,
+            ],
+            'external_amount_pulled_at' => now(),
+        ]);
+
+        $detail->expenseItem()->update([
+            'external_role' => ExpenseItem::PAYROLL_ROLE_BHL,
+        ]);
+
+        Sanctum::actingAs($kerani);
+
+        $this->getJson("/api/v1/pdo/{$pdo->id}/details")
+            ->assertOk()
+            ->assertJsonPath('data.0.is_auto_external_active', true)
+            ->assertJsonPath('data.0.needs_pull', false)
+            ->assertJsonPath('data.0.is_stale_external_snapshot', true)
+            ->assertJsonPath('data.0.is_external_read_only', true);
     }
 
     private function setPayrollApiConfig(?string $baseUrl, ?string $token): void
@@ -409,7 +470,7 @@ class PdoExternalCostPullTest extends TestCase
         ]);
     }
 
-    private function autoExternalDetail(PdoHeader $pdo): PdoDetail
+    private function autoExternalDetail(PdoHeader $pdo, ?string $externalRole = ExpenseItem::PAYROLL_ROLE_PEMANEN): PdoDetail
     {
         $category = ExpenseCategory::factory()->create(['company_id' => $pdo->company_id]);
         $subcategory = ExpenseSubcategory::factory()->create(['category_id' => $category->id]);
@@ -419,6 +480,7 @@ class PdoExternalCostPullTest extends TestCase
             'external_source_system' => ExpenseItem::EXTERNAL_SOURCE_PAYROLL,
             'external_component' => ExpenseItem::PAYROLL_COMPONENT_BASE_PAYROLL_TOTAL,
             'external_component_key' => null,
+            'external_role' => $externalRole,
         ]);
 
         return PdoDetail::factory()->create([

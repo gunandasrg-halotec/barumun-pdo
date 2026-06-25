@@ -136,6 +136,31 @@ class PdoApprovalServiceTest extends TestCase
         $this->assertEquals(PdoHeader::STATUS_SUBMITTED, $updated->status);
     }
 
+    public function test_cannot_submit_if_auto_external_detail_snapshot_is_stale(): void
+    {
+        $pdo = $this->makePdoWithAutoExternalDetail(
+            PdoHeader::STATUS_DRAFT,
+            amount: 1250000,
+            externalAmountPulledAt: now(),
+            externalPayload: [
+                'status' => 'ok',
+                'amount' => 1250000,
+                'source_system' => ExpenseItem::EXTERNAL_SOURCE_PAYROLL,
+                'component' => ExpenseItem::PAYROLL_COMPONENT_BASE_PAYROLL_TOTAL,
+                'component_key' => null,
+                'role' => ExpenseItem::PAYROLL_ROLE_PEMANEN,
+            ],
+        );
+
+        $pdo->details()->firstOrFail()->expenseItem()->update([
+            'external_role' => ExpenseItem::PAYROLL_ROLE_BHL,
+        ]);
+
+        $this->expectException(\Illuminate\Http\Exceptions\HttpResponseException::class);
+
+        $this->service->submit($pdo->fresh(), '2026-06-01', $this->kerani);
+    }
+
     // ─────────────────────────────────────────────────────
     // APPROVE CHAIN
     // ─────────────────────────────────────────────────────
@@ -306,6 +331,7 @@ class PdoApprovalServiceTest extends TestCase
             'mode_input' => ExpenseItem::MODE_AUTO_EXTERNAL,
             'external_source_system' => ExpenseItem::EXTERNAL_SOURCE_PAYROLL,
             'external_component' => ExpenseItem::PAYROLL_COMPONENT_BASE_PAYROLL_TOTAL,
+            'external_role' => ExpenseItem::PAYROLL_ROLE_PEMANEN,
         ]);
 
         $detail->update([

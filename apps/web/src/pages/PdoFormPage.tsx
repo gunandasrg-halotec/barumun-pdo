@@ -233,6 +233,8 @@ export function PdoFormPage() {
       const result = await pullExternalCost.mutateAsync(detailId)
 
       setValue(`details.${idx}.amount`, Number(result.detail.amount ?? 0))
+      setValue(`details.${idx}.quantity`, result.detail.quantity ?? null)
+      setValue(`details.${idx}.unit`, result.detail.unit ?? null)
       setDetailSnapshots((prev) => {
         const next = [...prev]
         next[idx] = result.detail
@@ -379,8 +381,9 @@ export function PdoFormPage() {
                 const filteredItems = items?.filter((i) => i.subcategory_id === sel.subcategoryId) ?? []
                 const itemId = detailValues?.[idx]?.expense_item_id ?? ''
                 const item = items?.find((entry) => entry.id === itemId)
-                const isAutoExternal = item?.mode_input === 'auto_external'
                 const snapshot = detailSnapshots[idx]
+                const isAutoExternal = snapshot?.is_auto_external_active ?? item?.mode_input === 'auto_external'
+                const isExternalReadOnly = snapshot?.is_external_read_only ?? item?.mode_input === 'auto_external'
                 const pullError = pullErrors[idx]
                 const isPulling = pullingDetailId === snapshot?.id && pullExternalCost.isPending
 
@@ -478,7 +481,7 @@ export function PdoFormPage() {
                           })}
                           className="input-base"
                           step="0.01"
-                          disabled={isAutoExternal}
+                          disabled={isExternalReadOnly}
                         />
                       </div>
                       <div>
@@ -486,7 +489,7 @@ export function PdoFormPage() {
                         <input
                           {...register(`details.${idx}.unit`)}
                           className="input-base"
-                          disabled={isAutoExternal}
+                          disabled={isExternalReadOnly}
                         />
                       </div>
                       <div>
@@ -497,7 +500,7 @@ export function PdoFormPage() {
                             onChange: () => calculateAmount(idx),
                           })}
                           className="input-base"
-                          disabled={isAutoExternal}
+                          disabled={isExternalReadOnly}
                         />
                       </div>
                       <div>

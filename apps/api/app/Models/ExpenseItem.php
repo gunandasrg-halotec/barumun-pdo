@@ -33,6 +33,11 @@ class ExpenseItem extends Model
     const PAYROLL_COMPONENT_ADDITIONAL_WAGES_TOTAL = 'additional_wages_total';
     const PAYROLL_COMPONENT_ADDITIONAL_WAGE_TYPE_TOTAL = 'additional_wage_type_total';
 
+    const PAYROLL_ROLE_PEMANEN = 'pemanen';
+    const PAYROLL_ROLE_BHL = 'bhl';
+    const PAYROLL_ROLE_SUPIR = 'supir';
+    const PAYROLL_ROLE_PEGAWAI = 'pegawai';
+
     /** @var array<int,string> */
     public const PAYROLL_COMPONENT_OPTIONS = [
         self::PAYROLL_COMPONENT_HARVEST_TBS_TOTAL,
@@ -43,6 +48,14 @@ class ExpenseItem extends Model
         self::PAYROLL_COMPONENT_BASE_PAYROLL_TOTAL,
         self::PAYROLL_COMPONENT_ADDITIONAL_WAGES_TOTAL,
         self::PAYROLL_COMPONENT_ADDITIONAL_WAGE_TYPE_TOTAL,
+    ];
+
+    /** @var array<int,string> */
+    public const PAYROLL_ROLE_OPTIONS = [
+        self::PAYROLL_ROLE_PEMANEN,
+        self::PAYROLL_ROLE_BHL,
+        self::PAYROLL_ROLE_SUPIR,
+        self::PAYROLL_ROLE_PEGAWAI,
     ];
 
     protected $fillable = [
@@ -56,6 +69,7 @@ class ExpenseItem extends Model
         'external_source_system',
         'external_component',
         'external_component_key',
+        'external_role',
         'split_transfer',
         'split_transfer_plantation_unit_ids',
         'is_routine',
@@ -74,9 +88,19 @@ class ExpenseItem extends Model
         return [self::EXTERNAL_SOURCE_PAYROLL];
     }
 
+    public static function payrollRoles(): array
+    {
+        return self::PAYROLL_ROLE_OPTIONS;
+    }
+
     public static function requiresComponentKey(string $component): bool
     {
         return $component === self::PAYROLL_COMPONENT_ADDITIONAL_WAGE_TYPE_TOTAL;
+    }
+
+    public static function supportsPayrollRole(?string $component): bool
+    {
+        return $component === self::PAYROLL_COMPONENT_BASE_PAYROLL_TOTAL;
     }
 
     protected function casts(): array

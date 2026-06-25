@@ -248,6 +248,17 @@ class MasterDataService
         // BR-MASTER-003: Kode unik per subcategory
         $this->assertNoDuplicateItemCode($data['code'], $data['subcategory_id']);
 
+        $modeInput = $data['mode_input'] ?? ExpenseItem::MODE_MANUAL;
+
+        if ($modeInput !== ExpenseItem::MODE_AUTO_EXTERNAL) {
+            $data['external_source_system'] = null;
+            $data['external_component'] = null;
+            $data['external_component_key'] = null;
+            $data['external_role'] = null;
+        } elseif (! ExpenseItem::supportsPayrollRole($data['external_component'] ?? null)) {
+            $data['external_role'] = null;
+        }
+
         $item = ExpenseItem::create(array_merge(['mode_input' => ExpenseItem::MODE_MANUAL], $data));
 
         AuditLog::record(
@@ -276,6 +287,9 @@ class MasterDataService
             $data['external_source_system'] = null;
             $data['external_component'] = null;
             $data['external_component_key'] = null;
+            $data['external_role'] = null;
+        } elseif (! ExpenseItem::supportsPayrollRole($data['external_component'] ?? $item->external_component)) {
+            $data['external_role'] = null;
         }
 
         // BR-MASTER-005: perubahan is_routine hanya berlaku ke depan (tidak ada aksi khusus —

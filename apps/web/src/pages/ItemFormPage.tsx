@@ -22,6 +22,19 @@ const schema = z.object({
     z.number().nullable().optional(),
   ),
   mode_input:                   z.enum(['manual', 'auto_external']),
+  external_source_system:       z.enum(['payroll']).nullable().optional(),
+  external_component:           z.enum([
+    'harvest_tbs_total',
+    'relayed_tbs_total',
+    'harvest_bonus_total',
+    'loose_fruit_total',
+    'maintenance_total',
+    'base_payroll_total',
+    'additional_wages_total',
+    'additional_wage_type_total',
+  ]).nullable().optional(),
+  external_component_key:       z.string().nullable().optional(),
+  external_role:                z.enum(['pemanen', 'bhl', 'supir', 'pegawai']).nullable().optional(),
   split_transfer:                      z.boolean(),
   split_transfer_plantation_unit_ids:  z.array(z.string().uuid()).nullable().optional(),
   is_routine:                          z.boolean(),
@@ -31,6 +44,30 @@ const schema = z.object({
 })
 
 type Form = z.infer<typeof schema>
+
+const payrollComponents = [
+  { value: 'harvest_tbs_total', label: 'Harvest TBS Total' },
+  { value: 'relayed_tbs_total', label: 'Relayed TBS Total' },
+  { value: 'harvest_bonus_total', label: 'Harvest Bonus Total' },
+  { value: 'loose_fruit_total', label: 'Loose Fruit Total' },
+  { value: 'maintenance_total', label: 'Maintenance Total' },
+  { value: 'base_payroll_total', label: 'Base Payroll Total' },
+  { value: 'additional_wages_total', label: 'Additional Wages Total' },
+  { value: 'additional_wage_type_total', label: 'Additional Wage Type Total' },
+] as const
+
+const payrollRoles = [
+  { value: 'pemanen', label: 'Pemanen' },
+  { value: 'bhl', label: 'BHL' },
+  { value: 'supir', label: 'Supir' },
+  { value: 'pegawai', label: 'Pegawai' },
+] as const
+
+type PayrollComponent = typeof payrollComponents[number]['value']
+
+function isPayrollComponent(value: unknown): value is PayrollComponent {
+  return payrollComponents.some((component) => component.value === value)
+}
 
 export function ItemFormPage() {
   const { id }   = useParams<{ id: string }>()
@@ -60,17 +97,36 @@ export function ItemFormPage() {
 
   const { register, handleSubmit, reset, setError, control, setValue, formState: { errors } } = useForm<Form>({
     resolver: zodResolver(schema),
-    defaultValues: { mode_input: 'manual', split_transfer: false, split_transfer_plantation_unit_ids: null, is_routine: true, is_active: true, routine_plantation_unit_ids: null },
+    defaultValues: {
+      mode_input: 'manual',
+      external_source_system: null,
+      external_component: null,
+      external_component_key: null,
+      external_role: null,
+      split_transfer: false,
+      split_transfer_plantation_unit_ids: null,
+      is_routine: true,
+      is_active: true,
+      routine_plantation_unit_ids: null,
+    },
   })
 
   const isRoutine      = useWatch({ control, name: 'is_routine' })
   const isSplit        = useWatch({ control, name: 'split_transfer' })
+  const modeInput      = useWatch({ control, name: 'mode_input' })
+  const extComponent   = useWatch({ control, name: 'external_component' })
   const routineUnitIds = useWatch({ control, name: 'routine_plantation_unit_ids' })
   const splitUnitIds   = useWatch({ control, name: 'split_transfer_plantation_unit_ids' })
+  const isAutoExternal = modeInput === 'auto_external'
+  const needsComponentKey = extComponent === 'additional_wage_type_total'
 
   useEffect(() => {
     if (existing) {
       const ext = existing as unknown as {
+        external_source_system?: string | null
+        external_component?: string | null
+        external_component_key?: string | null
+        external_role?: Form['external_role']
         split_transfer?: boolean
         split_transfer_plantation_unit_ids?: string[] | null
         routine_plantation_unit_ids?: string[] | null
@@ -78,12 +134,36 @@ export function ItemFormPage() {
       reset({
         ...existing,
         notes: existing.notes ?? '',
+        external_source_system: ext.external_source_system === 'payroll' ? 'payroll' : null,
+        external_component: isPayrollComponent(ext.external_component) ? ext.external_component : null,
+        external_component_key: ext.external_component_key ?? null,
+        external_role: ext.external_role ?? null,
         split_transfer:                     ext.split_transfer ?? false,
         split_transfer_plantation_unit_ids: ext.split_transfer_plantation_unit_ids ?? null,
         routine_plantation_unit_ids:        ext.routine_plantation_unit_ids ?? null,
       })
     }
   }, [existing, reset])
+
+  useEffect(() => {
+    if (isAutoExternal) {
+      setValue('external_source_system', 'payroll')
+      return
+    }
+
+    setValue('external_source_system', null)
+    setValue('external_component', null)
+    setValue('external_component_key', null)
+    setValue('external_role', null)
+  }, [isAutoExternal, setValue])
+
+  useEffect(() => {
+    if (extComponent === 'base_payroll_total') {
+      return
+    }
+
+    setValue('external_role', null)
+  }, [extComponent, setValue])
 
   const toggleSplitUnit = (id: string) => {
     const current = splitUnitIds ?? []
@@ -102,10 +182,30 @@ export function ItemFormPage() {
   }
 
   const save = useMutation({
-    mutationFn: (data: Form) =>
-      isEdit
-        ? api.put(`/expense-items/${id}`, data)
-        : api.post('/expense-items', data),
+    mutationFn: (data: Form) => {
+      const payload: Form = data.mode_input === 'manual'
+        ? {
+          ...data,
+          external_source_system: undefined,
+          external_component: undefined,
+          external_component_key: undefined,
+          external_role: undefined,
+        }
+        : {
+          ...data,
+          external_source_system: data.external_source_system ?? 'payroll',
+          external_component_key: data.external_component === 'additional_wage_type_total'
+            ? data.external_component_key
+            : null,
+          external_role: data.external_component === 'base_payroll_total'
+            ? data.external_role ?? null
+            : null,
+        }
+
+      return isEdit
+        ? api.put(`/expense-items/${id}`, payload)
+        : api.post('/expense-items', payload)
+    },
     onSuccess: () => {
       toast(isEdit ? 'Item berhasil diperbarui' : 'Item berhasil dibuat')
       qc.invalidateQueries({ queryKey: ['items'] })
@@ -115,7 +215,23 @@ export function ItemFormPage() {
       type ApiErr = { response?: { data?: { error?: { details?: { field: string; message: string }[] } } } }
       const details = (err as ApiErr)?.response?.data?.error?.details
       if (details?.length) {
-        const validFields = new Set<string>(['code', 'name', 'subcategory_id', 'default_account_number', 'default_unit', 'default_rate', 'mode_input', 'split_transfer', 'is_routine', 'is_active', 'notes'])
+        const validFields = new Set<string>([
+          'code',
+          'name',
+          'subcategory_id',
+          'default_account_number',
+          'default_unit',
+          'default_rate',
+          'mode_input',
+          'external_source_system',
+          'external_component',
+          'external_component_key',
+          'external_role',
+          'split_transfer',
+          'is_routine',
+          'is_active',
+          'notes',
+        ])
         let handled = false
         for (const { field, message } of details) {
           if (validFields.has(field)) {
@@ -187,7 +303,56 @@ export function ItemFormPage() {
             <option value="manual">Manual</option>
             <option value="auto_external">Auto External</option>
           </select>
+          {errors.mode_input && <p className="field-error">{errors.mode_input.message}</p>}
         </div>
+
+        {isAutoExternal && (
+          <div className="border border-blue-200 rounded-card p-4 bg-blue-50 space-y-4">
+            <div>
+              <label className="label">Sumber External</label>
+              <select {...register('external_source_system')} className="input-base">
+                <option value="payroll">Payroll</option>
+              </select>
+              {errors.external_source_system && <p className="field-error">{errors.external_source_system.message}</p>}
+            </div>
+
+            <div>
+              <label className="label">Component Payroll</label>
+              <select {...register('external_component')} className="input-base">
+                <option value="">Pilih component...</option>
+                {payrollComponents.map((component) => (
+                  <option key={component.value} value={component.value}>{component.label}</option>
+                ))}
+              </select>
+              {errors.external_component && <p className="field-error">{errors.external_component.message}</p>}
+            </div>
+
+            {needsComponentKey && (
+              <div>
+                <label className="label">Component Key</label>
+                <input
+                  {...register('external_component_key')}
+                  className="input-base"
+                  placeholder="Kode jenis upah tambahan"
+                />
+                {errors.external_component_key && <p className="field-error">{errors.external_component_key.message}</p>}
+              </div>
+            )}
+
+            {extComponent === 'base_payroll_total' && (
+              <div>
+                <label className="label">Role Payroll (opsional)</label>
+                <select {...register('external_role')} className="input-base">
+                  <option value="">Semua Role</option>
+                  {payrollRoles.map((role) => (
+                    <option key={role.value} value={role.value}>{role.label}</option>
+                  ))}
+                </select>
+                {errors.external_role && <p className="field-error">{errors.external_role.message}</p>}
+              </div>
+            )}
+        </div>
+        )}
 
         <div>
           <label className="label">Catatan</label>
