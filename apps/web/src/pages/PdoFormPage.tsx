@@ -511,8 +511,8 @@ export function PdoFormPage() {
                           type="number"
                           {...register(`details.${idx}.amount`)}
                           data-testid={`detail-amount-${idx}`}
-                          className="input-base font-bold"
-                          disabled={true}
+                          className="input-base font-bold bg-[#f7faf7] cursor-not-allowed"
+                          readOnly
                         />
                         {errors.details?.[idx]?.amount && (
                           <p className="field-error">{errors.details[idx]?.amount?.message}</p>
