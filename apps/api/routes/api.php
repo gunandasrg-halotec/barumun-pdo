@@ -8,6 +8,7 @@ use App\Http\Controllers\PDO\PdoHeaderController;
 use App\Http\Controllers\PDO\PdoDetailController;
 use App\Http\Controllers\PDO\PdoApprovalController;
 use App\Http\Controllers\PDO\PdoCloseController;
+use App\Http\Controllers\PDO\PdoDetailAttachmentController;
 use App\Http\Controllers\PdoSupplementary\PdoSupplementaryController;
 use App\Http\Controllers\PdoSupplementary\PdoSupplementaryMergeController;
 use App\Http\Controllers\Transfer\TransferEntryController;
@@ -92,7 +93,14 @@ Route::prefix('v1')->middleware(['auth:sanctum', 'ensure.unit.access'])->group(f
     Route::prefix('pdo-details/{detail}')->group(function () {
         Route::get('transfers',  [TransferEntryController::class, 'index']);
         Route::post('transfers', [TransferEntryController::class, 'store'])->middleware('check.pdo.status');
+        Route::get('attachments',  [PdoDetailAttachmentController::class, 'index']);
+        Route::post('attachments', [PdoDetailAttachmentController::class, 'store']);
     });
+
+    // ── Lampiran item biaya ───────────────────────────
+    Route::get('pdo-detail-attachments/{attachment}/download', [PdoDetailAttachmentController::class, 'download'])
+        ->name('pdo-detail-attachments.download');
+    Route::delete('pdo-detail-attachments/{attachment}', [PdoDetailAttachmentController::class, 'destroy']);
     Route::get('transfer-entries',              [TransferEntryController::class, 'all']);
     Route::get('transfer-entries/pdo-summary', [TransferEntryController::class, 'pdoSummaryList']);
     Route::put('transfer-entries/{entry}', [TransferEntryController::class, 'update'])->middleware('check.pdo.status');

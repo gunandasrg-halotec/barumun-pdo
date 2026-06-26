@@ -103,6 +103,11 @@ class PdoDetail extends Model
         return $this->hasMany(RealizationEntry::class);
     }
 
+    public function attachments(): HasMany
+    {
+        return $this->hasMany(PdoDetailAttachment::class);
+    }
+
     /** Total transfer yang sudah masuk ke item ini. */
     public function getTotalTransferredAttribute(): int
     {
