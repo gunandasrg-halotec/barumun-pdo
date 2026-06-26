@@ -93,7 +93,7 @@ export function PdoFormPage() {
     },
   })
 
-  const { fields, append, prepend, remove, replace } = useFieldArray({ control, name: 'details' })
+  const { fields, append, prepend, remove } = useFieldArray({ control, name: 'details' })
 
   const detailValues = watch('details')
   const totalAmount  = detailValues?.reduce((sum, d) => sum + (Number(d.amount) || 0), 0) ?? 0
@@ -308,35 +308,42 @@ export function PdoFormPage() {
     window.scrollTo({ top: 0, behavior: 'smooth' })
   }
 
-  // Re-sort all items by category → sub-kategori display_order, then collapse all groups
+  // Clear _isNew so new items move into their category groups.
+  // Does NOT call replace() — reordering field array after user filled forms
+  // causes RHF to lose form value sync and breaks handleSubmit.
+  // Visual ordering is handled by catMap sort in the render; display_order is
+  // updated via setValue so the backend persists the correct order.
   const handleRegroup = useCallback(() => {
-    const indexed = fields.map((_, idx) => ({
-      values:   getValues(`details.${idx}`),
-      sel:      rowSelections[idx]   ?? { categoryId: '', subcategoryId: '' },
-      snapshot: detailSnapshots[idx] ?? {},
-    }))
+    // Build sorted order based on category/subcategory display_order
+    const sortedByIdx = fields
+      .map((_, idx) => ({
+        idx,
+        sel: rowSelections[idx] ?? { categoryId: '', subcategoryId: '' },
+      }))
+      .sort((a, b) => {
+        if (!a.sel.categoryId && !b.sel.categoryId) return 0
+        if (!a.sel.categoryId) return 1
+        if (!b.sel.categoryId) return -1
+        const catA = categories?.find((c) => c.id === a.sel.categoryId)
+        const catB = categories?.find((c) => c.id === b.sel.categoryId)
+        const catCmp = (catA?.display_order ?? 999) - (catB?.display_order ?? 999)
+        if (catCmp !== 0) return catCmp
+        const subA = subcategories?.find((s) => s.id === a.sel.subcategoryId)
+        const subB = subcategories?.find((s) => s.id === b.sel.subcategoryId)
+        return (subA?.display_order ?? 999) - (subB?.display_order ?? 999)
+      })
 
-    indexed.sort((a, b) => {
-      if (!a.sel.categoryId && !b.sel.categoryId) return 0
-      if (!a.sel.categoryId) return 1
-      if (!b.sel.categoryId) return -1
-      const catA = categories?.find((c) => c.id === a.sel.categoryId)
-      const catB = categories?.find((c) => c.id === b.sel.categoryId)
-      const catCmp = (catA?.display_order ?? 999) - (catB?.display_order ?? 999)
-      if (catCmp !== 0) return catCmp
-      const subA = subcategories?.find((s) => s.id === a.sel.subcategoryId)
-      const subB = subcategories?.find((s) => s.id === b.sel.subcategoryId)
-      return (subA?.display_order ?? 999) - (subB?.display_order ?? 999)
+    // Update display_order values so backend stores correct order
+    sortedByIdx.forEach(({ idx }, position) => {
+      setValue(`details.${idx}.display_order`, position)
     })
 
-    replace(indexed.map((i) => i.values))
-    setRowSelections(indexed.map((i) => i.sel))
-    // Clear _isNew so regrouped items render inside their category groups
-    setDetailSnapshots(indexed.map((i) => ({ ...i.snapshot, _isNew: undefined })))
-    setPullErrors({})
+    // Clear _isNew → moves new items from ungrouped section into their category groups
+    setDetailSnapshots((prev) => prev.map((s) => ({ ...s, _isNew: undefined })))
 
+    // Collapse all groups
     const keys = new Set<string>()
-    indexed.forEach(({ sel }) => {
+    rowSelections.forEach((sel) => {
       if (sel.categoryId) {
         keys.add(`cat_${sel.categoryId}`)
         if (sel.subcategoryId) keys.add(`sub_${sel.categoryId}_${sel.subcategoryId}`)
@@ -344,7 +351,7 @@ export function PdoFormPage() {
     })
     setCollapsedGroups(keys)
     setTimeout(() => window.scrollTo({ top: 0, behavior: 'smooth' }), 100)
-  }, [fields, rowSelections, detailSnapshots, categories, subcategories, getValues, replace])
+  }, [fields, rowSelections, categories, subcategories, setValue])
 
   const toggleGroup = useCallback((key: string) => {
     setCollapsedGroups((prev) => {
