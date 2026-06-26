@@ -301,7 +301,7 @@ export function PdoFormPage() {
     })
   }
 
-  // Append row + empty cascade state
+  // Append row + empty cascade state + scroll ke row baru
   const handleAppend = () => {
     append({
       expense_item_id: '', description: '', quantity: null,
@@ -309,6 +309,10 @@ export function PdoFormPage() {
     })
     setRowSelections((prev) => [...prev, { categoryId: '', subcategoryId: '' }])
     setDetailSnapshots((prev) => [...prev, {}])
+    setTimeout(() => {
+      const rows = document.querySelectorAll('[data-detail-row]')
+      rows[rows.length - 1]?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    }, 100)
   }
 
   return (
@@ -391,7 +395,7 @@ export function PdoFormPage() {
                 const isPulling = pullingDetailId === snapshot?.id && pullExternalCost.isPending
 
                 return (
-                  <div key={field.id} className="border border-line rounded-card p-4 relative">
+                  <div key={field.id} data-detail-row className="border border-line rounded-card p-4 relative">
                     <button
                       type="button"
                       className="absolute top-3 right-3 text-muted hover:text-red"
