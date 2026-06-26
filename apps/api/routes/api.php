@@ -32,9 +32,6 @@ Route::prefix('v1')->group(function () {
 
 });
 
-// Dummy login route untuk welcome.blade.php yang reference route('login')
-Route::get('login', fn () => redirect('/api/v1'))->name('login');
-
 // ─────────────────────────────────────────────────────
 // PROTECTED ROUTES (butuh auth + unit access middleware)
 // ─────────────────────────────────────────────────────
