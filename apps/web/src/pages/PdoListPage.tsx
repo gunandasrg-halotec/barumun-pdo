@@ -12,7 +12,7 @@ import { fmt, fmtPeriode, fmtDate } from '@/lib/format'
 import { isKerani, isMgrKeu, canDeleteDraftPdo } from '@/lib/auth'
 import { useToastStore } from '@/store/toast.store'
 import type { ApiResponse, PdoHeader, PlantationUnit, RoleCode } from '@/types'
-import { Search, FileDown } from 'lucide-react'
+import { Search } from 'lucide-react'
 
 // ─── types untuk modal transfer detail ────────────────────────────────────────
 
@@ -180,9 +180,6 @@ export function PdoListPage() {
           </select>
         )}
 
-        <Button variant="secondary" size="sm">
-          <FileDown className="w-4 h-4" /> Export Excel
-        </Button>
       </div>
 
       {/* Table */}
