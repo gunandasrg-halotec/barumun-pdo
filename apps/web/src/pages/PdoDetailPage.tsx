@@ -98,7 +98,7 @@ export function PdoDetailPage() {
   const saldo        = totalTransf - totalReal
 
   return (
-    <div className="max-w-4xl">
+    <div>
       {/* Hero */}
       <div className="flex items-start justify-between mb-6">
         <div>
