@@ -182,33 +182,57 @@ class PdoService
                 newValues: $pdo->fresh()->toArray()
             );
 
-            // Update masing-masing detail jika dikirim
-            foreach ($data['details'] ?? [] as $detailData) {
-                $detail = PdoDetail::where('id', $detailData['id'])
-                    ->where('pdo_header_id', $pdo->id)
-                    ->first();
+            // Sync details: upsert (create/update) + delete absent rows
+            if (array_key_exists('details', $data)) {
+                $sentIds = collect($data['details'])->pluck('id')->filter()->values();
 
-                if (! $detail) continue;
+                // Delete details not present in the payload
+                foreach ($pdo->details()->whereNotIn('id', $sentIds)->get() as $d) {
+                    AuditLog::record(actor: $actor, entityType: 'pdo_details', entityId: $d->id,
+                        action: 'DELETE', oldValues: $d->toArray(), newValues: null);
+                    $d->delete();
+                }
 
-                $oldDetail = $detail->toArray();
-                $detail->update([
-                    'description'   => $detailData['description']   ?? $detail->description,
-                    'quantity'      => array_key_exists('quantity', $detailData) ? $detailData['quantity'] : $detail->quantity,
-                    'unit'          => array_key_exists('unit', $detailData) ? $detailData['unit'] : $detail->unit,
-                    'rate'          => array_key_exists('rate', $detailData) ? $detailData['rate'] : $detail->rate,
-                    'amount'        => $detailData['amount'] ?? $detail->amount,
-                    'notes'         => $detailData['notes'] ?? $detail->notes,
-                    'display_order' => $detailData['display_order'] ?? $detail->display_order,
-                ]);
-
-                AuditLog::record(
-                    actor: $actor,
-                    entityType: 'pdo_details',
-                    entityId: $detail->id,
-                    action: 'UPDATE',
-                    oldValues: $oldDetail,
-                    newValues: $detail->fresh()->toArray()
-                );
+                foreach ($data['details'] as $detailData) {
+                    if (empty($detailData['id'])) {
+                        // New item — create
+                        $item = \App\Models\ExpenseItem::findOrFail($detailData['expense_item_id']);
+                        $newDetail = PdoDetail::create([
+                            'pdo_header_id'          => $pdo->id,
+                            'expense_item_id'        => $item->id,
+                            'account_number'         => $item->default_account_number,
+                            'description'            => $detailData['description'] ?? $item->name,
+                            'quantity'               => $detailData['quantity'] ?? null,
+                            'unit'                   => $detailData['unit'] ?? $item->default_unit,
+                            'rate'                   => $detailData['rate'] ?? $item->default_rate,
+                            'amount'                 => $detailData['amount'] ?? 0,
+                            'external_source_system' => $item->mode_input === \App\Models\ExpenseItem::MODE_AUTO_EXTERNAL ? $item->external_source_system : null,
+                            'external_component'     => $item->mode_input === \App\Models\ExpenseItem::MODE_AUTO_EXTERNAL ? $item->external_component : null,
+                            'external_component_key' => $item->mode_input === \App\Models\ExpenseItem::MODE_AUTO_EXTERNAL ? $item->external_component_key : null,
+                            'notes'                  => $detailData['notes'] ?? null,
+                            'display_order'          => $detailData['display_order'] ?? $this->nextDisplayOrder($pdo),
+                        ]);
+                        AuditLog::record(actor: $actor, entityType: 'pdo_details', entityId: $newDetail->id,
+                            action: 'CREATE', oldValues: null, newValues: $newDetail->toArray());
+                    } else {
+                        // Existing item — update
+                        $detail = PdoDetail::where('id', $detailData['id'])
+                            ->where('pdo_header_id', $pdo->id)->first();
+                        if (! $detail) continue;
+                        $oldDetail = $detail->toArray();
+                        $detail->update([
+                            'description'   => $detailData['description']   ?? $detail->description,
+                            'quantity'      => array_key_exists('quantity', $detailData) ? $detailData['quantity'] : $detail->quantity,
+                            'unit'          => array_key_exists('unit', $detailData) ? $detailData['unit'] : $detail->unit,
+                            'rate'          => array_key_exists('rate', $detailData) ? $detailData['rate'] : $detail->rate,
+                            'amount'        => $detailData['amount'] ?? $detail->amount,
+                            'notes'         => $detailData['notes'] ?? $detail->notes,
+                            'display_order' => $detailData['display_order'] ?? $detail->display_order,
+                        ]);
+                        AuditLog::record(actor: $actor, entityType: 'pdo_details', entityId: $detail->id,
+                            action: 'UPDATE', oldValues: $oldDetail, newValues: $detail->fresh()->toArray());
+                    }
+                }
             }
 
             $this->syncGrandTotal($pdo);

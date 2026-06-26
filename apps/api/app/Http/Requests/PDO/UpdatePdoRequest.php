@@ -17,7 +17,8 @@ class UpdatePdoRequest extends FormRequest
         return [
             'notes'                    => ['nullable', 'string'],
             'details'                  => ['sometimes', 'array'],
-            'details.*.id'             => ['required_with:details', 'uuid'],
+            'details.*.id'             => ['nullable', 'uuid'],
+            'details.*.expense_item_id'=> ['nullable', 'uuid', 'exists:expense_items,id'],
             'details.*.description'    => ['sometimes', 'string'],
             'details.*.quantity'       => ['nullable', 'numeric', 'min:0'],
             'details.*.unit'           => ['nullable', 'string', 'max:50'],
