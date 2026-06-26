@@ -77,8 +77,19 @@ export function AttachmentContent({ detailId, canUpload }: ContentProps) {
     }
   }
 
-  const handleDownload = (att: Attachment) => {
-    window.open(`/api/v1/${att.download_url.split('/api/v1/')[1]}`, '_blank')
+  const handleDownload = async (att: Attachment) => {
+    try {
+      const path = att.download_url.split('/api/v1/')[1]
+      const res  = await api.get(path, { responseType: 'blob' })
+      const url  = URL.createObjectURL(new Blob([res.data]))
+      const a    = document.createElement('a')
+      a.href     = url
+      a.download = att.original_filename
+      a.click()
+      URL.revokeObjectURL(url)
+    } catch {
+      toast('Gagal mengunduh file.', 'error')
+    }
   }
 
   return (
