@@ -45,7 +45,7 @@ const editSchema = z.object({
 type Form = z.infer<typeof editSchema>
 
 type RowSelection  = { categoryId: string; subcategoryId: string }
-type DetailSnapshot = Partial<PdoDetail> & { id?: string }
+type DetailSnapshot = Partial<PdoDetail> & { id?: string; _isNew?: boolean }
 
 const MONTHS = ['Januari','Februari','Maret','April','Mei','Juni','Juli','Agustus','September','Oktober','November','Desember']
 const YEARS  = Array.from({ length: 5 }, (_, i) => new Date().getFullYear() - i + 1)
@@ -93,7 +93,7 @@ export function PdoFormPage() {
     },
   })
 
-  const { fields, prepend, remove, replace } = useFieldArray({ control, name: 'details' })
+  const { fields, append, prepend, remove, replace } = useFieldArray({ control, name: 'details' })
 
   const detailValues = watch('details')
   const totalAmount  = detailValues?.reduce((sum, d) => sum + (Number(d.amount) || 0), 0) ?? 0
@@ -119,7 +119,8 @@ export function PdoFormPage() {
     })
     api.get<ApiResponse<PdoDetail[]>>(`/pdo/${id}/details`).then((res) => {
       const details = res.data.data
-      replace(details.map((d) => ({
+      // Use append loop (not replace) — replace + remove has inconsistent behaviour in RHF
+      details.forEach((d) => append({
         id:              d.id,
         expense_item_id: d.expense_item_id,
         description:     d.description,
@@ -129,7 +130,7 @@ export function PdoFormPage() {
         amount:          d.amount,
         notes:           d.notes,
         display_order:   d.display_order,
-      })))
+      }))
       setDetailSnapshots(details)
       setPullErrors({})
 
@@ -297,7 +298,7 @@ export function PdoFormPage() {
       unit: null, rate: null, amount: 0, notes: null, display_order: 0,
     })
     setRowSelections((prev)  => [{ categoryId: '', subcategoryId: '' }, ...prev])
-    setDetailSnapshots((prev) => [{}, ...prev])
+    setDetailSnapshots((prev) => [{ _isNew: true }, ...prev])
     // Shift all pullError indices down by +1 (existing rows moved down)
     setPullErrors((prev) => {
       const next: Record<number, string> = {}
@@ -330,7 +331,8 @@ export function PdoFormPage() {
 
     replace(indexed.map((i) => i.values))
     setRowSelections(indexed.map((i) => i.sel))
-    setDetailSnapshots(indexed.map((i) => i.snapshot))
+    // Clear _isNew so regrouped items render inside their category groups
+    setDetailSnapshots(indexed.map((i) => ({ ...i.snapshot, _isNew: undefined })))
     setPullErrors({})
 
     const keys = new Set<string>()
@@ -361,9 +363,9 @@ export function PdoFormPage() {
   const catMap = new Map<string, CatGroup>()
   fields.forEach((field, idx) => {
     const sel = rowSelections[idx] ?? { categoryId: '', subcategoryId: '' }
-    // New rows (no backend id) stay ungrouped until user clicks "Atur Grup Item"
+    // New rows (_isNew flag) stay ungrouped until user clicks "Atur Grup Item"
     // This prevents the form from disappearing into a collapsed group mid-edit
-    const isNew = !detailSnapshots[idx]?.id
+    const isNew = detailSnapshots[idx]?._isNew === true
     if (isNew || !sel.categoryId) {
       ungrouped.push({ fieldId: field.id, idx })
       return
@@ -550,7 +552,10 @@ export function PdoFormPage() {
         </h2>
       </div>
 
-      <form onSubmit={handleSubmit((d) => save.mutate(d))}>
+      <form onSubmit={handleSubmit(
+        (d) => save.mutate(d),
+        () => toast('Harap lengkapi semua field yang wajib diisi pada item biaya', 'error')
+      )}>
         {/* Header */}
         <div className="card mb-4">
           <h3 className="text-[17px] font-[850] mb-4">Informasi Umum</h3>
@@ -714,7 +719,10 @@ export function PdoFormPage() {
               type="button"
               variant="secondary"
               loading={submit.isPending}
-              onClick={handleSubmit((d) => submit.mutate(d))}
+              onClick={handleSubmit(
+                (d) => submit.mutate(d),
+                () => toast('Harap lengkapi semua field yang wajib diisi pada item biaya', 'error')
+              )}
             >
               Simpan & Ajukan
             </Button>
