@@ -361,7 +361,10 @@ export function PdoFormPage() {
   const catMap = new Map<string, CatGroup>()
   fields.forEach((field, idx) => {
     const sel = rowSelections[idx] ?? { categoryId: '', subcategoryId: '' }
-    if (!sel.categoryId) {
+    // New rows (no backend id) stay ungrouped until user clicks "Atur Grup Item"
+    // This prevents the form from disappearing into a collapsed group mid-edit
+    const isNew = !detailSnapshots[idx]?.id
+    if (isNew || !sel.categoryId) {
       ungrouped.push({ fieldId: field.id, idx })
       return
     }
