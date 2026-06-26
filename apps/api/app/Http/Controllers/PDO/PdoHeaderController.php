@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers\PDO;
 
+use App\Exports\PdoExport;
 use App\Http\Controllers\Controller;
 use App\Http\Requests\PDO\StorePdoRequest;
 use App\Http\Requests\PDO\UpdatePdoRequest;
@@ -9,6 +10,8 @@ use App\Models\PdoHeader;
 use App\Services\PDO\PdoService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Maatwebsite\Excel\Facades\Excel;
+use Symfony\Component\HttpFoundation\BinaryFileResponse;
 
 class PdoHeaderController extends Controller
 {
@@ -52,6 +55,14 @@ class PdoHeaderController extends Controller
         $updated = $this->service->updatePdo($pdo, $request->validated(), $request->user());
 
         return response()->json(['success' => true, 'data' => $updated, 'message' => 'PDO berhasil diperbarui.']);
+    }
+
+    public function export(string $id): BinaryFileResponse
+    {
+        $data     = $this->service->findPdoGrouped($id);
+        $filename = 'PDO-' . ($data['pdo']->pdo_number ?? $id) . '.xlsx';
+
+        return Excel::download(new PdoExport($data), $filename);
     }
 
     public function destroy(Request $request, string $id): JsonResponse

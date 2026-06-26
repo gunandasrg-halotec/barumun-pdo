@@ -22,9 +22,28 @@ export function PdoDetailPage() {
   const user     = useAuthStore((s) => s.user)
   const role     = user?.role.code as RoleCode | undefined
 
-  const [showCloseModal, setShowCloseModal] = useState(false)
-  const [collapsedCats, setCollapsedCats]   = useState<Set<string>>(new Set())
-  const [collapsedSubs, setCollapsedSubs]   = useState<Set<string>>(new Set())
+  const [showCloseModal, setShowCloseModal]     = useState(false)
+  const [collapsedCats, setCollapsedCats]       = useState<Set<string>>(new Set())
+  const [collapsedSubs, setCollapsedSubs]       = useState<Set<string>>(new Set())
+  const [isDownloading, setIsDownloading]       = useState(false)
+
+  const handleExport = async () => {
+    if (!id) return
+    setIsDownloading(true)
+    try {
+      const res = await api.get(`/pdo/${id}/export`, { responseType: 'blob' })
+      const url  = URL.createObjectURL(new Blob([res.data]))
+      const a    = document.createElement('a')
+      a.href     = url
+      a.download = `PDO-${pdo?.pdo_number ?? id}.xlsx`
+      a.click()
+      URL.revokeObjectURL(url)
+    } catch {
+      toast('Gagal mengunduh file Excel. Coba lagi.', 'error')
+    } finally {
+      setIsDownloading(false)
+    }
+  }
 
   const toggleCat = useCallback((key: string) => {
     setCollapsedCats((prev) => {
@@ -112,6 +131,9 @@ export function PdoDetailPage() {
           )}
           <Button variant="secondary" onClick={() => navigate(`/pdo/${pdo.id}/approval`)}>
             <GitBranch className="w-4 h-4" /> Approval
+          </Button>
+          <Button variant="secondary" loading={isDownloading} onClick={handleExport}>
+            <CloudDownload className="w-4 h-4" /> Unduh Excel
           </Button>
         </div>
       </div>

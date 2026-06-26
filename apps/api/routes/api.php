@@ -57,6 +57,7 @@ Route::prefix('v1')->middleware(['auth:sanctum', 'ensure.unit.access'])->group(f
     Route::apiResource('expense-items', ExpenseItemController::class);
 
     // ── PDO Bulanan ───────────────────────────────────
+    Route::get('pdo/{pdo}/export', [PdoHeaderController::class, 'export']);
     Route::apiResource('pdo', PdoHeaderController::class);
 
     // PDO Details (baris item)
