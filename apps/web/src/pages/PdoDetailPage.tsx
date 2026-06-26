@@ -244,7 +244,6 @@ export function PdoDetailPage() {
                               </tr>
 
                               {!subCollapsed && sg.items.map((d) => {
-                                const canUpload = role === 'KERANI' && pdo.status === 'draft'
                                 const attachOpen = openAttachmentId === d.id
                                 return (
                                   <>
@@ -286,7 +285,7 @@ export function PdoDetailPage() {
                                       <DetailAttachmentPanel
                                         key={`att-${d.id}`}
                                         detailId={d.id}
-                                        canUpload={canUpload}
+                                        canUpload={false}
                                         colSpan={10}
                                       />
                                     )}

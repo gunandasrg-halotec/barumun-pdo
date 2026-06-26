@@ -9,10 +9,11 @@ import { Button } from '@/components/ui/Button'
 import { useToastStore } from '@/store/toast.store'
 import { useAuthStore } from '@/store/auth.store'
 import { ExternalCostPullPanel } from '@/components/pdo/ExternalCostPullPanel'
+import { AttachmentSection } from '@/components/pdo/DetailAttachmentPanel'
 import { useItems, useSubcategories, useCategories } from '@/hooks/useMasterData'
 import { usePdo, usePullExternalCost } from '@/hooks/usePdo'
 import { fmt } from '@/lib/format'
-import { ArrowLeft, Plus, Trash2, LayoutList } from 'lucide-react'
+import { ArrowLeft, Plus, Trash2, LayoutList, Paperclip } from 'lucide-react'
 import type { ApiResponse, PdoDetail, PdoHeader, PlantationUnit } from '@/types'
 
 const detailSchema = z.object({
@@ -543,6 +544,17 @@ export function PdoFormPage() {
             onPull={() => handlePullExternalCost(idx)}
             snapshot={snapshot}
           />
+        )}
+
+        {snapshot?.id ? (
+          <AttachmentSection detailId={snapshot.id} />
+        ) : (
+          <div className="mt-3 pt-3 border-t border-dashed border-line flex items-center gap-2">
+            <Paperclip className="w-3.5 h-3.5 text-muted" />
+            <span className="text-[11px] text-muted italic">
+              Simpan item terlebih dahulu untuk menambah lampiran.
+            </span>
+          </div>
         )}
       </div>
     )
