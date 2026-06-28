@@ -170,34 +170,69 @@ class PdoService
         $this->assertDraft($pdo);
 
         return DB::transaction(function () use ($pdo, $data, $actor) {
-            $old = $pdo->toArray();
+            $now     = now();
+            $request = app(\Illuminate\Http\Request::class);
+            $ip      = $request->ip();
+            $ua      = $request->userAgent();
+
+            // Kumpulkan semua baris audit, tulis sekaligus di akhir (bulk insert).
+            $auditRows = [];
+            $audit = function (string $entityType, string $entityId, string $action, ?array $old, ?array $new)
+                use (&$auditRows, $actor, $ip, $ua) {
+                $auditRows[] = [
+                    'actor_user_id' => $actor?->id,
+                    'entity_type'   => $entityType,
+                    'entity_id'     => $entityId,
+                    'action'        => $action,
+                    'old_values'    => $old !== null ? json_encode($old) : null,
+                    'new_values'    => $new !== null ? json_encode($new) : null,
+                    'ip_address'    => $ip,
+                    'user_agent'    => $ua,
+                ];
+            };
+
+            // ── Header ────────────────────────────────────────
+            $oldHeader = $this->auditAttrs($pdo);
             $pdo->update(['notes' => $data['notes'] ?? $pdo->notes]);
+            $audit('pdo_headers', $pdo->id, 'UPDATE', $oldHeader, $this->auditAttrs($pdo));
 
-            AuditLog::record(
-                actor: $actor,
-                entityType: 'pdo_headers',
-                entityId: $pdo->id,
-                action: 'UPDATE',
-                oldValues: $old,
-                newValues: $pdo->fresh()->toArray()
-            );
-
-            // Sync details: upsert (create/update) + delete absent rows
+            // ── Sync details: create / update / delete ─────────
             if (array_key_exists('details', $data)) {
                 $sentIds = collect($data['details'])->pluck('id')->filter()->values();
 
-                // Delete details not present in the payload
-                foreach ($pdo->details()->whereNotIn('id', $sentIds)->get() as $d) {
-                    AuditLog::record(actor: $actor, entityType: 'pdo_details', entityId: $d->id,
-                        action: 'DELETE', oldValues: $d->toArray(), newValues: null);
-                    $d->delete();
+                // Preload existing details (1 query), index by id.
+                $existing = $pdo->details()->get()->keyBy('id');
+
+                // DELETE: baris yang tidak ada di payload → satu bulk delete.
+                $toDelete = $existing->keys()->diff($sentIds);
+                if ($toDelete->isNotEmpty()) {
+                    foreach ($toDelete as $delId) {
+                        $audit('pdo_details', (string) $delId, 'DELETE', $this->auditAttrs($existing[$delId]), null);
+                    }
+                    PdoDetail::whereIn('id', $toDelete->all())->delete();
                 }
+
+                // Preload semua ExpenseItem untuk item baru (1 query).
+                $newItemIds = collect($data['details'])
+                    ->filter(fn ($d) => empty($d['id']))
+                    ->pluck('expense_item_id')->filter()->unique();
+                $items = $newItemIds->isNotEmpty()
+                    ? ExpenseItem::whereIn('id', $newItemIds->all())->get()->keyBy('id')
+                    : collect();
+
+                $maxOrder = (int) ($existing->max('display_order') ?? 0);
+                $inserts  = [];
 
                 foreach ($data['details'] as $detailData) {
                     if (empty($detailData['id'])) {
-                        // New item — create
-                        $item = \App\Models\ExpenseItem::findOrFail($detailData['expense_item_id']);
-                        $newDetail = PdoDetail::create([
+                        // ── CREATE (dikumpulkan untuk bulk insert) ──
+                        $item = $items[$detailData['expense_item_id']] ?? null;
+                        if (! $item) continue;
+
+                        $isExt = $item->mode_input === ExpenseItem::MODE_AUTO_EXTERNAL;
+                        $id    = (string) \Illuminate\Support\Str::orderedUuid();
+                        $row   = [
+                            'id'                     => $id,
                             'pdo_header_id'          => $pdo->id,
                             'expense_item_id'        => $item->id,
                             'account_number'         => $item->default_account_number,
@@ -206,21 +241,23 @@ class PdoService
                             'unit'                   => $detailData['unit'] ?? $item->default_unit,
                             'rate'                   => $detailData['rate'] ?? $item->default_rate,
                             'amount'                 => $detailData['amount'] ?? 0,
-                            'external_source_system' => $item->mode_input === \App\Models\ExpenseItem::MODE_AUTO_EXTERNAL ? $item->external_source_system : null,
-                            'external_component'     => $item->mode_input === \App\Models\ExpenseItem::MODE_AUTO_EXTERNAL ? $item->external_component : null,
-                            'external_component_key' => $item->mode_input === \App\Models\ExpenseItem::MODE_AUTO_EXTERNAL ? $item->external_component_key : null,
+                            'external_source_system' => $isExt ? $item->external_source_system : null,
+                            'external_component'     => $isExt ? $item->external_component : null,
+                            'external_component_key' => $isExt ? $item->external_component_key : null,
                             'notes'                  => $detailData['notes'] ?? null,
-                            'display_order'          => $detailData['display_order'] ?? $this->nextDisplayOrder($pdo),
-                        ]);
-                        AuditLog::record(actor: $actor, entityType: 'pdo_details', entityId: $newDetail->id,
-                            action: 'CREATE', oldValues: null, newValues: $newDetail->toArray());
+                            'display_order'          => $detailData['display_order'] ?? (++$maxOrder),
+                            'created_at'             => $now,
+                            'updated_at'             => $now,
+                        ];
+                        $inserts[] = $row;
+                        $audit('pdo_details', $id, 'CREATE', null, $row);
                     } else {
-                        // Existing item — update
-                        $detail = PdoDetail::where('id', $detailData['id'])
-                            ->where('pdo_header_id', $pdo->id)->first();
+                        // ── UPDATE (dari data yang sudah di-preload) ──
+                        $detail = $existing[$detailData['id']] ?? null;
                         if (! $detail) continue;
-                        $oldDetail = $detail->toArray();
-                        $detail->update([
+
+                        $oldDetail = $this->auditAttrs($detail);
+                        $detail->fill([
                             'description'   => $detailData['description']   ?? $detail->description,
                             'quantity'      => array_key_exists('quantity', $detailData) ? $detailData['quantity'] : $detail->quantity,
                             'unit'          => array_key_exists('unit', $detailData) ? $detailData['unit'] : $detail->unit,
@@ -229,16 +266,38 @@ class PdoService
                             'notes'         => $detailData['notes'] ?? $detail->notes,
                             'display_order' => $detailData['display_order'] ?? $detail->display_order,
                         ]);
-                        AuditLog::record(actor: $actor, entityType: 'pdo_details', entityId: $detail->id,
-                            action: 'UPDATE', oldValues: $oldDetail, newValues: $detail->fresh()->toArray());
+
+                        // Hanya simpan + audit bila benar-benar berubah.
+                        if ($detail->isDirty()) {
+                            $detail->save();
+                            $audit('pdo_details', $detail->id, 'UPDATE', $oldDetail, $this->auditAttrs($detail));
+                        }
                     }
+                }
+
+                if (! empty($inserts)) {
+                    PdoDetail::insert($inserts); // satu bulk insert
                 }
             }
 
             $this->syncGrandTotal($pdo);
 
+            // Tulis semua audit sekaligus.
+            if (! empty($auditRows)) {
+                AuditLog::insert($auditRows);
+            }
+
             return $pdo->fresh();
         });
+    }
+
+    /**
+     * Atribut model untuk audit (nilai sudah ter-cast) tanpa memicu
+     * accessor `$appends` yang melakukan lazy-load query ke DB.
+     */
+    private function auditAttrs(\Illuminate\Database\Eloquent\Model $model): array
+    {
+        return (clone $model)->setAppends([])->attributesToArray();
     }
 
     public function deletePdo(PdoHeader $pdo, User $actor): void
