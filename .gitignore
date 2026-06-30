@@ -20,6 +20,9 @@ apps/api/bootstrap/cache/*.php
 docker/api/.env.production
 docker/api/.env.staging
 
+# Local-only docs (don't push)
+docs/adr/
+
 # Node
 node_modules/
 BPN.pem
