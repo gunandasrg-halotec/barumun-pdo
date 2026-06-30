@@ -5,6 +5,16 @@ import type {
   ApiResponse, PaginatedResponse, AuthUser, Role,
 } from '@/types'
 
+type PayrollComponentOption = {
+  component_key: string
+  label: string
+}
+
+type PayrollComponentOptionsResponse = {
+  component: string
+  options: PayrollComponentOption[]
+}
+
 // ─── Categories ──────────────────────────────────────────────────────────────
 
 export function useCategories(params?: Record<string, unknown>) {
@@ -115,6 +125,20 @@ export function useCreateItem() {
       return res.data.data
     },
     onSuccess: () => qc.invalidateQueries({ queryKey: ['items'] }),
+  })
+}
+
+export function usePayrollComponentOptions(component?: string | null) {
+  return useQuery({
+    queryKey: ['payroll-component-options', component],
+    queryFn: async () => {
+      const res = await api.get<ApiResponse<PayrollComponentOptionsResponse>>('/payroll-cost-component-options', {
+        params: { component },
+      })
+      return res.data.data
+    },
+    enabled: Boolean(component),
+    staleTime: 5 * 60 * 1000,
   })
 }
 
