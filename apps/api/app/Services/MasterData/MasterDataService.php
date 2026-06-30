@@ -9,12 +9,14 @@ use App\Models\ExpenseSubcategory;
 use App\Models\PdoHeader;
 use App\Models\PlantationUnit;
 use App\Models\User;
-use Illuminate\Contracts\Pagination\LengthAwarePaginator;
+use App\Services\Payroll\PayrollApiService;
 use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Support\Facades\DB;
 
 class MasterDataService
 {
+    public function __construct(private readonly PayrollApiService $payrollApi) {}
+
     // ─────────────────────────────────────────────────────
     // EXPENSE CATEGORIES
     // ─────────────────────────────────────────────────────
@@ -82,7 +84,7 @@ class MasterDataService
         if ($category->activeSubcategories()->exists()) {
             abort(response()->json([
                 'success' => false,
-                'error'   => ['code' => 'CATEGORY_HAS_CHILDREN', 'message' => 'Kategori masih memiliki sub-kategori aktif.'],
+                'error' => ['code' => 'CATEGORY_HAS_CHILDREN', 'message' => 'Kategori masih memiliki sub-kategori aktif.'],
             ], 409));
         }
 
@@ -185,7 +187,7 @@ class MasterDataService
         if ($subcategory->activeItems()->exists()) {
             abort(response()->json([
                 'success' => false,
-                'error'   => ['code' => 'SUBCATEGORY_HAS_CHILDREN', 'message' => 'Sub-kategori masih memiliki item biaya aktif.'],
+                'error' => ['code' => 'SUBCATEGORY_HAS_CHILDREN', 'message' => 'Sub-kategori masih memiliki item biaya aktif.'],
             ], 409));
         }
 
@@ -234,7 +236,7 @@ class MasterDataService
         return ExpenseItem::with(['subcategory.category'])
             ->where('is_routine', true)
             ->where('is_active', true)
-            ->orderByRaw("(SELECT display_order FROM expense_subcategories WHERE id = expense_items.subcategory_id)")
+            ->orderByRaw('(SELECT display_order FROM expense_subcategories WHERE id = expense_items.subcategory_id)')
             ->orderBy('code')
             ->get();
     }
@@ -249,14 +251,14 @@ class MasterDataService
         // BR-MASTER-003: Kode unik per subcategory
         $this->assertNoDuplicateItemCode($data['code'], $data['subcategory_id']);
 
+        $this->normalizeAndValidateAutoExternalMapping($data);
+
         $modeInput = $data['mode_input'] ?? ExpenseItem::MODE_MANUAL;
 
         if ($modeInput !== ExpenseItem::MODE_AUTO_EXTERNAL) {
             $data['external_source_system'] = null;
             $data['external_component'] = null;
             $data['external_component_key'] = null;
-            $data['external_role'] = null;
-        } elseif (! ExpenseItem::supportsPayrollRole($data['external_component'] ?? null)) {
             $data['external_role'] = null;
         }
 
@@ -282,14 +284,14 @@ class MasterDataService
             $this->assertNoDuplicateItemCode($data['code'], $subcategoryId, $item->id);
         }
 
+        $this->normalizeAndValidateAutoExternalMapping($data, $item);
+
         $modeInput = $data['mode_input'] ?? $item->mode_input;
 
         if ($modeInput !== ExpenseItem::MODE_AUTO_EXTERNAL) {
             $data['external_source_system'] = null;
             $data['external_component'] = null;
             $data['external_component_key'] = null;
-            $data['external_role'] = null;
-        } elseif (! ExpenseItem::supportsPayrollRole($data['external_component'] ?? $item->external_component)) {
             $data['external_role'] = null;
         }
 
@@ -337,14 +339,35 @@ class MasterDataService
 
     private function syncDraftDetailExternalOwnership(ExpenseItem $originalItem, string $oldModeInput, ExpenseItem $freshItem): void
     {
-        if ($oldModeInput === $freshItem->mode_input) {
-            return;
-        }
-
         $draftDetails = \DB::table('pdo_details')
             ->join('pdo_headers', 'pdo_headers.id', '=', 'pdo_details.pdo_header_id')
             ->where('pdo_details.expense_item_id', $originalItem->id)
             ->where('pdo_headers.status', PdoHeader::STATUS_DRAFT);
+
+        if ($oldModeInput === $freshItem->mode_input) {
+            if ($oldModeInput !== ExpenseItem::MODE_AUTO_EXTERNAL) {
+                return;
+            }
+
+            $mappingChanged = $originalItem->external_source_system !== $freshItem->external_source_system
+                || $originalItem->external_component !== $freshItem->external_component
+                || $this->externalComponentKeySnapshotValue($originalItem) !== $this->externalComponentKeySnapshotValue($freshItem);
+
+            if (! $mappingChanged) {
+                return;
+            }
+
+            $draftDetails->update([
+                'external_source_system' => $freshItem->external_source_system,
+                'external_component' => $freshItem->external_component,
+                'external_component_key' => $freshItem->external_component_key,
+                'external_amount_pulled_at' => null,
+                'external_payload' => null,
+                'updated_at' => now(),
+            ]);
+
+            return;
+        }
 
         if ($freshItem->mode_input === ExpenseItem::MODE_AUTO_EXTERNAL) {
             $draftDetails->update([
@@ -375,7 +398,7 @@ class MasterDataService
         if ($item->isUsedInActivePdo()) {
             abort(response()->json([
                 'success' => false,
-                'error'   => ['code' => 'ITEM_IN_USE', 'message' => 'Item biaya sedang digunakan pada PDO yang aktif atau final. Nonaktifkan item melalui menu edit jika diperlukan.'],
+                'error' => ['code' => 'ITEM_IN_USE', 'message' => 'Item biaya sedang digunakan pada PDO yang aktif atau final. Nonaktifkan item melalui menu edit jika diperlukan.'],
             ], 409));
         }
 
@@ -426,7 +449,7 @@ class MasterDataService
         if ($exists) {
             abort(response()->json([
                 'success' => false,
-                'error'   => ['code' => 'DUPLICATE_CODE', 'message' => "Kode kategori '{$code}' sudah digunakan."],
+                'error' => ['code' => 'DUPLICATE_CODE', 'message' => "Kode kategori '{$code}' sudah digunakan."],
             ], 409));
         }
     }
@@ -443,7 +466,7 @@ class MasterDataService
         if ($exists) {
             abort(response()->json([
                 'success' => false,
-                'error'   => ['code' => 'DUPLICATE_CODE', 'message' => "Kode sub-kategori '{$code}' sudah digunakan dalam kategori ini."],
+                'error' => ['code' => 'DUPLICATE_CODE', 'message' => "Kode sub-kategori '{$code}' sudah digunakan dalam kategori ini."],
             ], 409));
         }
     }
@@ -460,7 +483,7 @@ class MasterDataService
         if ($exists) {
             abort(response()->json([
                 'success' => false,
-                'error'   => ['code' => 'DUPLICATE_CODE', 'message' => "Kode item '{$code}' sudah digunakan dalam sub-kategori ini."],
+                'error' => ['code' => 'DUPLICATE_CODE', 'message' => "Kode item '{$code}' sudah digunakan dalam sub-kategori ini."],
             ], 409));
         }
     }
