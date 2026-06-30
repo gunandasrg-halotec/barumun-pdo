@@ -189,7 +189,11 @@ export function PdoFormPage() {
       qc.invalidateQueries({ queryKey: ['pdo'] })
       navigate(`/pdo/${header.id}/approval`)
     },
-    onError: () => toast('Gagal mengajukan PDO', 'error'),
+    onError: (err: unknown) => {
+      const msg = (err as { response?: { data?: { error?: { message?: string } } } })
+        ?.response?.data?.error?.message
+      toast(msg || 'Gagal mengajukan PDO', 'error')
+    },
   })
 
   const setRowSel = (idx: number, patch: Partial<RowSelection>) => {

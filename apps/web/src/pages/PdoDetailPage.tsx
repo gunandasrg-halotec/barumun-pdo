@@ -86,7 +86,11 @@ export function PdoDetailPage() {
       qc.invalidateQueries({ queryKey: ['pdo', id] })
       navigate(`/pdo/${id}/approval`)
     },
-    onError: () => toast('Gagal mengajukan PDO', 'error'),
+    onError: (err: unknown) => {
+      const msg = (err as { response?: { data?: { error?: { message?: string } } } })
+        ?.response?.data?.error?.message
+      toast(msg || 'Gagal mengajukan PDO', 'error')
+    },
   })
 
   if (isLoading) return <div className="text-muted text-sm">Memuat...</div>
