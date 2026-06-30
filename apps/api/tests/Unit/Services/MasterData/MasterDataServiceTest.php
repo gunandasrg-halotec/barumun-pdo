@@ -255,6 +255,31 @@ class MasterDataServiceTest extends TestCase
         $this->assertEquals(ExpenseItem::MODE_AUTO_EXTERNAL, $item->mode_input);
     }
 
+    public function test_legacy_base_payroll_external_role_is_migrated_on_auto_external_update_without_mapping_payload(): void
+    {
+        $category = ExpenseCategory::factory()->create(['company_id' => $this->companyId]);
+        $sub      = ExpenseSubcategory::factory()->create(['category_id' => $category->id]);
+
+        $item = ExpenseItem::factory()->create([
+            'subcategory_id' => $sub->id,
+            'mode_input' => ExpenseItem::MODE_AUTO_EXTERNAL,
+            'external_source_system' => ExpenseItem::EXTERNAL_SOURCE_PAYROLL,
+            'external_component' => ExpenseItem::PAYROLL_COMPONENT_BASE_PAYROLL_TOTAL,
+            'external_component_key' => null,
+            'external_role' => ExpenseItem::PAYROLL_ROLE_BHL,
+            'name' => 'Legacy Role Item',
+        ]);
+
+        $this->service->updateItem($item, [
+            'name' => 'Legacy Role Item Updated',
+        ], $this->adminUser);
+
+        $item->refresh();
+
+        $this->assertSame(ExpenseItem::PAYROLL_ROLE_BHL, $item->external_component_key);
+        $this->assertNull($item->external_role);
+    }
+
     public function test_auto_external_reversion_clears_draft_external_snapshot_but_keeps_values(): void
     {
         $category = ExpenseCategory::factory()->create(['company_id' => $this->companyId]);

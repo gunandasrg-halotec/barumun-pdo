@@ -2,6 +2,7 @@
 
 namespace App\Services\MasterData;
 
+use App\Exceptions\PayrollApiException;
 use App\Models\AuditLog;
 use App\Models\ExpenseCategory;
 use App\Models\ExpenseItem;
@@ -10,7 +11,6 @@ use App\Models\PdoHeader;
 use App\Models\PlantationUnit;
 use App\Models\User;
 use App\Services\Payroll\PayrollApiService;
-use App\Exceptions\PayrollApiException;
 use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
@@ -307,10 +307,11 @@ class MasterDataService
 
         $old = $item->toArray();
         $oldModeInput = $item->mode_input;
+        $originalItem = clone $item;
         $item->update($data);
         $freshItem = $item->fresh();
 
-        $this->syncDraftDetailExternalOwnership($item, $oldModeInput, $freshItem);
+        $this->syncDraftDetailExternalOwnership($originalItem, $oldModeInput, $freshItem);
 
         AuditLog::record(
             actor: $actor,
@@ -457,12 +458,44 @@ class MasterDataService
             || array_key_exists('external_component_key', $data)
             || array_key_exists('external_role', $data);
 
-        if (! $hasMappingPayload) {
+        if (! $hasMappingPayload && $currentItem && $currentItem->mode_input === ExpenseItem::MODE_AUTO_EXTERNAL) {
+            $legacyRole = $this->normalizeExternalComponentKey($currentItem->external_role);
+
+            if (
+                $currentItem->external_component === ExpenseItem::PAYROLL_COMPONENT_BASE_PAYROLL_TOTAL
+                && $currentItem->external_component_key === null
+                && $legacyRole !== null
+                && $this->isValidLegacyPayrollRoleKey($legacyRole)
+            ) {
+                $data['external_component_key'] = $legacyRole;
+                $data['external_role'] = null;
+            }
+
             return;
         }
 
         $component = $data['external_component'] ?? $currentItem?->external_component;
-        $data['external_component_key'] = $this->normalizeExternalComponentKey($data['external_component_key'] ?? null);
+        $hasExplicitComponentKey = array_key_exists('external_component_key', $data);
+        $legacyRole = $this->normalizeExternalComponentKey($data['external_role'] ?? null);
+        $data['external_role'] = null;
+        $currentRole = $this->normalizeExternalComponentKey($currentItem?->external_role);
+        $keySourceFromLegacyRole = false;
+
+        if ($hasExplicitComponentKey) {
+            $data['external_component_key'] = $this->normalizeExternalComponentKey($data['external_component_key'] ?? null);
+        } elseif ($legacyRole !== null && ExpenseItem::supportsPayrollRole($component)) {
+            $data['external_component_key'] = $legacyRole;
+            $keySourceFromLegacyRole = true;
+        } elseif ($currentItem && $currentItem->external_component === $component) {
+            $data['external_component_key'] = $this->normalizeExternalComponentKey($currentItem->external_component_key);
+
+            if ($data['external_component_key'] === null && $currentRole !== null && ExpenseItem::supportsPayrollRole($component)) {
+                $data['external_component_key'] = $currentRole;
+                $keySourceFromLegacyRole = true;
+            }
+        } else {
+            $data['external_component_key'] = null;
+        }
 
         if (! is_string($component)) {
             return;
@@ -470,6 +503,7 @@ class MasterDataService
 
         if (! ExpenseItem::supportsExternalOption($component)) {
             $data['external_component_key'] = null;
+            $data['external_role'] = null;
 
             return;
         }
@@ -484,11 +518,22 @@ class MasterDataService
             return;
         }
 
+        if ($keySourceFromLegacyRole && ! $this->isValidLegacyPayrollRoleKey($data['external_component_key'])) {
+            $data['external_component_key'] = null;
+
+            return;
+        }
+
         if (! $this->isValidExternalComponentKey($component, (string) $data['external_component_key'])) {
             throw ValidationException::withMessages([
                 'external_component_key' => ['external_component_key tidak ditemukan pada Payroll.'],
             ]);
         }
+    }
+
+    private function isValidLegacyPayrollRoleKey(string $componentKey): bool
+    {
+        return in_array($componentKey, ExpenseItem::payrollRoles(), true);
     }
 
     private function isValidExternalComponentKey(string $component, string $componentKey): bool
