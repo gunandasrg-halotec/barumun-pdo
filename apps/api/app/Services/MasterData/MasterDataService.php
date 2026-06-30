@@ -368,7 +368,7 @@ class MasterDataService
             $draftDetails->update([
                 'external_source_system' => $freshItem->external_source_system,
                 'external_component' => $freshItem->external_component,
-                'external_component_key' => $freshItem->external_component_key,
+                'external_component_key' => $this->externalComponentKeySnapshotValue($freshItem),
                 'external_amount_pulled_at' => null,
                 'external_payload' => null,
                 'updated_at' => now(),
@@ -381,7 +381,7 @@ class MasterDataService
             $draftDetails->update([
                 'external_source_system' => $freshItem->external_source_system,
                 'external_component' => $freshItem->external_component,
-                'external_component_key' => $freshItem->external_component_key,
+                'external_component_key' => $this->externalComponentKeySnapshotValue($freshItem),
                 'external_amount_pulled_at' => null,
                 'external_payload' => null,
                 'updated_at' => now(),
@@ -573,7 +573,15 @@ class MasterDataService
 
     private function externalComponentKeySnapshotValue(ExpenseItem $item): ?string
     {
-        return $item->external_component_key;
+        if (filled($item->external_component_key)) {
+            return $item->external_component_key;
+        }
+
+        if (ExpenseItem::supportsPayrollRole($item->external_component) && filled($item->external_role)) {
+            return $item->external_role;
+        }
+
+        return null;
     }
 
     /** BR-MASTER-003 */

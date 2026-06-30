@@ -144,12 +144,17 @@ export function ItemFormPage() {
       return
     }
 
+    if (isEdit && previousComponent.current === null) {
+      previousComponent.current = extComponent ?? null
+      return
+    }
+
     if (previousComponent.current !== extComponent) {
       setValue('external_component_key', null)
     }
 
     previousComponent.current = extComponent ?? null
-  }, [extComponent, setValue])
+  }, [extComponent, isEdit, setValue])
 
   const availableComponentKeys = useMemo(() => new Set(
     componentOptions.map((option) => option.component_key),
@@ -169,22 +174,29 @@ export function ItemFormPage() {
         external_source_system?: string | null
         external_component?: string | null
         external_component_key?: string | null
+        external_role?: string | null
         split_transfer?: boolean
         split_transfer_plantation_unit_ids?: string[] | null
         routine_plantation_unit_ids?: string[] | null
       }
+      const legacyRole = ext.external_component === 'base_payroll_total' && !ext.external_component_key ? ext.external_role : null
+      const normalizedExternalRole = legacyRole ? legacyRole : null
       reset({
         ...existing,
         notes: existing.notes ?? '',
         external_source_system: ext.external_source_system === 'payroll' ? 'payroll' : null,
         external_component: isPayrollComponent(ext.external_component) ? ext.external_component : null,
-        external_component_key: ext.external_component_key ?? null,
+        external_component_key: ext.external_component_key ?? normalizedExternalRole ?? null,
         split_transfer:                     ext.split_transfer ?? false,
         split_transfer_plantation_unit_ids: ext.split_transfer_plantation_unit_ids ?? null,
         routine_plantation_unit_ids:        ext.routine_plantation_unit_ids ?? null,
       })
+
+      if (normalizedExternalRole && ext.external_component === 'base_payroll_total' && !ext.external_component_key) {
+        setValue('external_component_key', normalizedExternalRole)
+      }
     }
-  }, [existing, reset])
+  }, [existing, reset, setValue])
 
   useEffect(() => {
     if (isAutoExternal) {

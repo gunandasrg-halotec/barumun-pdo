@@ -252,6 +252,34 @@ describe('ItemFormPage Payroll component options', () => {
     expect(screen.queryByRole('option', { name: /invalid/i })).not.toBeInTheDocument()
   })
 
+  it('mengisi component key dari legacy external role saat edit base payroll lama', async () => {
+    mockGet({
+      componentOptions: {
+        base_payroll_total: [
+          { component_key: 'pemanen', label: 'Pemanen' },
+          { component_key: 'bhl', label: 'BHL' },
+        ],
+      },
+      expenseItem: {
+        ...baseItemPayload,
+        id: 'legacy-role-id',
+        mode_input: 'auto_external',
+        external_source_system: 'payroll',
+        external_component: 'base_payroll_total',
+        external_component_key: null,
+        external_role: 'pemanen',
+      },
+    })
+
+    renderItemForm('/master/item/legacy-role-id/edit')
+
+    await waitFor(() => expect((screen.getByRole('combobox', { name: /Mode Input/i }) as HTMLSelectElement).value).toBe('auto_external'))
+    await waitFor(() => expect(screen.getByRole('combobox', { name: /Component Payroll/i })).toHaveValue('base_payroll_total'))
+    const keySelect = await screen.findByRole('combobox', { name: /Component Key/i })
+    const keySelectElement = keySelect as HTMLSelectElement
+    await waitFor(() => expect(keySelectElement.value).toBe('pemanen'))
+  })
+
   it('menghapus component key saat component berubah ke non-option', async () => {
     const user = userEvent.setup()
     mockGet({

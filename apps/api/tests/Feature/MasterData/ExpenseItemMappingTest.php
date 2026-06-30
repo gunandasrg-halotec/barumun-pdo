@@ -82,7 +82,7 @@ class ExpenseItemMappingTest extends TestCase
             ->assertJsonValidationErrors(['external_component']);
     }
 
-    public function test_base_payroll_total_can_store_optional_external_role(): void
+    public function test_legacy_base_payroll_external_role_is_normalized_to_component_key(): void
     {
         $admin = $this->adminUser();
         $subcategory = $this->expenseSubcategory($admin->company_id);
@@ -101,7 +101,8 @@ class ExpenseItemMappingTest extends TestCase
 
         $response->assertStatus(201)
             ->assertJsonPath('data.external_component', ExpenseItem::PAYROLL_COMPONENT_BASE_PAYROLL_TOTAL)
-            ->assertJsonPath('data.external_role', ExpenseItem::PAYROLL_ROLE_PEMANEN);
+            ->assertJsonPath('data.external_component_key', ExpenseItem::PAYROLL_ROLE_PEMANEN)
+            ->assertJsonPath('data.external_role', null);
     }
 
     public function test_base_payroll_total_allows_empty_external_component_key(): void
@@ -340,7 +341,7 @@ class ExpenseItemMappingTest extends TestCase
             ->assertJsonPath('data.external_component_key', null);
     }
 
-    public function test_admin_can_update_auto_external_item_mapping(): void
+    public function test_legacy_base_payroll_external_role_is_normalized_to_component_key_on_update(): void
     {
         $admin = $this->adminUser();
         $category = ExpenseCategory::factory()->create(['company_id' => $admin->company_id]);
@@ -368,7 +369,8 @@ class ExpenseItemMappingTest extends TestCase
             ->assertJsonPath('data.mode_input', ExpenseItem::MODE_AUTO_EXTERNAL)
             ->assertJsonPath('data.external_source_system', ExpenseItem::EXTERNAL_SOURCE_PAYROLL)
             ->assertJsonPath('data.external_component', ExpenseItem::PAYROLL_COMPONENT_BASE_PAYROLL_TOTAL)
-            ->assertJsonPath('data.external_role', ExpenseItem::PAYROLL_ROLE_BHL);
+            ->assertJsonPath('data.external_component_key', ExpenseItem::PAYROLL_ROLE_BHL)
+            ->assertJsonPath('data.external_role', null);
     }
 
     public function test_admin_can_update_payroll_estate_mapping_and_finance_cannot_modify(): void
