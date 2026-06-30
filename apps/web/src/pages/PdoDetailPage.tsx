@@ -23,11 +23,12 @@ export function PdoDetailPage() {
   const user     = useAuthStore((s) => s.user)
   const role     = user?.role.code as RoleCode | undefined
 
-  const [showCloseModal, setShowCloseModal]     = useState(false)
-  const [collapsedCats, setCollapsedCats]       = useState<Set<string>>(new Set())
-  const [collapsedSubs, setCollapsedSubs]       = useState<Set<string>>(new Set())
-  const [isDownloading, setIsDownloading]       = useState(false)
-  const [openAttachmentId, setOpenAttachmentId] = useState<string | null>(null)
+  const [showCloseModal, setShowCloseModal]         = useState(false)
+  const [collapsedCats, setCollapsedCats]           = useState<Set<string>>(new Set())
+  const [collapsedSubs, setCollapsedSubs]           = useState<Set<string>>(new Set())
+  const [isDownloading, setIsDownloading]           = useState(false)
+  const [openAttachmentId, setOpenAttachmentId]     = useState<string | null>(null)
+  const [submitWarningRows, setSubmitWarningRows]   = useState<number[]>([])
 
   const toggleAttachment = (detailId: string) =>
     setOpenAttachmentId((prev) => (prev === detailId ? null : detailId))
@@ -93,6 +94,17 @@ export function PdoDetailPage() {
     },
   })
 
+  const handleAjukan = () => {
+    const warningRows = (details ?? [])
+      .filter((d) => d.is_auto_external_active && (d.needs_pull || d.is_stale_external_snapshot))
+      .map((d) => d.display_order)
+    if (warningRows.length > 0) {
+      setSubmitWarningRows(warningRows)
+    } else {
+      submitMut.mutate()
+    }
+  }
+
   if (isLoading) return <div className="text-muted text-sm">Memuat...</div>
   if (!pdo) return <div className="text-muted text-sm">PDO tidak ditemukan.</div>
 
@@ -124,7 +136,7 @@ export function PdoDetailPage() {
           {role && isKerani(role) && pdo.status === 'draft' && (
             <>
               <Button variant="secondary" onClick={() => navigate(`/pdo/${pdo.id}/edit`)}>Edit</Button>
-              <Button loading={submitMut.isPending} onClick={() => submitMut.mutate()}>
+              <Button loading={submitMut.isPending} onClick={handleAjukan}>
                 Ajukan ke Asisten
               </Button>
             </>
@@ -346,6 +358,44 @@ export function PdoDetailPage() {
           }}
           onClose={() => setShowCloseModal(false)}
         />
+      )}
+
+      {/* Modal konfirmasi submit dengan item external belum/basi */}
+      {submitWarningRows.length > 0 && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+          <div className="bg-white rounded-xl shadow-xl p-6 max-w-md w-full mx-4">
+            <h3 className="text-[17px] font-[850] text-ink mb-3">Konfirmasi Pengajuan</h3>
+            <p className="text-sm text-muted mb-3">
+              Item berikut belum atau perlu diperbarui datanya dari sistem eksternal:
+            </p>
+            <div className="bg-amber-50 border border-amber-200 rounded-lg px-4 py-3 mb-4">
+              <p className="text-sm font-[700] text-amber-800">
+                Baris: {submitWarningRows.join(', ')}
+              </p>
+              <p className="text-xs text-amber-700 mt-1">
+                Nilai yang digunakan adalah nilai terakhir yang tersimpan, yang mungkin belum mencerminkan data terkini.
+              </p>
+            </div>
+            <p className="text-sm mb-5">Apakah Anda tetap ingin mengajukan PDO ini?</p>
+            <div className="flex justify-end gap-3">
+              <Button
+                variant="secondary"
+                onClick={() => setSubmitWarningRows([])}
+              >
+                Batal
+              </Button>
+              <Button
+                loading={submitMut.isPending}
+                onClick={() => {
+                  setSubmitWarningRows([])
+                  submitMut.mutate()
+                }}
+              >
+                Tetap Ajukan
+              </Button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   )

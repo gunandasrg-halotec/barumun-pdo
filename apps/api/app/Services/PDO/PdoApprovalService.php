@@ -62,27 +62,6 @@ class PdoApprovalService
         $details->each(fn ($detail) => $detail->setRelation('pdoHeader', $pdo));
 
         $activeAutoExternalDetails = $details->filter(fn ($detail) => $detail->is_auto_external_active);
-        $unpulledAutoExternalRows = $activeAutoExternalDetails
-            ->filter(fn ($detail) => $detail->needs_pull)
-            ->pluck('display_order');
-
-        if ($unpulledAutoExternalRows->isNotEmpty()) {
-            abort(response()->json(['success' => false, 'error' => [
-                'code' => 'EXTERNAL_PULL_REQUIRED',
-                'message' => 'Baris ' . $unpulledAutoExternalRows->implode(', ') . ' wajib Ambil Data dulu sebelum submit PDO.',
-            ]], 422));
-        }
-
-        $staleAutoExternalRows = $activeAutoExternalDetails
-            ->filter(fn ($detail) => $detail->is_stale_external_snapshot)
-            ->pluck('display_order');
-
-        if ($staleAutoExternalRows->isNotEmpty()) {
-            abort(response()->json(['success' => false, 'error' => [
-                'code' => 'EXTERNAL_SNAPSHOT_STALE',
-                'message' => 'Baris ' . $staleAutoExternalRows->implode(', ') . ' wajib Ambil Data ulang karena Cost Mapping master berubah.',
-            ]], 422));
-        }
 
         $hasPositiveAmount = $details->contains(fn ($detail) => $detail->amount > 0);
         $hasSuccessfulAutoExternalPull = $activeAutoExternalDetails
