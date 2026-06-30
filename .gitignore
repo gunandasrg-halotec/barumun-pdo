@@ -20,6 +20,8 @@ apps/api/bootstrap/cache/*.php
 docker/api/.env.production
 docker/api/.env.staging
 
+docs/
+
 # Node
 node_modules/
 BPN.pem
