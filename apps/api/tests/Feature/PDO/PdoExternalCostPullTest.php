@@ -111,6 +111,83 @@ class PdoExternalCostPullTest extends TestCase
             ->once();
     }
 
+    public function test_pull_external_cost_uses_previous_month_payroll_period(): void
+    {
+        $this->setPayrollApiConfig('http://payroll.test', 'test-payroll-token');
+
+        $kerani = $this->keraniUser();
+        $pdo = $this->draftPdo($kerani);
+        $pdo->update([
+            'period_year' => 2026,
+            'period_month' => 7,
+        ]);
+        $detail = $this->autoExternalDetail($pdo, externalRole: null);
+
+        Http::fake([
+            'http://payroll.test/internal/payroll-costs*' => Http::response([
+                'status' => 'ok',
+                'amount' => 1250000,
+                'unit' => 'HK',
+                'volume' => 12,
+                'component' => ExpenseItem::PAYROLL_COMPONENT_BASE_PAYROLL_TOTAL,
+                'component_label' => 'Gaji Pokok',
+                'period' => '2026-06',
+                'estate_external_id' => 'EST-001',
+                'generated_at' => '2026-06-23T10:00:00+07:00',
+            ], 200),
+        ]);
+
+        Sanctum::actingAs($kerani);
+
+        $this->postJson("/api/v1/pdo/{$pdo->id}/details/{$detail->id}/pull-external-cost")
+            ->assertOk()
+            ->assertJsonPath('data.external_payload.period', '2026-06');
+
+        Http::assertSent(function ($request): bool {
+            return str_starts_with($request->url(), 'http://payroll.test/internal/payroll-costs')
+                && $request['year'] === 2026
+                && $request['month'] === 6;
+        });
+    }
+
+    public function test_pull_external_cost_previous_month_rolls_back_year_for_january_pdo(): void
+    {
+        $this->setPayrollApiConfig('http://payroll.test', 'test-payroll-token');
+
+        $kerani = $this->keraniUser();
+        $pdo = $this->draftPdo($kerani);
+        $pdo->update([
+            'period_year' => 2027,
+            'period_month' => 1,
+        ]);
+        $detail = $this->autoExternalDetail($pdo, externalRole: null);
+
+        Http::fake([
+            'http://payroll.test/internal/payroll-costs*' => Http::response([
+                'status' => 'ok',
+                'amount' => 1250000,
+                'unit' => 'HK',
+                'volume' => 12,
+                'component' => ExpenseItem::PAYROLL_COMPONENT_BASE_PAYROLL_TOTAL,
+                'component_label' => 'Gaji Pokok',
+                'period' => '2026-12',
+                'estate_external_id' => 'EST-001',
+                'generated_at' => '2026-12-23T10:00:00+07:00',
+            ], 200),
+        ]);
+
+        Sanctum::actingAs($kerani);
+
+        $this->postJson("/api/v1/pdo/{$pdo->id}/details/{$detail->id}/pull-external-cost")
+            ->assertOk();
+
+        Http::assertSent(function ($request): bool {
+            return str_starts_with($request->url(), 'http://payroll.test/internal/payroll-costs')
+                && $request['year'] === 2026
+                && $request['month'] === 12;
+        });
+    }
+
     public function test_pull_base_payroll_with_selected_component_key_does_not_send_legacy_role_param(): void
     {
         $this->setPayrollApiConfig('http://payroll.test', 'test-payroll-token');
@@ -349,6 +426,8 @@ class PdoExternalCostPullTest extends TestCase
                 ],
                 'external_amount_pulled_at' => now()->subDay(),
             ]);
+
+            $this->fakePayrollComponentOptions();
 
             Sanctum::actingAs($admin);
             $this->putJson("/api/v1/expense-items/{$detail->expense_item_id}", [
@@ -719,6 +798,8 @@ class PdoExternalCostPullTest extends TestCase
             'unit' => 'HK',
         ]);
 
+        $this->fakePayrollComponentOptions();
+
         Sanctum::actingAs($admin);
         $this->putJson("/api/v1/expense-items/{$detail->expense_item_id}", [
             'mode_input' => ExpenseItem::MODE_AUTO_EXTERNAL,
@@ -761,6 +842,8 @@ class PdoExternalCostPullTest extends TestCase
             'external_amount_pulled_at' => now()->subDay(),
         ]);
 
+        $this->fakePayrollComponentOptions();
+
         Sanctum::actingAs($admin);
         $this->putJson("/api/v1/expense-items/{$detail->expense_item_id}", [
             'mode_input' => ExpenseItem::MODE_AUTO_EXTERNAL,
@@ -782,6 +865,22 @@ class PdoExternalCostPullTest extends TestCase
     {
         config()->set('services.payroll_internal_api.base_url', $baseUrl);
         config()->set('services.payroll_internal_api.token', $token);
+    }
+
+    private function fakePayrollComponentOptions(): void
+    {
+        $this->setPayrollApiConfig('http://payroll.test', 'test-payroll-token');
+
+        Http::fake([
+            'http://payroll.test/internal/payroll-cost-component-options*' => Http::response([
+                'data' => [
+                    'options' => [
+                        ['component_key' => 'pemanen', 'label' => 'Pemanen'],
+                        ['component_key' => 'bhl', 'label' => 'BHL'],
+                    ],
+                ],
+            ], 200),
+        ]);
     }
 
     private function adminUser(?string $companyId = null): User
@@ -829,7 +928,7 @@ class PdoExternalCostPullTest extends TestCase
             'plantation_unit_id' => $kerani->plantation_unit_id,
             'created_by' => $kerani->id,
             'period_year' => 2026,
-            'period_month' => 6,
+            'period_month' => 7,
             'status' => PdoHeader::STATUS_DRAFT,
             'grand_total_amount' => 0,
         ]);

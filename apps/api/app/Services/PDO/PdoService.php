@@ -456,9 +456,11 @@ class PdoService
             : null;
         $storedComponentKey = $item->external_component_key;
 
+        $payrollPeriod = Carbon::create($pdo->period_year, $pdo->period_month, 1)->subMonth();
+
         $response = $this->requestPayrollCost(
-            year: $pdo->period_year,
-            month: $pdo->period_month,
+            year: $payrollPeriod->year,
+            month: $payrollPeriod->month,
             estateExternalId: $pdo->plantationUnit->payroll_estate_external_id,
             component: $item->external_component,
             componentKey: $componentKey,
