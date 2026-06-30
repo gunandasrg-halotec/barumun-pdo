@@ -10,12 +10,19 @@ use App\Models\PdoHeader;
 use App\Models\PlantationUnit;
 use App\Models\User;
 use App\Services\Payroll\PayrollApiService;
+use App\Exceptions\PayrollApiException;
 use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Validation\ValidationException;
 
 class MasterDataService
 {
-    public function __construct(private readonly PayrollApiService $payrollApi) {}
+    private readonly PayrollApiService $payrollApi;
+
+    public function __construct(?PayrollApiService $payrollApi = null)
+    {
+        $this->payrollApi = $payrollApi ?? app(PayrollApiService::class);
+    }
 
     // ─────────────────────────────────────────────────────
     // EXPENSE CATEGORIES
@@ -436,6 +443,93 @@ class MasterDataService
     // ─────────────────────────────────────────────────────
     // PRIVATE HELPERS
     // ─────────────────────────────────────────────────────
+
+    private function normalizeAndValidateAutoExternalMapping(array &$data, ?ExpenseItem $currentItem = null): void
+    {
+        $modeInput = $data['mode_input'] ?? $currentItem?->mode_input ?? ExpenseItem::MODE_MANUAL;
+
+        if ($modeInput !== ExpenseItem::MODE_AUTO_EXTERNAL) {
+            return;
+        }
+
+        $hasMappingPayload = array_key_exists('external_source_system', $data)
+            || array_key_exists('external_component', $data)
+            || array_key_exists('external_component_key', $data)
+            || array_key_exists('external_role', $data);
+
+        if (! $hasMappingPayload) {
+            return;
+        }
+
+        $component = $data['external_component'] ?? $currentItem?->external_component;
+        $data['external_component_key'] = $this->normalizeExternalComponentKey($data['external_component_key'] ?? null);
+
+        if (! is_string($component)) {
+            return;
+        }
+
+        if (! ExpenseItem::supportsExternalOption($component)) {
+            $data['external_component_key'] = null;
+
+            return;
+        }
+
+        if (ExpenseItem::requiresComponentKey($component) && ! filled($data['external_component_key'])) {
+            throw ValidationException::withMessages([
+                'external_component_key' => ['external_component_key wajib diisi untuk component additional_wage_type_total.'],
+            ]);
+        }
+
+        if ($data['external_component_key'] === null || $data['external_component_key'] === '') {
+            return;
+        }
+
+        if (! $this->isValidExternalComponentKey($component, (string) $data['external_component_key'])) {
+            throw ValidationException::withMessages([
+                'external_component_key' => ['external_component_key tidak ditemukan pada Payroll.'],
+            ]);
+        }
+    }
+
+    private function isValidExternalComponentKey(string $component, string $componentKey): bool
+    {
+        $validKeys = $this->resolvePayrollComponentKeys($component);
+
+        return in_array($componentKey, $validKeys, true);
+    }
+
+    /** @return array<int,string> */
+    private function resolvePayrollComponentKeys(string $component): array
+    {
+        try {
+            return collect($this->payrollApi->fetchComponentOptions($component))
+                ->pluck('component_key')
+                ->filter(fn ($key): bool => is_string($key))
+                ->unique()
+                ->values()
+                ->all();
+        } catch (PayrollApiException $exception) {
+            throw ValidationException::withMessages([
+                'external_component_key' => [$exception->getMessage()],
+            ]);
+        }
+    }
+
+    private function normalizeExternalComponentKey(mixed $value): ?string
+    {
+        if (! is_string($value)) {
+            return null;
+        }
+
+        $trimmed = trim($value);
+
+        return $trimmed === '' ? null : $trimmed;
+    }
+
+    private function externalComponentKeySnapshotValue(ExpenseItem $item): ?string
+    {
+        return $item->external_component_key;
+    }
 
     /** BR-MASTER-003 */
     private function assertNoDuplicateCategoryCode(string $code, string $companyId, ?string $exceptId = null): void
