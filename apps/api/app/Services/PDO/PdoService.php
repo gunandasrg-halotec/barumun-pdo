@@ -451,17 +451,22 @@ class PdoService
             ]);
         }
 
+        $componentKey = ExpenseItem::supportsExternalOption($item->external_component)
+            ? $this->resolveCanonicalExternalComponentKeyFromItem($item)
+            : null;
+        $storedComponentKey = $item->external_component_key;
+
         $response = $this->requestPayrollCost(
             year: $pdo->period_year,
             month: $pdo->period_month,
             estateExternalId: $pdo->plantationUnit->payroll_estate_external_id,
             component: $item->external_component,
-            componentKey: $item->external_component_key,
-            role: ExpenseItem::supportsPayrollRole($item->external_component) ? $item->external_role : null,
+            componentKey: $componentKey,
+            role: null,
         );
 
         if ($response->successful()) {
-            return DB::transaction(function () use ($actor, $detail, $item, $pdo, $response) {
+            return DB::transaction(function () use ($actor, $detail, $item, $pdo, $response, $componentKey, $storedComponentKey) {
                 $old = $detail->toArray();
                 $payload = array_merge($response->json(), $detail->currentExternalMappingFingerprint());
 
@@ -471,7 +476,7 @@ class PdoService
                     'unit' => data_get($payload, 'unit'),
                     'external_source_system' => $item->external_source_system,
                     'external_component' => $item->external_component,
-                    'external_component_key' => $item->external_component_key,
+                    'external_component_key' => $componentKey ?? $storedComponentKey,
                     'external_amount_pulled_at' => Carbon::now(),
                     'external_payload' => $payload,
                 ]);
@@ -597,6 +602,19 @@ class PdoService
         }
     }
 
+    private function resolveCanonicalExternalComponentKeyFromItem(ExpenseItem $item): ?string
+    {
+        if (filled($item->external_component_key)) {
+            return $item->external_component_key;
+        }
+
+        if (ExpenseItem::supportsPayrollRole($item->external_component) && filled($item->external_role)) {
+            return $item->external_role;
+        }
+
+        return null;
+    }
+
     private function requestPayrollCost(
         int $year,
         int $month,
@@ -628,7 +646,7 @@ class PdoService
         }
 
         try {
-            return Http::acceptJson()
+        return Http::acceptJson()
                 ->asJson()
                 ->withToken($token)
                 ->timeout(15)
@@ -639,7 +657,7 @@ class PdoService
                     'component' => $component,
                     'component_key' => $componentKey,
                     'role' => $role,
-                ], static fn (mixed $value): bool => $value !== null));
+                ], static fn (mixed $value): bool => $value !== null && $value !== ''));
         } catch (ConnectionException) {
             Log::error('PDO external pull connection failed', [
                 'year' => $year,

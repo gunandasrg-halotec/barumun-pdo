@@ -134,7 +134,7 @@ class PdoDetail extends Model
     public function getNeedsPullAttribute(): bool
     {
         return $this->isDraftExternalRow()
-            && ! $this->hasSuccessfulExternalSnapshot();
+            && (! $this->hasSuccessfulExternalSnapshot() || $this->is_stale_external_snapshot);
     }
 
     public function getIsStaleExternalSnapshotAttribute(): bool
@@ -161,6 +161,10 @@ class PdoDetail extends Model
     {
         $item = $this->currentExpenseItem();
 
+        $componentKey = $this->resolveCanonicalExternalComponentKey($item);
+
+        $hasCanonicalComponentKey = filled($componentKey);
+
         if (! $item instanceof ExpenseItem) {
             return [];
         }
@@ -168,9 +172,28 @@ class PdoDetail extends Model
         return [
             'source_system' => $item->external_source_system,
             'component' => $item->external_component,
-            'component_key' => $item->external_component_key,
-            'role' => ExpenseItem::supportsPayrollRole($item->external_component) ? $item->external_role : null,
+            'component_key' => $componentKey,
+            'role' => (! $hasCanonicalComponentKey && ExpenseItem::supportsPayrollRole($item->external_component)
+                ? $item->external_role
+                : null),
         ];
+    }
+
+    private function resolveCanonicalExternalComponentKey(?ExpenseItem $item): ?string
+    {
+        if (! $item instanceof ExpenseItem) {
+            return null;
+        }
+
+        if (filled($item->external_component_key)) {
+            return $item->external_component_key;
+        }
+
+        if (ExpenseItem::supportsPayrollRole($item->external_component) && filled($item->external_role)) {
+            return $item->external_role;
+        }
+
+        return null;
     }
 
     public function storedExternalMappingFingerprint(): array

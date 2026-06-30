@@ -1,13 +1,13 @@
-import { useEffect } from 'react'
+import { useEffect, useMemo, useRef } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { useForm, useWatch } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { api } from '@/lib/api'
+import { api, getApiErrorMessage } from '@/lib/api'
 import { Button } from '@/components/ui/Button'
 import { useToastStore } from '@/store/toast.store'
-import { useSubcategories } from '@/hooks/useMasterData'
+import { usePayrollComponentOptions, useSubcategories } from '@/hooks/useMasterData'
 import { ArrowLeft } from 'lucide-react'
 import type { ApiResponse, ExpenseItem, PlantationUnit } from '@/types'
 
@@ -34,13 +34,20 @@ const schema = z.object({
     'additional_wage_type_total',
   ]).nullable().optional(),
   external_component_key:       z.string().nullable().optional(),
-  external_role:                z.enum(['pemanen', 'bhl', 'supir', 'pegawai']).nullable().optional(),
   split_transfer:                      z.boolean(),
   split_transfer_plantation_unit_ids:  z.array(z.string().uuid()).nullable().optional(),
   is_routine:                          z.boolean(),
   routine_plantation_unit_ids:  z.array(z.string().uuid()).nullable().optional(),
   is_active:                    z.boolean(),
   notes:                        z.string().nullable().optional(),
+}).superRefine((values, ctx) => {
+  if (values.mode_input === 'auto_external' && values.external_component === 'additional_wage_type_total' && !values.external_component_key) {
+    ctx.addIssue({
+      path: ['external_component_key'],
+      code: z.ZodIssueCode.custom,
+      message: 'external_component_key wajib diisi untuk component additional_wage_type_total.',
+    })
+  }
 })
 
 type Form = z.infer<typeof schema>
@@ -56,14 +63,16 @@ const payrollComponents = [
   { value: 'additional_wage_type_total', label: 'Additional Wage Type Total' },
 ] as const
 
-const payrollRoles = [
-  { value: 'pemanen', label: 'Pemanen' },
-  { value: 'bhl', label: 'BHL' },
-  { value: 'supir', label: 'Supir' },
-  { value: 'pegawai', label: 'Pegawai' },
+const payrollComponentOptionsComponents = [
+  'base_payroll_total',
+  'maintenance_total',
+  'additional_wage_type_total',
 ] as const
 
 type PayrollComponent = typeof payrollComponents[number]['value']
+type PayrollComponentWithOptions = typeof payrollComponentOptionsComponents[number]
+
+const payrollComponentsWithOptions = new Set<PayrollComponentWithOptions>(payrollComponentOptionsComponents)
 
 function isPayrollComponent(value: unknown): value is PayrollComponent {
   return payrollComponents.some((component) => component.value === value)
@@ -95,14 +104,13 @@ export function ItemFormPage() {
     enabled: isEdit,
   })
 
-  const { register, handleSubmit, reset, setError, control, setValue, formState: { errors } } = useForm<Form>({
+  const { register, handleSubmit, reset, setError, control, getValues, setValue, formState: { errors } } = useForm<Form>({
     resolver: zodResolver(schema),
     defaultValues: {
       mode_input: 'manual',
       external_source_system: null,
       external_component: null,
       external_component_key: null,
-      external_role: null,
       split_transfer: false,
       split_transfer_plantation_unit_ids: null,
       is_routine: true,
@@ -118,7 +126,47 @@ export function ItemFormPage() {
   const routineUnitIds = useWatch({ control, name: 'routine_plantation_unit_ids' })
   const splitUnitIds   = useWatch({ control, name: 'split_transfer_plantation_unit_ids' })
   const isAutoExternal = modeInput === 'auto_external'
-  const needsComponentKey = extComponent === 'additional_wage_type_total'
+  const componentNeedsOptions = extComponent ? payrollComponentsWithOptions.has(extComponent as PayrollComponentWithOptions) : false
+  const externalComponentOptionsQuery = usePayrollComponentOptions(extComponent && isAutoExternal ? extComponent : null)
+  const componentOptions = externalComponentOptionsQuery.data?.options ?? []
+  const optionsLoaded = componentNeedsOptions
+    ? componentOptions.length > 0 || externalComponentOptionsQuery.isSuccess
+    : true
+  const componentAllowsEmptyOption = extComponent === 'base_payroll_total' || extComponent === 'maintenance_total'
+
+  const componentWatchInitialized = useRef(false)
+  const previousComponent = useRef<string | null>(null)
+
+  useEffect(() => {
+    if (!componentWatchInitialized.current) {
+      componentWatchInitialized.current = true
+      previousComponent.current = extComponent ?? null
+      return
+    }
+
+    if (isEdit && previousComponent.current === null) {
+      previousComponent.current = extComponent ?? null
+      return
+    }
+
+    if (previousComponent.current !== extComponent) {
+      setValue('external_component_key', null)
+    }
+
+    previousComponent.current = extComponent ?? null
+  }, [extComponent, isEdit, setValue])
+
+  const availableComponentKeys = useMemo(() => new Set(
+    componentOptions.map((option) => option.component_key),
+  ), [componentOptions])
+
+  useEffect(() => {
+    if (!componentNeedsOptions || !optionsLoaded) return
+    const currentKey = getValues('external_component_key')
+    if (currentKey && !availableComponentKeys.has(currentKey)) {
+      setValue('external_component_key', null)
+    }
+  }, [componentNeedsOptions, optionsLoaded, availableComponentKeys, getValues, setValue])
 
   useEffect(() => {
     if (existing) {
@@ -126,24 +174,29 @@ export function ItemFormPage() {
         external_source_system?: string | null
         external_component?: string | null
         external_component_key?: string | null
-        external_role?: Form['external_role']
+        external_role?: string | null
         split_transfer?: boolean
         split_transfer_plantation_unit_ids?: string[] | null
         routine_plantation_unit_ids?: string[] | null
       }
+      const legacyRole = ext.external_component === 'base_payroll_total' && !ext.external_component_key ? ext.external_role : null
+      const normalizedExternalRole = legacyRole ? legacyRole : null
       reset({
         ...existing,
         notes: existing.notes ?? '',
         external_source_system: ext.external_source_system === 'payroll' ? 'payroll' : null,
         external_component: isPayrollComponent(ext.external_component) ? ext.external_component : null,
-        external_component_key: ext.external_component_key ?? null,
-        external_role: ext.external_role ?? null,
+        external_component_key: ext.external_component_key ?? normalizedExternalRole ?? null,
         split_transfer:                     ext.split_transfer ?? false,
         split_transfer_plantation_unit_ids: ext.split_transfer_plantation_unit_ids ?? null,
         routine_plantation_unit_ids:        ext.routine_plantation_unit_ids ?? null,
       })
+
+      if (normalizedExternalRole && ext.external_component === 'base_payroll_total' && !ext.external_component_key) {
+        setValue('external_component_key', normalizedExternalRole)
+      }
     }
-  }, [existing, reset])
+  }, [existing, reset, setValue])
 
   useEffect(() => {
     if (isAutoExternal) {
@@ -154,16 +207,7 @@ export function ItemFormPage() {
     setValue('external_source_system', null)
     setValue('external_component', null)
     setValue('external_component_key', null)
-    setValue('external_role', null)
   }, [isAutoExternal, setValue])
-
-  useEffect(() => {
-    if (extComponent === 'base_payroll_total') {
-      return
-    }
-
-    setValue('external_role', null)
-  }, [extComponent, setValue])
 
   const toggleSplitUnit = (id: string) => {
     const current = splitUnitIds ?? []
@@ -189,16 +233,12 @@ export function ItemFormPage() {
           external_source_system: undefined,
           external_component: undefined,
           external_component_key: undefined,
-          external_role: undefined,
         }
         : {
           ...data,
           external_source_system: data.external_source_system ?? 'payroll',
-          external_component_key: data.external_component === 'additional_wage_type_total'
-            ? data.external_component_key
-            : null,
-          external_role: data.external_component === 'base_payroll_total'
-            ? data.external_role ?? null
+          external_component_key: payrollComponentsWithOptions.has(data.external_component as PayrollComponentWithOptions)
+            ? data.external_component_key ?? null
             : null,
         }
 
@@ -226,7 +266,6 @@ export function ItemFormPage() {
           'external_source_system',
           'external_component',
           'external_component_key',
-          'external_role',
           'split_transfer',
           'is_routine',
           'is_active',
@@ -245,6 +284,15 @@ export function ItemFormPage() {
     },
   })
 
+  const isSubmitDisabled = save.isPending || (componentNeedsOptions && (
+    externalComponentOptionsQuery.isLoading
+    || externalComponentOptionsQuery.isError
+    || !optionsLoaded
+  ))
+  const componentOptionsErrorMessage = componentNeedsOptions && externalComponentOptionsQuery.isError
+    ? `Gagal memuat opsi Payroll: ${getApiErrorMessage(externalComponentOptionsQuery.error)}`
+    : ''
+
   return (
     <div className="form-container-narrow">
       <div className="flex items-center gap-3 mb-6">
@@ -258,8 +306,8 @@ export function ItemFormPage() {
 
       <form onSubmit={handleSubmit((d) => save.mutate(d))} className="card flex flex-col gap-4">
         <div>
-          <label className="label">Sub-Kategori Induk</label>
-          <select {...register('subcategory_id')} className="input-base">
+          <label className="label" htmlFor="item-subcategory">Sub-Kategori Induk</label>
+          <select id="item-subcategory" {...register('subcategory_id')} className="input-base">
             <option value="">Pilih sub-kategori...</option>
             {subcategories?.map((s) => (
               <option key={s.id} value={s.id}>{s.code} — {s.name}</option>
@@ -298,8 +346,8 @@ export function ItemFormPage() {
         </div>
 
         <div>
-          <label className="label">Mode Input</label>
-          <select {...register('mode_input')} className="input-base">
+          <label className="label" htmlFor="item-mode-input">Mode Input</label>
+          <select id="item-mode-input" aria-label="Mode Input" {...register('mode_input')} className="input-base">
             <option value="manual">Manual</option>
             <option value="auto_external">Auto External</option>
           </select>
@@ -309,16 +357,16 @@ export function ItemFormPage() {
         {isAutoExternal && (
           <div className="border border-blue-200 rounded-card p-4 bg-blue-50 space-y-4">
             <div>
-              <label className="label">Sumber External</label>
-              <select {...register('external_source_system')} className="input-base">
+              <label className="label" htmlFor="item-external-source">Sumber External</label>
+              <select id="item-external-source" aria-label="Sumber External" {...register('external_source_system')} className="input-base">
                 <option value="payroll">Payroll</option>
               </select>
               {errors.external_source_system && <p className="field-error">{errors.external_source_system.message}</p>}
             </div>
 
             <div>
-              <label className="label">Component Payroll</label>
-              <select {...register('external_component')} className="input-base">
+              <label className="label" htmlFor="item-external-component">Component Payroll</label>
+              <select id="item-external-component" aria-label="Component Payroll" {...register('external_component')} className="input-base">
                 <option value="">Pilih component...</option>
                 {payrollComponents.map((component) => (
                   <option key={component.value} value={component.value}>{component.label}</option>
@@ -327,31 +375,34 @@ export function ItemFormPage() {
               {errors.external_component && <p className="field-error">{errors.external_component.message}</p>}
             </div>
 
-            {needsComponentKey && (
+            {componentNeedsOptions && (
               <div>
-                <label className="label">Component Key</label>
-                <input
+                <label className="label" htmlFor="item-external-component-key">Component Key</label>
+                <select
+                  id="item-external-component-key"
+                  aria-label="Component Key"
                   {...register('external_component_key')}
                   className="input-base"
-                  placeholder="Kode jenis upah tambahan"
-                />
+                  disabled={componentNeedsOptions && externalComponentOptionsQuery.isLoading}
+                >
+                  {componentAllowsEmptyOption && <option value="">Semua</option>}
+                  {!optionsLoaded ? (
+                    <option value="" disabled>Memuat opsi payroll...</option>
+                  ) : (
+                    componentOptions.map((option) => (
+                      <option key={option.component_key} value={option.component_key}>
+                        {option.label}
+                      </option>
+                    ))
+                  )}
+                </select>
+                {componentNeedsOptions && componentOptionsErrorMessage && (
+                  <p className="field-error">{componentOptionsErrorMessage}</p>
+                )}
                 {errors.external_component_key && <p className="field-error">{errors.external_component_key.message}</p>}
               </div>
             )}
-
-            {extComponent === 'base_payroll_total' && (
-              <div>
-                <label className="label">Role Payroll (opsional)</label>
-                <select {...register('external_role')} className="input-base">
-                  <option value="">Semua Role</option>
-                  {payrollRoles.map((role) => (
-                    <option key={role.value} value={role.value}>{role.label}</option>
-                  ))}
-                </select>
-                {errors.external_role && <p className="field-error">{errors.external_role.message}</p>}
-              </div>
-            )}
-        </div>
+          </div>
         )}
 
         <div>
@@ -447,7 +498,7 @@ export function ItemFormPage() {
         )}
 
         <div className="flex gap-2 pt-2">
-          <Button type="submit" loading={save.isPending}>Simpan</Button>
+          <Button type="submit" loading={save.isPending} disabled={isSubmitDisabled}>Simpan</Button>
           <Button type="button" variant="secondary" onClick={() => navigate('/master')}>Batal</Button>
         </div>
       </form>

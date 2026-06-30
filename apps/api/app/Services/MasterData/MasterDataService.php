@@ -2,6 +2,7 @@
 
 namespace App\Services\MasterData;
 
+use App\Exceptions\PayrollApiException;
 use App\Models\AuditLog;
 use App\Models\ExpenseCategory;
 use App\Models\ExpenseItem;
@@ -9,12 +10,20 @@ use App\Models\ExpenseSubcategory;
 use App\Models\PdoHeader;
 use App\Models\PlantationUnit;
 use App\Models\User;
-use Illuminate\Contracts\Pagination\LengthAwarePaginator;
+use App\Services\Payroll\PayrollApiService;
 use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Validation\ValidationException;
 
 class MasterDataService
 {
+    private readonly PayrollApiService $payrollApi;
+
+    public function __construct(?PayrollApiService $payrollApi = null)
+    {
+        $this->payrollApi = $payrollApi ?? app(PayrollApiService::class);
+    }
+
     // ─────────────────────────────────────────────────────
     // EXPENSE CATEGORIES
     // ─────────────────────────────────────────────────────
@@ -82,7 +91,7 @@ class MasterDataService
         if ($category->activeSubcategories()->exists()) {
             abort(response()->json([
                 'success' => false,
-                'error'   => ['code' => 'CATEGORY_HAS_CHILDREN', 'message' => 'Kategori masih memiliki sub-kategori aktif.'],
+                'error' => ['code' => 'CATEGORY_HAS_CHILDREN', 'message' => 'Kategori masih memiliki sub-kategori aktif.'],
             ], 409));
         }
 
@@ -185,7 +194,7 @@ class MasterDataService
         if ($subcategory->activeItems()->exists()) {
             abort(response()->json([
                 'success' => false,
-                'error'   => ['code' => 'SUBCATEGORY_HAS_CHILDREN', 'message' => 'Sub-kategori masih memiliki item biaya aktif.'],
+                'error' => ['code' => 'SUBCATEGORY_HAS_CHILDREN', 'message' => 'Sub-kategori masih memiliki item biaya aktif.'],
             ], 409));
         }
 
@@ -234,7 +243,7 @@ class MasterDataService
         return ExpenseItem::with(['subcategory.category'])
             ->where('is_routine', true)
             ->where('is_active', true)
-            ->orderByRaw("(SELECT display_order FROM expense_subcategories WHERE id = expense_items.subcategory_id)")
+            ->orderByRaw('(SELECT display_order FROM expense_subcategories WHERE id = expense_items.subcategory_id)')
             ->orderBy('code')
             ->get();
     }
@@ -249,14 +258,14 @@ class MasterDataService
         // BR-MASTER-003: Kode unik per subcategory
         $this->assertNoDuplicateItemCode($data['code'], $data['subcategory_id']);
 
+        $this->normalizeAndValidateAutoExternalMapping($data);
+
         $modeInput = $data['mode_input'] ?? ExpenseItem::MODE_MANUAL;
 
         if ($modeInput !== ExpenseItem::MODE_AUTO_EXTERNAL) {
             $data['external_source_system'] = null;
             $data['external_component'] = null;
             $data['external_component_key'] = null;
-            $data['external_role'] = null;
-        } elseif (! ExpenseItem::supportsPayrollRole($data['external_component'] ?? null)) {
             $data['external_role'] = null;
         }
 
@@ -282,14 +291,14 @@ class MasterDataService
             $this->assertNoDuplicateItemCode($data['code'], $subcategoryId, $item->id);
         }
 
+        $this->normalizeAndValidateAutoExternalMapping($data, $item);
+
         $modeInput = $data['mode_input'] ?? $item->mode_input;
 
         if ($modeInput !== ExpenseItem::MODE_AUTO_EXTERNAL) {
             $data['external_source_system'] = null;
             $data['external_component'] = null;
             $data['external_component_key'] = null;
-            $data['external_role'] = null;
-        } elseif (! ExpenseItem::supportsPayrollRole($data['external_component'] ?? $item->external_component)) {
             $data['external_role'] = null;
         }
 
@@ -298,10 +307,11 @@ class MasterDataService
 
         $old = $item->toArray();
         $oldModeInput = $item->mode_input;
+        $originalItem = clone $item;
         $item->update($data);
         $freshItem = $item->fresh();
 
-        $this->syncDraftDetailExternalOwnership($item, $oldModeInput, $freshItem);
+        $this->syncDraftDetailExternalOwnership($originalItem, $oldModeInput, $freshItem);
 
         AuditLog::record(
             actor: $actor,
@@ -337,20 +347,41 @@ class MasterDataService
 
     private function syncDraftDetailExternalOwnership(ExpenseItem $originalItem, string $oldModeInput, ExpenseItem $freshItem): void
     {
-        if ($oldModeInput === $freshItem->mode_input) {
-            return;
-        }
-
         $draftDetails = \DB::table('pdo_details')
             ->join('pdo_headers', 'pdo_headers.id', '=', 'pdo_details.pdo_header_id')
             ->where('pdo_details.expense_item_id', $originalItem->id)
             ->where('pdo_headers.status', PdoHeader::STATUS_DRAFT);
 
+        if ($oldModeInput === $freshItem->mode_input) {
+            if ($oldModeInput !== ExpenseItem::MODE_AUTO_EXTERNAL) {
+                return;
+            }
+
+            $mappingChanged = $originalItem->external_source_system !== $freshItem->external_source_system
+                || $originalItem->external_component !== $freshItem->external_component
+                || $this->externalComponentKeySnapshotValue($originalItem) !== $this->externalComponentKeySnapshotValue($freshItem);
+
+            if (! $mappingChanged) {
+                return;
+            }
+
+            $draftDetails->update([
+                'external_source_system' => $freshItem->external_source_system,
+                'external_component' => $freshItem->external_component,
+                'external_component_key' => $this->externalComponentKeySnapshotValue($freshItem),
+                'external_amount_pulled_at' => null,
+                'external_payload' => null,
+                'updated_at' => now(),
+            ]);
+
+            return;
+        }
+
         if ($freshItem->mode_input === ExpenseItem::MODE_AUTO_EXTERNAL) {
             $draftDetails->update([
                 'external_source_system' => $freshItem->external_source_system,
                 'external_component' => $freshItem->external_component,
-                'external_component_key' => $freshItem->external_component_key,
+                'external_component_key' => $this->externalComponentKeySnapshotValue($freshItem),
                 'external_amount_pulled_at' => null,
                 'external_payload' => null,
                 'updated_at' => now(),
@@ -375,7 +406,7 @@ class MasterDataService
         if ($item->isUsedInActivePdo()) {
             abort(response()->json([
                 'success' => false,
-                'error'   => ['code' => 'ITEM_IN_USE', 'message' => 'Item biaya sedang digunakan pada PDO yang aktif atau final. Nonaktifkan item melalui menu edit jika diperlukan.'],
+                'error' => ['code' => 'ITEM_IN_USE', 'message' => 'Item biaya sedang digunakan pada PDO yang aktif atau final. Nonaktifkan item melalui menu edit jika diperlukan.'],
             ], 409));
         }
 
@@ -414,6 +445,145 @@ class MasterDataService
     // PRIVATE HELPERS
     // ─────────────────────────────────────────────────────
 
+    private function normalizeAndValidateAutoExternalMapping(array &$data, ?ExpenseItem $currentItem = null): void
+    {
+        $modeInput = $data['mode_input'] ?? $currentItem?->mode_input ?? ExpenseItem::MODE_MANUAL;
+
+        if ($modeInput !== ExpenseItem::MODE_AUTO_EXTERNAL) {
+            return;
+        }
+
+        $hasMappingPayload = array_key_exists('external_source_system', $data)
+            || array_key_exists('external_component', $data)
+            || array_key_exists('external_component_key', $data)
+            || array_key_exists('external_role', $data);
+
+        if (! $hasMappingPayload && $currentItem && $currentItem->mode_input === ExpenseItem::MODE_AUTO_EXTERNAL) {
+            $legacyRole = $this->normalizeExternalComponentKey($currentItem->external_role);
+
+            if (
+                $currentItem->external_component === ExpenseItem::PAYROLL_COMPONENT_BASE_PAYROLL_TOTAL
+                && $currentItem->external_component_key === null
+                && $legacyRole !== null
+                && $this->isValidLegacyPayrollRoleKey($legacyRole)
+            ) {
+                $data['external_component_key'] = $legacyRole;
+                $data['external_role'] = null;
+            }
+
+            return;
+        }
+
+        $component = $data['external_component'] ?? $currentItem?->external_component;
+        $hasExplicitComponentKey = array_key_exists('external_component_key', $data);
+        $legacyRole = $this->normalizeExternalComponentKey($data['external_role'] ?? null);
+        $data['external_role'] = null;
+        $currentRole = $this->normalizeExternalComponentKey($currentItem?->external_role);
+        $keySourceFromLegacyRole = false;
+
+        if ($hasExplicitComponentKey) {
+            $data['external_component_key'] = $this->normalizeExternalComponentKey($data['external_component_key'] ?? null);
+        } elseif ($legacyRole !== null && ExpenseItem::supportsPayrollRole($component)) {
+            $data['external_component_key'] = $legacyRole;
+            $keySourceFromLegacyRole = true;
+        } elseif ($currentItem && $currentItem->external_component === $component) {
+            $data['external_component_key'] = $this->normalizeExternalComponentKey($currentItem->external_component_key);
+
+            if ($data['external_component_key'] === null && $currentRole !== null && ExpenseItem::supportsPayrollRole($component)) {
+                $data['external_component_key'] = $currentRole;
+                $keySourceFromLegacyRole = true;
+            }
+        } else {
+            $data['external_component_key'] = null;
+        }
+
+        if (! is_string($component)) {
+            return;
+        }
+
+        if (! ExpenseItem::supportsExternalOption($component)) {
+            $data['external_component_key'] = null;
+            $data['external_role'] = null;
+
+            return;
+        }
+
+        if (ExpenseItem::requiresComponentKey($component) && ! filled($data['external_component_key'])) {
+            throw ValidationException::withMessages([
+                'external_component_key' => ['external_component_key wajib diisi untuk component additional_wage_type_total.'],
+            ]);
+        }
+
+        if ($data['external_component_key'] === null || $data['external_component_key'] === '') {
+            return;
+        }
+
+        if ($keySourceFromLegacyRole && ! $this->isValidLegacyPayrollRoleKey($data['external_component_key'])) {
+            $data['external_component_key'] = null;
+
+            return;
+        }
+
+        if (! $this->isValidExternalComponentKey($component, (string) $data['external_component_key'])) {
+            throw ValidationException::withMessages([
+                'external_component_key' => ['external_component_key tidak ditemukan pada Payroll.'],
+            ]);
+        }
+    }
+
+    private function isValidLegacyPayrollRoleKey(string $componentKey): bool
+    {
+        return in_array($componentKey, ExpenseItem::payrollRoles(), true);
+    }
+
+    private function isValidExternalComponentKey(string $component, string $componentKey): bool
+    {
+        $validKeys = $this->resolvePayrollComponentKeys($component);
+
+        return in_array($componentKey, $validKeys, true);
+    }
+
+    /** @return array<int,string> */
+    private function resolvePayrollComponentKeys(string $component): array
+    {
+        try {
+            return collect($this->payrollApi->fetchComponentOptions($component))
+                ->pluck('component_key')
+                ->filter(fn ($key): bool => is_string($key))
+                ->unique()
+                ->values()
+                ->all();
+        } catch (PayrollApiException $exception) {
+            throw ValidationException::withMessages([
+                'external_component_key' => [$exception->getMessage()],
+            ]);
+        }
+    }
+
+    private function normalizeExternalComponentKey(mixed $value): ?string
+    {
+        if (! is_string($value)) {
+            return null;
+        }
+
+        $trimmed = trim($value);
+
+        return $trimmed === '' ? null : $trimmed;
+    }
+
+    private function externalComponentKeySnapshotValue(ExpenseItem $item): ?string
+    {
+        if (filled($item->external_component_key)) {
+            return $item->external_component_key;
+        }
+
+        if (ExpenseItem::supportsPayrollRole($item->external_component) && filled($item->external_role)) {
+            return $item->external_role;
+        }
+
+        return null;
+    }
+
     /** BR-MASTER-003 */
     private function assertNoDuplicateCategoryCode(string $code, string $companyId, ?string $exceptId = null): void
     {
@@ -426,7 +596,7 @@ class MasterDataService
         if ($exists) {
             abort(response()->json([
                 'success' => false,
-                'error'   => ['code' => 'DUPLICATE_CODE', 'message' => "Kode kategori '{$code}' sudah digunakan."],
+                'error' => ['code' => 'DUPLICATE_CODE', 'message' => "Kode kategori '{$code}' sudah digunakan."],
             ], 409));
         }
     }
@@ -443,7 +613,7 @@ class MasterDataService
         if ($exists) {
             abort(response()->json([
                 'success' => false,
-                'error'   => ['code' => 'DUPLICATE_CODE', 'message' => "Kode sub-kategori '{$code}' sudah digunakan dalam kategori ini."],
+                'error' => ['code' => 'DUPLICATE_CODE', 'message' => "Kode sub-kategori '{$code}' sudah digunakan dalam kategori ini."],
             ], 409));
         }
     }
@@ -460,7 +630,7 @@ class MasterDataService
         if ($exists) {
             abort(response()->json([
                 'success' => false,
-                'error'   => ['code' => 'DUPLICATE_CODE', 'message' => "Kode item '{$code}' sudah digunakan dalam sub-kategori ini."],
+                'error' => ['code' => 'DUPLICATE_CODE', 'message' => "Kode item '{$code}' sudah digunakan dalam sub-kategori ini."],
             ], 409));
         }
     }

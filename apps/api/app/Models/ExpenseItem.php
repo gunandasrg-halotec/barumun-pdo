@@ -2,40 +2,52 @@
 
 namespace App\Models;
 
+use App\Casts\PgUuidArray;
 use Illuminate\Database\Eloquent\Concerns\HasUuids;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\SoftDeletes;
-use App\Casts\PgUuidArray;
-use App\Models\PdoHeader;
 
 class ExpenseItem extends Model
 {
     use HasFactory, HasUuids, SoftDeletes;
 
     protected $primaryKey = 'id';
+
     public $incrementing = false;
+
     protected $keyType = 'string';
 
     // BR-MASTER-006: nilai valid mode_input
-    const MODE_MANUAL        = 'manual';
+    const MODE_MANUAL = 'manual';
+
     const MODE_AUTO_EXTERNAL = 'auto_external';
 
     const EXTERNAL_SOURCE_PAYROLL = 'payroll';
 
     const PAYROLL_COMPONENT_HARVEST_TBS_TOTAL = 'harvest_tbs_total';
+
     const PAYROLL_COMPONENT_RELAYED_TBS_TOTAL = 'relayed_tbs_total';
+
     const PAYROLL_COMPONENT_HARVEST_BONUS_TOTAL = 'harvest_bonus_total';
+
     const PAYROLL_COMPONENT_LOOSE_FRUIT_TOTAL = 'loose_fruit_total';
+
     const PAYROLL_COMPONENT_MAINTENANCE_TOTAL = 'maintenance_total';
+
     const PAYROLL_COMPONENT_BASE_PAYROLL_TOTAL = 'base_payroll_total';
+
     const PAYROLL_COMPONENT_ADDITIONAL_WAGES_TOTAL = 'additional_wages_total';
+
     const PAYROLL_COMPONENT_ADDITIONAL_WAGE_TYPE_TOTAL = 'additional_wage_type_total';
 
     const PAYROLL_ROLE_PEMANEN = 'pemanen';
+
     const PAYROLL_ROLE_BHL = 'bhl';
+
     const PAYROLL_ROLE_SUPIR = 'supir';
+
     const PAYROLL_ROLE_PEGAWAI = 'pegawai';
 
     /** @var array<int,string> */
@@ -56,6 +68,13 @@ class ExpenseItem extends Model
         self::PAYROLL_ROLE_BHL,
         self::PAYROLL_ROLE_SUPIR,
         self::PAYROLL_ROLE_PEGAWAI,
+    ];
+
+    /** @var array<int,string> */
+    public const PAYROLL_COMPONENTS_WITH_EXTERNAL_OPTIONS = [
+        self::PAYROLL_COMPONENT_BASE_PAYROLL_TOTAL,
+        self::PAYROLL_COMPONENT_MAINTENANCE_TOTAL,
+        self::PAYROLL_COMPONENT_ADDITIONAL_WAGE_TYPE_TOTAL,
     ];
 
     protected $fillable = [
@@ -98,21 +117,39 @@ class ExpenseItem extends Model
         return $component === self::PAYROLL_COMPONENT_ADDITIONAL_WAGE_TYPE_TOTAL;
     }
 
+    public static function supportsExternalOption(string $component): bool
+    {
+        return in_array($component, self::PAYROLL_COMPONENTS_WITH_EXTERNAL_OPTIONS, true);
+    }
+
     public static function supportsPayrollRole(?string $component): bool
     {
         return $component === self::PAYROLL_COMPONENT_BASE_PAYROLL_TOTAL;
     }
 
+    public static function optionedPayrollComponents(): array
+    {
+        return self::PAYROLL_COMPONENTS_WITH_EXTERNAL_OPTIONS;
+    }
+
+    public static function allowsEmptyExternalComponentKey(?string $component): bool
+    {
+        return in_array($component, [
+            self::PAYROLL_COMPONENT_BASE_PAYROLL_TOTAL,
+            self::PAYROLL_COMPONENT_MAINTENANCE_TOTAL,
+        ], true);
+    }
+
     protected function casts(): array
     {
         return [
-            'default_rate'                => 'integer',
-            'split_transfer'                      => 'boolean',
-            'split_transfer_plantation_unit_ids'  => PgUuidArray::class,
-            'is_routine'                          => 'boolean',
-            'is_active'                           => 'boolean',
-            'routine_plantation_unit_ids'         => PgUuidArray::class,
-            'deleted_at'                  => 'datetime',
+            'default_rate' => 'integer',
+            'split_transfer' => 'boolean',
+            'split_transfer_plantation_unit_ids' => PgUuidArray::class,
+            'is_routine' => 'boolean',
+            'is_active' => 'boolean',
+            'routine_plantation_unit_ids' => PgUuidArray::class,
+            'deleted_at' => 'datetime',
         ];
     }
 
