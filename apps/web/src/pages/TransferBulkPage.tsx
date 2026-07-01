@@ -29,9 +29,13 @@ interface ExpenseItemInfo {
   split_transfer_plantation_unit_ids: string[] | null
 }
 
+interface CategoryInfo { code: string; name: string }
+
 interface PdoDetailSummary {
   pdo_detail_id:     string
   expense_item:      ExpenseItemInfo | null
+  category:          CategoryInfo | null
+  subcategory:       CategoryInfo | null
   description:       string
   amount_approved:   number
   total_transferred: number
@@ -252,10 +256,10 @@ export function TransferBulkPage() {
       </div>
 
       <div className="overflow-auto border border-line rounded-drawer bg-white mb-4">
-        <table className="w-full border-collapse" style={{ minWidth: 1200 }}>
+        <table className="w-full border-collapse" style={{ minWidth: 1400 }}>
           <thead>
             <tr>
-              {['Item Biaya', 'Total Pengajuan', 'Transfer Sebelumnya', 'Sisa Dana', 'Tujuan Transfer', 'Jumlah (Rp)', 'Tanggal', 'No. Referensi', 'Catatan'].map((h) => (
+              {['Kategori / Sub-Kategori', 'Item Biaya', 'Total Pengajuan', 'Transfer Sebelumnya', 'Sisa Dana', 'Tujuan Transfer', 'Jumlah (Rp)', 'Tanggal', 'No. Referensi', 'Catatan'].map((h) => (
                 <th key={h} className="px-3 py-3 text-left text-[11px] font-bold uppercase tracking-wider text-muted bg-[#f7faf7] whitespace-nowrap">
                   {h}
                 </th>
@@ -266,7 +270,7 @@ export function TransferBulkPage() {
             {isLoading ? (
               Array.from({ length: 5 }).map((_, i) => (
                 <tr key={i}>
-                  {Array.from({ length: 9 }).map((__, j) => (
+                  {Array.from({ length: 10 }).map((__, j) => (
                     <td key={j} className="px-3 py-3"><div className="h-4 bg-[#f0f4f0] rounded animate-pulse" /></td>
                   ))}
                 </tr>
@@ -274,9 +278,17 @@ export function TransferBulkPage() {
             ) : details.map((detail, idx) => {
               const row      = rows[idx]
               if (!row) return null
-              const hasHistory  = detail.entries.length > 0
-              const isExpanded  = expandedIds.has(detail.pdo_detail_id)
-              const itemName    = detail.expense_item?.name ?? '—'
+              const hasHistory    = detail.entries.length > 0
+              const isExpanded   = expandedIds.has(detail.pdo_detail_id)
+              const itemCode     = detail.expense_item?.code
+              const itemName     = detail.expense_item?.name ?? '—'
+              const itemLabel    = itemCode ? `[${itemCode}] ${itemName}` : itemName
+              const categoryLabel = detail.category
+                ? `${detail.category.code} — ${detail.category.name}`
+                : '—'
+              const subcategoryLabel = detail.subcategory
+                ? `${detail.subcategory.code} — ${detail.subcategory.name}`
+                : null
 
               const historyToggle = hasHistory ? (
                 <button
@@ -298,8 +310,12 @@ export function TransferBulkPage() {
                   <>
                     {/* Baris header item */}
                     <tr key={`${detail.pdo_detail_id}-header`} className="border-t-2 border-line bg-[#f7faf7]">
+                      <td className="px-3 py-2 text-xs text-muted">
+                        <div className="font-[700] text-ink">{categoryLabel}</div>
+                        {subcategoryLabel && <div className="text-[11px] mt-0.5">{subcategoryLabel}</div>}
+                      </td>
                       <td className="px-3 py-2 font-bold text-sm">
-                        {itemName}
+                        {itemLabel}
                         <span className="ml-2 text-xs bg-blue-100 text-blue-700 px-1.5 py-0.5 rounded font-normal">Split</span>
                         {historyToggle}
                       </td>
@@ -345,7 +361,7 @@ export function TransferBulkPage() {
                     {/* Sub-baris 1 */}
                     <tr key={`${detail.pdo_detail_id}-s1`} className="border-t border-dashed border-line">
                       <td className="px-3 py-2 pl-8 text-xs text-muted">↳ Tujuan 1</td>
-                      <td colSpan={3} />
+                      <td colSpan={4} />
                       <td className="px-3 py-2">
                         <select
                           value={row.split.dest1}
@@ -371,7 +387,7 @@ export function TransferBulkPage() {
                     {/* Sub-baris 2 */}
                     <tr key={`${detail.pdo_detail_id}-s2`} className="border-t border-dashed border-line">
                       <td className="px-3 py-2 pl-8 text-xs text-muted">↳ Tujuan 2</td>
-                      <td colSpan={3} />
+                      <td colSpan={4} />
                       <td className="px-3 py-2">
                         <select
                           value={row.split.dest2}
@@ -397,7 +413,7 @@ export function TransferBulkPage() {
                     {/* Riwayat */}
                     {isExpanded && (
                       <tr key={`${detail.pdo_detail_id}-history`}>
-                        <td colSpan={9} className="px-0 py-0 bg-gray-50 border-t border-dashed border-line">
+                        <td colSpan={10} className="px-0 py-0 bg-gray-50 border-t border-dashed border-line">
                           <HistoryTable entries={detail.entries} />
                         </td>
                       </tr>
@@ -413,8 +429,12 @@ export function TransferBulkPage() {
               return (
                 <>
                   <tr key={detail.pdo_detail_id} className="border-t border-line hover:bg-[#fbfdfb]">
+                    <td className="px-3 py-3 text-xs text-muted">
+                      <div className="font-[700] text-ink">{categoryLabel}</div>
+                      {subcategoryLabel && <div className="text-[11px] mt-0.5">{subcategoryLabel}</div>}
+                    </td>
                     <td className="px-3 py-3 text-sm font-medium whitespace-nowrap">
-                      {itemName}
+                      {itemLabel}
                       {historyToggle}
                     </td>
                     <td className="px-3 py-3 text-sm">{fmt(detail.amount_approved)}</td>

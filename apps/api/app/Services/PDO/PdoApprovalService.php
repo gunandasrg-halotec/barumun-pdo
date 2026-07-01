@@ -6,7 +6,6 @@ use App\Models\PdoApprovalLog;
 use App\Models\ExpenseItem;
 use App\Models\PdoHeader;
 use App\Models\Role;
-use App\Models\TransferEntry;
 use App\Models\User;
 use App\Services\Notification\WhatsAppNotificationService;
 use Illuminate\Support\Facades\DB;
@@ -218,7 +217,6 @@ class PdoApprovalService
 
         $fresh = $pdo->fresh()->load(['creator', 'plantationUnit']);
         if ($nextStatus === PdoHeader::STATUS_FINAL) {
-            $this->autoGenerateTransferEntries($pdo);
             $this->wa->notifyFinal($fresh);
         } elseif ($nextStatus === PdoHeader::STATUS_REVIEWED_ASISTEN) {
             $this->wa->notifyApprovedByAsisten($fresh);
@@ -317,23 +315,4 @@ class PdoApprovalService
         ]);
     }
 
-    /**
-     * BR-APPROVAL-003: Saat PDO status menjadi FINAL, generate transfer_entries
-     * otomatis (entry_source='system') untuk setiap detail dengan amount > 0.
-     */
-    private function autoGenerateTransferEntries(PdoHeader $pdo): void
-    {
-        $pdo->details()->where('amount', '>', 0)->each(function ($detail) use ($pdo) {
-            TransferEntry::create([
-                'pdo_detail_id'    => $detail->id,
-                'recorded_by'      => null,
-                'entry_source'     => TransferEntry::SOURCE_SYSTEM,
-                'is_auto_generated'=> true,
-                'transfer_date'    => now()->toDateString(),
-                'amount'           => $detail->amount,
-                'reference_number' => "AUTO-{$pdo->pdo_number}",
-                'notes'            => 'Transfer otomatis saat PDO Final.',
-            ]);
-        });
-    }
 }

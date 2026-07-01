@@ -42,7 +42,7 @@ class TransferEntryService
     public function summaryByPdo(PdoHeader $pdo): SupportCollection
     {
         return $pdo->details()
-            ->with(['expenseItem', 'transferEntries'])
+            ->with(['expenseItem.subcategory.category', 'transferEntries'])
             ->get()
             ->map(fn ($detail) => [
                 'pdo_detail_id'    => $detail->id,
@@ -54,6 +54,12 @@ class TransferEntryService
                             'split_transfer_plantation_unit_ids' => $detail->expenseItem->split_transfer_plantation_unit_ids,
                         ]
                     )
+                    : null,
+                'category'         => $detail->expenseItem?->subcategory?->category
+                    ? $detail->expenseItem->subcategory->category->only(['code', 'name'])
+                    : null,
+                'subcategory'      => $detail->expenseItem?->subcategory
+                    ? $detail->expenseItem->subcategory->only(['code', 'name'])
                     : null,
                 'description'      => $detail->description,
                 'amount_approved'  => $detail->amount,
