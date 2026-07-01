@@ -5,7 +5,7 @@ import { api } from '@/lib/api'
 import { Button } from '@/components/ui/Button'
 import { useToastStore } from '@/store/toast.store'
 import { fmt } from '@/lib/format'
-import { ArrowLeft, ChevronDown, ChevronUp } from 'lucide-react'
+import { ArrowLeft, ChevronDown, ChevronUp, Download } from 'lucide-react'
 import type { ApiResponse } from '@/types'
 
 // ─── types ────────────────────────────────────────────────────────────────────
@@ -81,6 +81,293 @@ const DEST_LABELS: Record<TransferDest, string> = {
 const DEST_OPTIONS: TransferDest[] = ['rek_kebun', 'pribadi', 'vendor']
 
 const today = new Date().toISOString().split('T')[0]
+
+const MONTH_NAMES = ['Januari','Februari','Maret','April','Mei','Juni','Juli','Agustus','September','Oktober','November','Desember']
+
+// Cols: A=#/label  B=Kode  C=Item  D=Pengajuan  E=RekKebun  F=Pribadi  G=Vendor  H=TotalTransfer  I=SisaDana  J=%
+const NCOLS = 10
+const NUM_FMT = '#,##0'
+const PCT_FMT = '0%'
+
+type XLStyle = {
+  fill?: { type: 'pattern'; pattern: 'solid'; fgColor: { argb: string } }
+  font?: { bold?: boolean; italic?: boolean; color?: { argb: string }; size?: number }
+  alignment?: { horizontal?: 'center' | 'left' | 'right'; vertical?: 'middle' | 'top'; wrapText?: boolean }
+  numFmt?: string
+}
+
+function xlfill(hex: string): XLStyle['fill'] {
+  return { type: 'pattern', pattern: 'solid', fgColor: { argb: `FF${hex}` } }
+}
+
+const STYLES = {
+  title:        { fill: xlfill('1F4E79'), font: { bold: true, color: { argb: 'FFFFFFFF' }, size: 13 }, alignment: { horizontal: 'center' as const, vertical: 'middle' as const } },
+  meta:         { fill: xlfill('D6E4F7'), font: { color: { argb: 'FF0C447C' } }, alignment: { vertical: 'middle' as const } },
+  hdr1:         { fill: xlfill('2E75B6'), font: { bold: true, color: { argb: 'FFFFFFFF' }, size: 11 }, alignment: { horizontal: 'center' as const, vertical: 'middle' as const, wrapText: true } },
+  hdr2:         { fill: xlfill('5B9BD5'), font: { bold: true, color: { argb: 'FFFFFFFF' }, size: 10 }, alignment: { horizontal: 'center' as const, vertical: 'middle' as const } },
+  cat:          { fill: xlfill('D6E4F7'), font: { bold: true, color: { argb: 'FF0C447C' } } },
+  subcat:       { fill: xlfill('EEF4FB'), font: { italic: true, color: { argb: 'FF185FA5' } } },
+  detail:       { fill: xlfill('FFFFFF') },
+  subtotalSub:  { fill: xlfill('FFF2CC'), font: { bold: true, color: { argb: 'FF7B5800' } } },
+  subtotalCat:  { fill: xlfill('F4B942'), font: { bold: true, color: { argb: 'FF412402' } } },
+  grand:        { fill: xlfill('1F4E79'), font: { bold: true, color: { argb: 'FFFFFFFF' } } },
+  sumTitle:     { fill: xlfill('1F4E79'), font: { bold: true, color: { argb: 'FFFFFFFF' } }, alignment: { horizontal: 'center' as const, vertical: 'middle' as const } },
+  sumHdr:       { fill: xlfill('2E75B6'), font: { bold: true, color: { argb: 'FFFFFFFF' } }, alignment: { horizontal: 'center' as const, vertical: 'middle' as const } },
+  sumKebun:     { fill: xlfill('E1F5EE'), font: { color: { argb: 'FF085041' } } },
+  sumPribadi:   { fill: xlfill('FFF2CC'), font: { color: { argb: 'FF7B5800' } } },
+  sumVendor:    { fill: xlfill('EEF4FB'), font: { color: { argb: 'FF185FA5' } } },
+  sumTotal:     { fill: xlfill('1F4E79'), font: { bold: true, color: { argb: 'FFFFFFFF' } } },
+}
+
+async function exportToExcel(summary: PdoSummaryData) {
+  const { default: ExcelJS } = await import('exceljs')
+  const wb = new ExcelJS.Workbook()
+  const ws = wb.addWorksheet('Transfer Dana')
+
+  ws.columns = [
+    { width: 45 }, { width: 12 }, { width: 30 }, { width: 18 },
+    { width: 18 }, { width: 18 }, { width: 18 }, { width: 18 }, { width: 18 }, { width: 10 },
+  ]
+
+  let r = 1
+
+  // numFmtMap: { colIndex: formatString } — format disertakan langsung di style tiap cell
+  // agar tidak ada shared-reference antar cell yang menyebabkan format saling timpa.
+  const applyRowStyle = (rowNum: number, baseStyle: XLStyle, numFmtMap: Record<number, string> = {}) => {
+    const row = ws.getRow(rowNum)
+    for (let c = 1; c <= NCOLS; c++) {
+      const fmt = numFmtMap[c]
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      row.getCell(c).style = (fmt ? { ...baseStyle, numFmt: fmt } : { ...baseStyle }) as any
+    }
+  }
+
+  const DATA_FMT: Record<number, string> = { 4: NUM_FMT, 5: NUM_FMT, 6: NUM_FMT, 7: NUM_FMT, 8: NUM_FMT, 9: NUM_FMT, 10: PCT_FMT }
+
+  // ── Title ───────────────────────────────────────────────────────────────────
+  ws.mergeCells(`A${r}:J${r}`)
+  ws.getRow(r).height = 24
+  ws.getRow(r).getCell(1).value = 'LAPORAN TRANSFER DANA PDO'
+  applyRowStyle(r, STYLES.title)
+  r++
+
+  // ── Meta rows ────────────────────────────────────────────────────────────────
+  const addMeta = (label: string, value: string) => {
+    ws.mergeCells(`B${r}:J${r}`)
+    ws.getRow(r).height = 16
+    ws.getRow(r).getCell(1).value = label
+    ws.getRow(r).getCell(2).value = value
+    applyRowStyle(r, STYLES.meta)
+    r++
+  }
+  addMeta('No. PDO', summary.pdo_number)
+  addMeta('Unit', summary.plantation_unit ? `${summary.plantation_unit.code} — ${summary.plantation_unit.name}` : '—')
+  addMeta('Periode', `${MONTH_NAMES[summary.period_month - 1]} ${summary.period_year}`)
+  addMeta('Tanggal Cetak', new Date().toLocaleDateString('id-ID', { day: '2-digit', month: 'long', year: 'numeric' }))
+  r++ // kosong
+
+  // ── Column headers (2 baris, merge rowspan untuk kolom non-tujuan) ────────────
+  const hdrR1 = r, hdrR2 = r + 1
+  ws.mergeCells(`A${hdrR1}:A${hdrR2}`)
+  ws.mergeCells(`B${hdrR1}:B${hdrR2}`)
+  ws.mergeCells(`C${hdrR1}:C${hdrR2}`)
+  ws.mergeCells(`D${hdrR1}:D${hdrR2}`)
+  ws.mergeCells(`E${hdrR1}:G${hdrR1}`) // "Tujuan Transfer" span E-G di baris 1
+  ws.mergeCells(`H${hdrR1}:H${hdrR2}`)
+  ws.mergeCells(`I${hdrR1}:I${hdrR2}`)
+  ws.mergeCells(`J${hdrR1}:J${hdrR2}`)
+
+  ws.getRow(hdrR1).height = 20
+  ws.getRow(hdrR2).height = 16
+
+  const hdr1Labels = ['#','Kode','Item Biaya','Total Pengajuan','Tujuan Transfer',null,null,'Total Transfer','Sisa Dana','% Transfer']
+  hdr1Labels.forEach((v, i) => {
+    ws.getRow(hdrR1).getCell(i+1).value = v ?? ''
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    ws.getRow(hdrR1).getCell(i+1).style = STYLES.hdr1 as any
+  })
+  ;['Rek. Kebun','Pribadi','Vendor'].forEach((v, i) => {
+    ws.getRow(hdrR2).getCell(5+i).value = v
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    ws.getRow(hdrR2).getCell(5+i).style = STYLES.hdr2 as any
+  })
+  r = hdrR2 + 1
+
+  // ── Kelompokkan detail per kategori → sub-kategori ───────────────────────────
+  type GroupedSub = { code: string; name: string; items: PdoDetailSummary[] }
+  type GroupedCat = { code: string; name: string; subs: Map<string, GroupedSub> }
+  const catMap = new Map<string, GroupedCat>()
+  for (const d of summary.details) {
+    const catKey = d.category    ? `${d.category.code}|${d.category.name}`       : '__no_cat__'
+    const subKey = d.subcategory ? `${d.subcategory.code}|${d.subcategory.name}` : '__no_sub__'
+    if (!catMap.has(catKey)) catMap.set(catKey, { code: d.category?.code ?? '', name: d.category?.name ?? 'Tanpa Kategori', subs: new Map() })
+    const cat = catMap.get(catKey)!
+    if (!cat.subs.has(subKey)) cat.subs.set(subKey, { code: d.subcategory?.code ?? '', name: d.subcategory?.name ?? 'Tanpa Sub-Kategori', items: [] })
+    cat.subs.get(subKey)!.items.push(d)
+  }
+
+  let itemNo = 1
+  let grandApproved = 0, grandKebun = 0, grandPribadi = 0, grandVendor = 0
+
+  for (const cat of catMap.values()) {
+    // Baris kategori
+    const catLabel = cat.code ? `${cat.code} — ${cat.name}` : cat.name
+    ws.mergeCells(`A${r}:J${r}`)
+    ws.getRow(r).height = 16
+    ws.getRow(r).getCell(1).value = catLabel
+    applyRowStyle(r, STYLES.cat)
+    r++
+
+    let catApproved = 0, catKebun = 0, catPribadi = 0, catVendor = 0
+
+    for (const sub of cat.subs.values()) {
+      // Baris sub-kategori
+      const subLabel = sub.code ? `    ${sub.code} — ${sub.name}` : `    ${sub.name}`
+      ws.mergeCells(`A${r}:J${r}`)
+      ws.getRow(r).height = 16
+      ws.getRow(r).getCell(1).value = subLabel
+      applyRowStyle(r, STYLES.subcat)
+      r++
+
+      let subApproved = 0, subKebun = 0, subPribadi = 0, subVendor = 0
+
+      for (const d of sub.items) {
+        const kebun   = d.entries.filter(e => e.transfer_destination === 'rek_kebun').reduce((s,e) => s+e.amount, 0)
+        const pribadi = d.entries.filter(e => e.transfer_destination === 'pribadi').reduce((s,e) => s+e.amount, 0)
+        const vendor  = d.entries.filter(e => e.transfer_destination === 'vendor').reduce((s,e) => s+e.amount, 0)
+
+        const dr = ws.getRow(r)
+        dr.height = 16
+        dr.getCell(1).value = itemNo++
+        dr.getCell(2).value = d.expense_item?.code ?? ''
+        dr.getCell(3).value = d.expense_item?.name ?? d.description
+        dr.getCell(4).value = d.amount_approved
+        dr.getCell(5).value = kebun
+        dr.getCell(6).value = pribadi
+        dr.getCell(7).value = vendor
+        // Formula: Total Transfer = Rek.Kebun + Pribadi + Vendor
+        dr.getCell(8).value = { formula: `E${r}+F${r}+G${r}` }
+        // Formula: Sisa Dana = Total Pengajuan - Total Transfer
+        dr.getCell(9).value = { formula: `D${r}-H${r}` }
+        // Formula: % = Total Transfer / Total Pengajuan
+        dr.getCell(10).value = { formula: `IF(D${r}=0,0,H${r}/D${r})` }
+
+        applyRowStyle(r, STYLES.detail, DATA_FMT)
+        r++
+
+        subApproved += d.amount_approved
+        subKebun    += kebun; subPribadi += pribadi; subVendor += vendor
+      }
+
+      // Subtotal sub-kategori
+      const subTotal     = subKebun + subPribadi + subVendor
+      const subLabel2    = sub.code ? `        Subtotal ${sub.code} — ${sub.name}` : `        Subtotal ${sub.name}`
+      const ssr = ws.getRow(r)
+      ssr.height = 16
+      ssr.getCell(1).value = subLabel2
+      ssr.getCell(4).value = subApproved
+      ssr.getCell(5).value = subKebun
+      ssr.getCell(6).value = subPribadi
+      ssr.getCell(7).value = subVendor
+      ssr.getCell(8).value = subTotal
+      ssr.getCell(9).value = subApproved - subTotal
+      ssr.getCell(10).value = subApproved > 0 ? subTotal / subApproved : 0
+      applyRowStyle(r, STYLES.subtotalSub, DATA_FMT)
+      r++
+
+      catApproved += subApproved; catKebun += subKebun; catPribadi += subPribadi; catVendor += subVendor
+    }
+
+    // Subtotal kategori
+    const catTotal     = catKebun + catPribadi + catVendor
+    const catTotalLabel = cat.code ? `Total ${cat.code} — ${cat.name}` : `Total ${cat.name}`
+    const csr = ws.getRow(r)
+    csr.height = 16
+    csr.getCell(1).value = catTotalLabel
+    csr.getCell(4).value = catApproved
+    csr.getCell(5).value = catKebun
+    csr.getCell(6).value = catPribadi
+    csr.getCell(7).value = catVendor
+    csr.getCell(8).value = catTotal
+    csr.getCell(9).value = catApproved - catTotal
+    csr.getCell(10).value = catApproved > 0 ? catTotal / catApproved : 0
+    applyRowStyle(r, STYLES.subtotalCat, DATA_FMT)
+    r++; r++ // baris kosong antar kategori
+
+    grandApproved += catApproved; grandKebun += catKebun; grandPribadi += catPribadi; grandVendor += catVendor
+  }
+
+  // ── Grand Total ──────────────────────────────────────────────────────────────
+  const grandTotal = grandKebun + grandPribadi + grandVendor
+  const gtr = ws.getRow(r)
+  gtr.height = 20
+  gtr.getCell(1).value = 'GRAND TOTAL'
+  gtr.getCell(4).value = grandApproved
+  gtr.getCell(5).value = grandKebun
+  gtr.getCell(6).value = grandPribadi
+  gtr.getCell(7).value = grandVendor
+  gtr.getCell(8).value = grandTotal
+  gtr.getCell(9).value = grandApproved - grandTotal
+  gtr.getCell(10).value = grandApproved > 0 ? grandTotal / grandApproved : 0
+  applyRowStyle(r, STYLES.grand, DATA_FMT)
+  r += 2 // kosong sebelum summary
+
+  // ── Summary Tujuan Transfer ───────────────────────────────────────────────────
+  ws.mergeCells(`A${r}:J${r}`)
+  ws.getRow(r).height = 20
+  ws.getRow(r).getCell(1).value = 'RINGKASAN TRANSFER BERDASARKAN TUJUAN'
+  applyRowStyle(r, STYLES.sumTitle)
+  r++
+
+  // Header summary
+  ws.mergeCells(`A${r}:C${r}`)
+  ws.mergeCells(`D${r}:G${r}`)
+  ws.mergeCells(`H${r}:J${r}`)
+  ws.getRow(r).height = 16
+  ws.getRow(r).getCell(1).value = 'Tujuan Transfer'
+  ws.getRow(r).getCell(4).value = 'Jumlah (Rp)'
+  ws.getRow(r).getCell(8).value = '% dari Total Transfer'
+  applyRowStyle(r, STYLES.sumHdr)
+  r++
+
+  // Baris per tujuan
+  const sumDest = [
+    { label: 'Rekening Kebun', value: grandKebun,   style: STYLES.sumKebun   },
+    { label: 'Pribadi',        value: grandPribadi, style: STYLES.sumPribadi },
+    { label: 'Vendor',         value: grandVendor,  style: STYLES.sumVendor  },
+  ]
+  for (const sd of sumDest) {
+    ws.mergeCells(`A${r}:C${r}`)
+    ws.mergeCells(`D${r}:G${r}`)
+    ws.mergeCells(`H${r}:J${r}`)
+    ws.getRow(r).height = 16
+    ws.getRow(r).getCell(1).value = sd.label
+    ws.getRow(r).getCell(4).value = sd.value
+    ws.getRow(r).getCell(8).value = grandTotal > 0 ? sd.value / grandTotal : 0
+    applyRowStyle(r, sd.style, { 4: NUM_FMT, 8: PCT_FMT })
+    r++
+  }
+
+  // Total summary
+  ws.mergeCells(`A${r}:C${r}`)
+  ws.mergeCells(`D${r}:G${r}`)
+  ws.mergeCells(`H${r}:J${r}`)
+  ws.getRow(r).height = 18
+  ws.getRow(r).getCell(1).value = 'TOTAL'
+  ws.getRow(r).getCell(4).value = grandTotal
+  ws.getRow(r).getCell(8).value = grandTotal > 0 ? 1 : 0
+  applyRowStyle(r, STYLES.sumTotal, { 4: NUM_FMT, 8: PCT_FMT })
+
+  // ── Download ─────────────────────────────────────────────────────────────────
+  const buf  = await wb.xlsx.writeBuffer()
+  const blob = new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' })
+  const url  = URL.createObjectURL(blob)
+  const a    = document.createElement('a')
+  a.href = url
+  a.download = `Transfer_${summary.pdo_number}_${summary.plantation_unit?.code ?? 'PDO'}.xlsx`
+  a.click()
+  URL.revokeObjectURL(url)
+}
 
 function isSplitForUnit(item: ExpenseItemInfo | null, unitId: string | null): boolean {
   if (!item?.split_transfer) return false
@@ -247,12 +534,18 @@ export function TransferBulkPage() {
         <Button variant="secondary" size="sm" onClick={() => navigate('/transfer')}>
           <ArrowLeft className="w-4 h-4" />
         </Button>
-        <div>
+        <div className="flex-1">
           <h2 className="text-[28px] font-[950] text-ink">
             Detail Transfer — {isLoading ? '...' : summary?.pdo_number ?? pdoId}
           </h2>
           <p className="text-muted text-sm mt-1">Catat transfer per item biaya untuk PDO ini.</p>
         </div>
+        {summary && (
+          <Button variant="secondary" size="sm" onClick={() => { void exportToExcel(summary) }}>
+            <Download className="w-4 h-4 mr-1.5" />
+            Download Excel
+          </Button>
+        )}
       </div>
 
       <div className="overflow-auto border border-line rounded-drawer bg-white mb-4">
