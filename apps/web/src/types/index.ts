@@ -77,6 +77,7 @@ export interface ExpenseItem {
   external_role?: PayrollRole | null
   is_routine: boolean
   is_active: boolean
+  is_deduction: boolean
   notes: string | null
 }
 

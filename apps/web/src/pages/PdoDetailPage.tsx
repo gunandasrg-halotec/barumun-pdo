@@ -108,7 +108,7 @@ export function PdoDetailPage() {
   if (isLoading) return <div className="text-muted text-sm">Memuat...</div>
   if (!pdo) return <div className="text-muted text-sm">PDO tidak ditemukan.</div>
 
-  const totalAmount  = details?.reduce((s, d) => s + d.amount, 0) ?? 0
+  const totalAmount  = details?.reduce((s, d) => s + (d.expense_item?.is_deduction ? -d.amount : d.amount), 0) ?? 0
   const totalTransf  = details?.reduce((s, d) => s + (d.total_transferred ?? 0), 0) ?? 0
   const totalReal    = details?.reduce((s, d) => s + (d.total_realized ?? 0), 0) ?? 0
   const saldo        = totalTransf - totalReal
@@ -229,7 +229,7 @@ export function PdoDetailPage() {
                 <tbody>
                   {groups.map((g) => {
                     const catCollapsed = collapsedCats.has(g.catKey)
-                    const catTotal     = g.subs.reduce((s, sg) => s + sg.items.reduce((ss, d) => ss + d.amount, 0), 0)
+                    const catTotal     = g.subs.reduce((s, sg) => s + sg.items.reduce((ss, d) => ss + (d.expense_item?.is_deduction ? -d.amount : d.amount), 0), 0)
                     return (
                       <>
                         {/* Kategori row */}
@@ -245,7 +245,7 @@ export function PdoDetailPage() {
 
                         {!catCollapsed && g.subs.map((sg) => {
                           const subCollapsed = collapsedSubs.has(sg.subKey)
-                          const subTotal     = sg.items.reduce((s, d) => s + d.amount, 0)
+                          const subTotal     = sg.items.reduce((s, d) => s + (d.expense_item?.is_deduction ? -d.amount : d.amount), 0)
                           return (
                             <>
                               {/* Sub-kategori row */}

@@ -40,6 +40,7 @@ class UpdateExpenseItemRequest extends FormRequest
             'routine_plantation_unit_ids'       => ['nullable', 'array'],
             'routine_plantation_unit_ids.*'=> ['uuid', 'exists:plantation_units,id'],
             'is_active'                         => ['sometimes', 'boolean'],
+            'is_deduction'                      => ['sometimes', 'boolean'],
             'notes'                             => ['nullable', 'string'],
         ];
     }

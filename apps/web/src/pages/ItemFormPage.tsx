@@ -39,6 +39,7 @@ const schema = z.object({
   is_routine:                          z.boolean(),
   routine_plantation_unit_ids:  z.array(z.string().uuid()).nullable().optional(),
   is_active:                    z.boolean(),
+  is_deduction:                 z.boolean(),
   notes:                        z.string().nullable().optional(),
 }).superRefine((values, ctx) => {
   if (values.mode_input === 'auto_external' && values.external_component === 'additional_wage_type_total' && !values.external_component_key) {
@@ -115,6 +116,7 @@ export function ItemFormPage() {
       split_transfer_plantation_unit_ids: null,
       is_routine: true,
       is_active: true,
+      is_deduction: false,
       routine_plantation_unit_ids: null,
     },
   })
@@ -424,6 +426,11 @@ export function ItemFormPage() {
           <label className="flex items-center gap-2 text-sm font-[700] cursor-pointer">
             <input type="checkbox" {...register('is_active')} className="checkbox" />
             Aktif
+          </label>
+          <label className="flex items-center gap-2 text-sm font-[700] cursor-pointer">
+            <input type="checkbox" {...register('is_deduction')} className="checkbox" />
+            Potongan
+            <span className="text-xs text-muted font-normal">(mengurangi total PDO)</span>
           </label>
         </div>
 

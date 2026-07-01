@@ -94,9 +94,10 @@ class PdoService
                 ];
             }
 
+            $signedAmount = ($detail->expenseItem?->is_deduction ?? false) ? -$detail->amount : $detail->amount;
             $grouped[$catKey]['subcategories'][$subKey]['details'][]        = $detail;
-            $grouped[$catKey]['subcategories'][$subKey]['subtotal_amount'] += $detail->amount;
-            $grouped[$catKey]['subtotal_amount']                           += $detail->amount;
+            $grouped[$catKey]['subcategories'][$subKey]['subtotal_amount'] += $signedAmount;
+            $grouped[$catKey]['subtotal_amount']                           += $signedAmount;
         }
 
         // Re-index dan urutkan by display_order
@@ -682,9 +683,10 @@ class PdoService
 
     private function syncGrandTotal(PdoHeader $pdo): void
     {
-        $pdo->updateQuietly([
-            'grand_total_amount' => $pdo->details()->sum('amount'),
-        ]);
+        $total = $pdo->details()->with('expenseItem')->get()
+            ->sum(fn ($d) => ($d->expenseItem?->is_deduction ?? false) ? -$d->amount : $d->amount);
+
+        $pdo->updateQuietly(['grand_total_amount' => $total]);
     }
 
     private function externalPullLogContext(

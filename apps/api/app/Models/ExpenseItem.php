@@ -94,6 +94,7 @@ class ExpenseItem extends Model
         'is_routine',
         'routine_plantation_unit_ids',
         'is_active',
+        'is_deduction',
         'notes',
     ];
 
@@ -148,6 +149,7 @@ class ExpenseItem extends Model
             'split_transfer_plantation_unit_ids' => PgUuidArray::class,
             'is_routine' => 'boolean',
             'is_active' => 'boolean',
+            'is_deduction' => 'boolean',
             'routine_plantation_unit_ids' => PgUuidArray::class,
             'deleted_at' => 'datetime',
         ];
