@@ -66,6 +66,8 @@ class PdoService
             'plantationUnit',
             'creator',
             'details.expenseItem.subcategory.category',
+            'details.transferEntries',
+            'details.realizationEntries',
         ])->findOrFail($id);
 
         $this->hydrateDetailsExternalState($pdo->details, $pdo);

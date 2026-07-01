@@ -1,7 +1,7 @@
 import { useState, useCallback } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { usePdo } from '@/hooks/usePdo'
+import { useMutation, useQueryClient } from '@tanstack/react-query'
+import { usePdoGrouped } from '@/hooks/usePdo'
 import { useAuthStore } from '@/store/auth.store'
 import { PdoStatusBadge } from '@/components/ui/Badge'
 import { Button } from '@/components/ui/Button'
@@ -11,7 +11,7 @@ import { useToastStore } from '@/store/toast.store'
 import { fmt, fmtDate, fmtPeriode } from '@/lib/format'
 import { isKerani } from '@/lib/auth'
 import { api } from '@/lib/api'
-import type { PdoDetail, ApiResponse, RoleCode } from '@/types'
+import type { PdoDetail, RoleCode } from '@/types'
 import { ArrowLeft, GitBranch, Lock, CloudDownload } from 'lucide-react'
 import { DetailAttachmentPanel, AttachmentBadge } from '@/components/pdo/DetailAttachmentPanel'
 
@@ -67,16 +67,9 @@ export function PdoDetailPage() {
     })
   }, [])
 
-  const { data: pdo, isLoading } = usePdo(id)
-
-  const { data: details } = useQuery({
-    queryKey: ['pdo-details', id],
-    queryFn: async () => {
-      const res = await api.get<ApiResponse<PdoDetail[]>>(`/pdo/${id}/details`)
-      return res.data.data
-    },
-    enabled: !!id,
-  })
+  const { data: grouped, isFetching, isError, refetch } = usePdoGrouped(id)
+  const pdo     = grouped?.pdo
+  const details = grouped?.categories.flatMap((c) => c.subcategories.flatMap((s) => s.details))
 
   const submitMut = useMutation({
     mutationFn: () => api.post(`/pdo/${id}/submit`, {
@@ -105,7 +98,13 @@ export function PdoDetailPage() {
     }
   }
 
-  if (isLoading) return <div className="text-muted text-sm">Memuat...</div>
+  if (!pdo && isFetching) return <div className="text-muted text-sm">Memuat...</div>
+  if (isError && !pdo) return (
+    <div className="flex flex-col items-center justify-center gap-3 py-12 text-center">
+      <p className="text-sm text-muted">Gagal memuat data PDO. Periksa koneksi dan coba lagi.</p>
+      <button onClick={() => refetch()} className="text-sm font-[700] text-primary underline">Muat Ulang</button>
+    </div>
+  )
   if (!pdo) return <div className="text-muted text-sm">PDO tidak ditemukan.</div>
 
   const totalAmount  = details?.reduce((s, d) => s + (d.expense_item?.is_deduction ? -d.amount : d.amount), 0) ?? 0
