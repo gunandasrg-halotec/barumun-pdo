@@ -80,6 +80,10 @@ Route::prefix('v1')->middleware(['auth:sanctum', 'ensure.unit.access'])->group(f
         // Transfer summary per PDO
         Route::get('transfers', [TransferEntryController::class, 'summaryByPdo']);
         Route::post('transfers/bulk', [TransferEntryController::class, 'storeBulk']);
+        // Draft transfer: edit/hapus draft + commit permanen
+        Route::put('transfers/drafts/{entry}', [TransferEntryController::class, 'updateDraft']);
+        Route::delete('transfers/drafts/{entry}', [TransferEntryController::class, 'deleteDraft']);
+        Route::post('transfers/commit', [TransferEntryController::class, 'commitDrafts']);
 
         // Penutupan PDO — tidak perlu check.pdo.status karena endpoint ini yang menutup
         Route::post('close', [PdoCloseController::class, 'close']);

@@ -32,6 +32,7 @@ class PdoService
                 'total_transferred' => \DB::table('transfer_entries')
                     ->selectRaw('COALESCE(SUM(transfer_entries.amount), 0)')
                     ->join('pdo_details', 'pdo_details.id', '=', 'transfer_entries.pdo_detail_id')
+                    ->where('transfer_entries.status', \App\Models\TransferEntry::STATUS_COMMITTED)
                     ->whereColumn('pdo_details.pdo_header_id', 'pdo_headers.id'),
                 'total_realized' => \DB::table('realization_entries')
                     ->selectRaw('COALESCE(SUM(realization_entries.amount), 0)')
@@ -41,7 +42,8 @@ class PdoService
             ->addSelect(\DB::raw('(
                 COALESCE((SELECT SUM(te.amount) FROM transfer_entries te
                           JOIN pdo_details pd ON pd.id = te.pdo_detail_id
-                          WHERE pd.pdo_header_id = pdo_headers.id), 0)
+                          WHERE pd.pdo_header_id = pdo_headers.id
+                            AND te.status = 'committed'), 0)
                 -
                 COALESCE((SELECT SUM(re.amount) FROM realization_entries re
                           JOIN pdo_details pd ON pd.id = re.pdo_detail_id

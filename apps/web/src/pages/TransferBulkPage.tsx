@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '@/lib/api'
@@ -19,6 +19,7 @@ type TransferEntryRecord = {
   reference_number: string | null
   transfer_destination: TransferDest
   notes: string | null
+  status?: 'draft' | 'committed'
 }
 
 interface ExpenseItemInfo {
@@ -31,6 +32,8 @@ interface ExpenseItemInfo {
 
 interface CategoryInfo { code: string; name: string }
 
+type DestBreakdown = Record<TransferDest, number>
+
 interface PdoDetailSummary {
   pdo_detail_id:     string
   expense_item:      ExpenseItemInfo | null
@@ -38,9 +41,14 @@ interface PdoDetailSummary {
   subcategory:       CategoryInfo | null
   description:       string
   amount_approved:   number
-  total_transferred: number
-  remaining:         number
-  entries:           TransferEntryRecord[]
+  total_transferred: number          // committed (final) only
+  final_by_dest:     DestBreakdown
+  draft_total:       number
+  draft_by_dest:     DestBreakdown
+  combined_total:    number
+  remaining:         number          // amount - final - draft
+  entries:           TransferEntryRecord[]        // committed history
+  draft_entries:     TransferEntryRecord[]        // editable drafts
 }
 
 interface PdoSummaryData {
@@ -84,8 +92,12 @@ const today = new Date().toISOString().split('T')[0]
 
 const MONTH_NAMES = ['Januari','Februari','Maret','April','Mei','Juni','Juli','Agustus','September','Oktober','November','Desember']
 
-// Cols: A=#/label  B=Kode  C=Item  D=Pengajuan  E=RekKebun  F=Pribadi  G=Vendor  H=TotalTransfer  I=SisaDana  J=%
-const NCOLS = 10
+// ═══ Ekspor Excel ═══════════════════════════════════════════════════════════════
+// Kolom: A=#  B=Kode  C=Item  D=Pengajuan
+//        E,F,G=Final(Rek,Pribadi,Vendor)  H=Final Subtotal
+//        I,J,K=Draft(Rek,Pribadi,Vendor)  L=Draft Subtotal
+//        M=Total(Final+Draft)  N=Sisa  O=%
+const NCOLS = 15
 const NUM_FMT = '#,##0'
 const PCT_FMT = '0%'
 
@@ -103,12 +115,14 @@ function xlfill(hex: string): XLStyle['fill'] {
 const STYLES = {
   title:        { fill: xlfill('1F4E79'), font: { bold: true, color: { argb: 'FFFFFFFF' }, size: 13 }, alignment: { horizontal: 'center' as const, vertical: 'middle' as const } },
   meta:         { fill: xlfill('D6E4F7'), font: { color: { argb: 'FF0C447C' } }, alignment: { vertical: 'middle' as const } },
-  hdr1:         { fill: xlfill('2E75B6'), font: { bold: true, color: { argb: 'FFFFFFFF' }, size: 11 }, alignment: { horizontal: 'center' as const, vertical: 'middle' as const, wrapText: true } },
-  hdr2:         { fill: xlfill('5B9BD5'), font: { bold: true, color: { argb: 'FFFFFFFF' }, size: 10 }, alignment: { horizontal: 'center' as const, vertical: 'middle' as const } },
+  hdr:          { fill: xlfill('2E75B6'), font: { bold: true, color: { argb: 'FFFFFFFF' }, size: 11 }, alignment: { horizontal: 'center' as const, vertical: 'middle' as const, wrapText: true } },
+  grpFinal:     { fill: xlfill('1D9E75'), font: { bold: true, color: { argb: 'FFFFFFFF' } }, alignment: { horizontal: 'center' as const, vertical: 'middle' as const } },
+  grpDraft:     { fill: xlfill('EF9F27'), font: { bold: true, color: { argb: 'FF412402' } }, alignment: { horizontal: 'center' as const, vertical: 'middle' as const } },
+  subFinal:     { fill: xlfill('E1F5EE'), font: { bold: true, color: { argb: 'FF085041' }, size: 10 }, alignment: { horizontal: 'center' as const, vertical: 'middle' as const } },
+  subDraft:     { fill: xlfill('FAEEDA'), font: { bold: true, color: { argb: 'FF633806' }, size: 10 }, alignment: { horizontal: 'center' as const, vertical: 'middle' as const } },
   cat:          { fill: xlfill('D6E4F7'), font: { bold: true, color: { argb: 'FF0C447C' } } },
   subcat:       { fill: xlfill('EEF4FB'), font: { italic: true, color: { argb: 'FF185FA5' } } },
   detail:       { fill: xlfill('FFFFFF') },
-  subtotalSub:  { fill: xlfill('FFF2CC'), font: { bold: true, color: { argb: 'FF7B5800' } } },
   subtotalCat:  { fill: xlfill('F4B942'), font: { bold: true, color: { argb: 'FF412402' } } },
   grand:        { fill: xlfill('1F4E79'), font: { bold: true, color: { argb: 'FFFFFFFF' } } },
   sumTitle:     { fill: xlfill('1F4E79'), font: { bold: true, color: { argb: 'FFFFFFFF' } }, alignment: { horizontal: 'center' as const, vertical: 'middle' as const } },
@@ -125,14 +139,14 @@ async function exportToExcel(summary: PdoSummaryData) {
   const ws = wb.addWorksheet('Transfer Dana')
 
   ws.columns = [
-    { width: 45 }, { width: 12 }, { width: 30 }, { width: 18 },
-    { width: 18 }, { width: 18 }, { width: 18 }, { width: 18 }, { width: 18 }, { width: 10 },
+    { width: 5 }, { width: 14 }, { width: 30 }, { width: 16 },
+    { width: 14 }, { width: 12 }, { width: 12 }, { width: 15 },
+    { width: 14 }, { width: 12 }, { width: 12 }, { width: 15 },
+    { width: 16 }, { width: 15 }, { width: 8 },
   ]
 
   let r = 1
 
-  // numFmtMap: { colIndex: formatString } — format disertakan langsung di style tiap cell
-  // agar tidak ada shared-reference antar cell yang menyebabkan format saling timpa.
   const applyRowStyle = (rowNum: number, baseStyle: XLStyle, numFmtMap: Record<number, string> = {}) => {
     const row = ws.getRow(rowNum)
     for (let c = 1; c <= NCOLS; c++) {
@@ -142,18 +156,22 @@ async function exportToExcel(summary: PdoSummaryData) {
     }
   }
 
-  const DATA_FMT: Record<number, string> = { 4: NUM_FMT, 5: NUM_FMT, 6: NUM_FMT, 7: NUM_FMT, 8: NUM_FMT, 9: NUM_FMT, 10: PCT_FMT }
+  // Kolom numerik: D..N angka, O persen
+  const DATA_FMT: Record<number, string> = {
+    4: NUM_FMT, 5: NUM_FMT, 6: NUM_FMT, 7: NUM_FMT, 8: NUM_FMT,
+    9: NUM_FMT, 10: NUM_FMT, 11: NUM_FMT, 12: NUM_FMT, 13: NUM_FMT, 14: NUM_FMT, 15: PCT_FMT,
+  }
 
-  // ── Title ───────────────────────────────────────────────────────────────────
-  ws.mergeCells(`A${r}:J${r}`)
+  // ── Title ─────────────────────────────────────────────────────────────────────
+  ws.mergeCells(`A${r}:O${r}`)
   ws.getRow(r).height = 24
   ws.getRow(r).getCell(1).value = 'LAPORAN TRANSFER DANA PDO'
   applyRowStyle(r, STYLES.title)
   r++
 
-  // ── Meta rows ────────────────────────────────────────────────────────────────
+  // ── Meta rows ──────────────────────────────────────────────────────────────────
   const addMeta = (label: string, value: string) => {
-    ws.mergeCells(`B${r}:J${r}`)
+    ws.mergeCells(`B${r}:O${r}`)
     ws.getRow(r).height = 16
     ws.getRow(r).getCell(1).value = label
     ws.getRow(r).getCell(2).value = value
@@ -166,34 +184,53 @@ async function exportToExcel(summary: PdoSummaryData) {
   addMeta('Tanggal Cetak', new Date().toLocaleDateString('id-ID', { day: '2-digit', month: 'long', year: 'numeric' }))
   r++ // kosong
 
-  // ── Column headers (2 baris, merge rowspan untuk kolom non-tujuan) ────────────
-  const hdrR1 = r, hdrR2 = r + 1
-  ws.mergeCells(`A${hdrR1}:A${hdrR2}`)
-  ws.mergeCells(`B${hdrR1}:B${hdrR2}`)
-  ws.mergeCells(`C${hdrR1}:C${hdrR2}`)
-  ws.mergeCells(`D${hdrR1}:D${hdrR2}`)
-  ws.mergeCells(`E${hdrR1}:G${hdrR1}`) // "Tujuan Transfer" span E-G di baris 1
-  ws.mergeCells(`H${hdrR1}:H${hdrR2}`)
-  ws.mergeCells(`I${hdrR1}:I${hdrR2}`)
-  ws.mergeCells(`J${hdrR1}:J${hdrR2}`)
+  // ── Header 3 baris ──────────────────────────────────────────────────────────────
+  const h1 = r, h2 = r + 1, h3 = r + 2
+  // kolom tunggal rowspan penuh
+  ;['A','B','C','D','M','N','O'].forEach((col) => ws.mergeCells(`${col}${h1}:${col}${h3}`))
+  // grup Final (E-H) & Draft (I-L)
+  ws.mergeCells(`E${h1}:H${h1}`)
+  ws.mergeCells(`I${h1}:L${h1}`)
+  // baris 2: tujuan (E-G, I-K) + subtotal rowspan2 (H, L)
+  ws.mergeCells(`E${h2}:G${h2}`)
+  ws.mergeCells(`I${h2}:K${h2}`)
+  ws.mergeCells(`H${h2}:H${h3}`)
+  ws.mergeCells(`L${h2}:L${h3}`)
 
-  ws.getRow(hdrR1).height = 20
-  ws.getRow(hdrR2).height = 16
+  ws.getRow(h1).height = 18; ws.getRow(h2).height = 16; ws.getRow(h3).height = 16
 
-  const hdr1Labels = ['#','Kode','Item Biaya','Total Pengajuan','Tujuan Transfer',null,null,'Total Transfer','Sisa Dana','% Transfer']
-  hdr1Labels.forEach((v, i) => {
-    ws.getRow(hdrR1).getCell(i+1).value = v ?? ''
+  const set = (rowN: number, col: number, val: string, style: XLStyle) => {
+    ws.getRow(rowN).getCell(col).value = val
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    ws.getRow(hdrR1).getCell(i+1).style = STYLES.hdr1 as any
-  })
-  ;['Rek. Kebun','Pribadi','Vendor'].forEach((v, i) => {
-    ws.getRow(hdrR2).getCell(5+i).value = v
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    ws.getRow(hdrR2).getCell(5+i).style = STYLES.hdr2 as any
-  })
-  r = hdrR2 + 1
+    ws.getRow(rowN).getCell(col).style = style as any
+  }
+  // apply base header style ke seluruh area header dulu (agar sel kosong tetap berwarna)
+  ;[h1, h2, h3].forEach((rr) => applyRowStyle(rr, STYLES.hdr))
 
-  // ── Kelompokkan detail per kategori → sub-kategori ───────────────────────────
+  set(h1, 1, '#', STYLES.hdr)
+  set(h1, 2, 'Kode', STYLES.hdr)
+  set(h1, 3, 'Item Biaya', STYLES.hdr)
+  set(h1, 4, 'Total Pengajuan', STYLES.hdr)
+  set(h1, 5, 'Dana yang sudah ditransfer', STYLES.grpFinal)
+  set(h1, 9, 'Draft (belum permanen)', STYLES.grpDraft)
+  set(h1, 13, 'Total (Final + Draft)', STYLES.hdr)
+  set(h1, 14, 'Sisa Dana', STYLES.hdr)
+  set(h1, 15, '%', STYLES.hdr)
+
+  set(h2, 5, 'Tujuan', STYLES.subFinal)
+  set(h2, 8, 'Subtotal', STYLES.subFinal)
+  set(h2, 9, 'Tujuan', STYLES.subDraft)
+  set(h2, 12, 'Subtotal', STYLES.subDraft)
+
+  set(h3, 5, 'Rek. Kebun', STYLES.subFinal)
+  set(h3, 6, 'Pribadi', STYLES.subFinal)
+  set(h3, 7, 'Vendor', STYLES.subFinal)
+  set(h3, 9, 'Rek. Kebun', STYLES.subDraft)
+  set(h3, 10, 'Pribadi', STYLES.subDraft)
+  set(h3, 11, 'Vendor', STYLES.subDraft)
+  r = h3 + 1
+
+  // ── Kelompokkan detail per kategori → sub-kategori ────────────────────────────
   type GroupedSub = { code: string; name: string; items: PdoDetailSummary[] }
   type GroupedCat = { code: string; name: string; subs: Map<string, GroupedSub> }
   const catMap = new Map<string, GroupedCat>()
@@ -206,159 +243,150 @@ async function exportToExcel(summary: PdoSummaryData) {
     cat.subs.get(subKey)!.items.push(d)
   }
 
+  // akumulator tipe [approved, fRek, fPri, fVen, dRek, dPri, dVen]
+  type Acc = [number, number, number, number, number, number, number]
+  const zero = (): Acc => [0, 0, 0, 0, 0, 0, 0]
+  const addTo = (a: Acc, b: Acc) => { for (let i = 0; i < 7; i++) a[i] += b[i] }
+
+  // Tulis baris subtotal/kategori/grand dengan nilai statis (breakdown final & draft)
+  const writeAggRow = (label: string, a: Acc, style: XLStyle) => {
+    const fSub = a[1] + a[2] + a[3]
+    const dSub = a[4] + a[5] + a[6]
+    const combined = fSub + dSub
+    const row = ws.getRow(r)
+    row.height = 16
+    row.getCell(1).value = label
+    row.getCell(4).value = a[0]
+    row.getCell(5).value = a[1]; row.getCell(6).value = a[2]; row.getCell(7).value = a[3]; row.getCell(8).value = fSub
+    row.getCell(9).value = a[4]; row.getCell(10).value = a[5]; row.getCell(11).value = a[6]; row.getCell(12).value = dSub
+    row.getCell(13).value = combined
+    row.getCell(14).value = a[0] - combined
+    row.getCell(15).value = a[0] > 0 ? combined / a[0] : 0
+    applyRowStyle(r, style, DATA_FMT)
+    r++
+  }
+
   let itemNo = 1
-  let grandApproved = 0, grandKebun = 0, grandPribadi = 0, grandVendor = 0
+  const grand = zero()
 
   for (const cat of catMap.values()) {
-    // Baris kategori
-    const catLabel = cat.code ? `${cat.code} — ${cat.name}` : cat.name
-    ws.mergeCells(`A${r}:J${r}`)
+    ws.mergeCells(`A${r}:O${r}`)
     ws.getRow(r).height = 16
-    ws.getRow(r).getCell(1).value = catLabel
+    ws.getRow(r).getCell(1).value = cat.code ? `${cat.code} — ${cat.name}` : cat.name
     applyRowStyle(r, STYLES.cat)
     r++
 
-    let catApproved = 0, catKebun = 0, catPribadi = 0, catVendor = 0
+    const catAcc = zero()
 
     for (const sub of cat.subs.values()) {
-      // Baris sub-kategori
-      const subLabel = sub.code ? `    ${sub.code} — ${sub.name}` : `    ${sub.name}`
-      ws.mergeCells(`A${r}:J${r}`)
+      ws.mergeCells(`A${r}:O${r}`)
       ws.getRow(r).height = 16
-      ws.getRow(r).getCell(1).value = subLabel
+      ws.getRow(r).getCell(1).value = sub.code ? `    ${sub.code} — ${sub.name}` : `    ${sub.name}`
       applyRowStyle(r, STYLES.subcat)
       r++
 
-      let subApproved = 0, subKebun = 0, subPribadi = 0, subVendor = 0
+      const subAcc = zero()
 
       for (const d of sub.items) {
-        const kebun   = d.entries.filter(e => e.transfer_destination === 'rek_kebun').reduce((s,e) => s+e.amount, 0)
-        const pribadi = d.entries.filter(e => e.transfer_destination === 'pribadi').reduce((s,e) => s+e.amount, 0)
-        const vendor  = d.entries.filter(e => e.transfer_destination === 'vendor').reduce((s,e) => s+e.amount, 0)
-
         const dr = ws.getRow(r)
         dr.height = 16
         dr.getCell(1).value = itemNo++
         dr.getCell(2).value = d.expense_item?.code ?? ''
         dr.getCell(3).value = d.expense_item?.name ?? d.description
         dr.getCell(4).value = d.amount_approved
-        dr.getCell(5).value = kebun
-        dr.getCell(6).value = pribadi
-        dr.getCell(7).value = vendor
-        // Formula: Total Transfer = Rek.Kebun + Pribadi + Vendor
-        dr.getCell(8).value = { formula: `E${r}+F${r}+G${r}` }
-        // Formula: Sisa Dana = Total Pengajuan - Total Transfer
-        dr.getCell(9).value = { formula: `D${r}-H${r}` }
-        // Formula: % = Total Transfer / Total Pengajuan
-        dr.getCell(10).value = { formula: `IF(D${r}=0,0,H${r}/D${r})` }
-
+        dr.getCell(5).value = d.final_by_dest.rek_kebun
+        dr.getCell(6).value = d.final_by_dest.pribadi
+        dr.getCell(7).value = d.final_by_dest.vendor
+        dr.getCell(8).value = { formula: `E${r}+F${r}+G${r}` }        // Final subtotal
+        dr.getCell(9).value  = d.draft_by_dest.rek_kebun
+        dr.getCell(10).value = d.draft_by_dest.pribadi
+        dr.getCell(11).value = d.draft_by_dest.vendor
+        dr.getCell(12).value = { formula: `I${r}+J${r}+K${r}` }        // Draft subtotal
+        dr.getCell(13).value = { formula: `H${r}+L${r}` }              // Total (final+draft)
+        dr.getCell(14).value = { formula: `D${r}-M${r}` }              // Sisa
+        dr.getCell(15).value = { formula: `IF(D${r}=0,0,M${r}/D${r})` } // %
         applyRowStyle(r, STYLES.detail, DATA_FMT)
         r++
 
-        subApproved += d.amount_approved
-        subKebun    += kebun; subPribadi += pribadi; subVendor += vendor
+        const rowAcc: Acc = [
+          d.amount_approved,
+          d.final_by_dest.rek_kebun, d.final_by_dest.pribadi, d.final_by_dest.vendor,
+          d.draft_by_dest.rek_kebun, d.draft_by_dest.pribadi, d.draft_by_dest.vendor,
+        ]
+        addTo(subAcc, rowAcc)
       }
 
-      // Subtotal sub-kategori
-      const subTotal     = subKebun + subPribadi + subVendor
-      const subLabel2    = sub.code ? `        Subtotal ${sub.code} — ${sub.name}` : `        Subtotal ${sub.name}`
-      const ssr = ws.getRow(r)
-      ssr.height = 16
-      ssr.getCell(1).value = subLabel2
-      ssr.getCell(4).value = subApproved
-      ssr.getCell(5).value = subKebun
-      ssr.getCell(6).value = subPribadi
-      ssr.getCell(7).value = subVendor
-      ssr.getCell(8).value = subTotal
-      ssr.getCell(9).value = subApproved - subTotal
-      ssr.getCell(10).value = subApproved > 0 ? subTotal / subApproved : 0
-      applyRowStyle(r, STYLES.subtotalSub, DATA_FMT)
-      r++
-
-      catApproved += subApproved; catKebun += subKebun; catPribadi += subPribadi; catVendor += subVendor
+      writeAggRow(sub.code ? `        Subtotal ${sub.code} — ${sub.name}` : `        Subtotal ${sub.name}`, subAcc, STYLES.subtotalCat)
+      addTo(catAcc, subAcc)
     }
 
-    // Subtotal kategori
-    const catTotal     = catKebun + catPribadi + catVendor
-    const catTotalLabel = cat.code ? `Total ${cat.code} — ${cat.name}` : `Total ${cat.name}`
-    const csr = ws.getRow(r)
-    csr.height = 16
-    csr.getCell(1).value = catTotalLabel
-    csr.getCell(4).value = catApproved
-    csr.getCell(5).value = catKebun
-    csr.getCell(6).value = catPribadi
-    csr.getCell(7).value = catVendor
-    csr.getCell(8).value = catTotal
-    csr.getCell(9).value = catApproved - catTotal
-    csr.getCell(10).value = catApproved > 0 ? catTotal / catApproved : 0
-    applyRowStyle(r, STYLES.subtotalCat, DATA_FMT)
-    r++; r++ // baris kosong antar kategori
-
-    grandApproved += catApproved; grandKebun += catKebun; grandPribadi += catPribadi; grandVendor += catVendor
+    writeAggRow(cat.code ? `Total ${cat.code} — ${cat.name}` : `Total ${cat.name}`, catAcc, STYLES.subtotalCat)
+    r++ // baris kosong antar kategori
+    addTo(grand, catAcc)
   }
 
-  // ── Grand Total ──────────────────────────────────────────────────────────────
-  const grandTotal = grandKebun + grandPribadi + grandVendor
-  const gtr = ws.getRow(r)
-  gtr.height = 20
-  gtr.getCell(1).value = 'GRAND TOTAL'
-  gtr.getCell(4).value = grandApproved
-  gtr.getCell(5).value = grandKebun
-  gtr.getCell(6).value = grandPribadi
-  gtr.getCell(7).value = grandVendor
-  gtr.getCell(8).value = grandTotal
-  gtr.getCell(9).value = grandApproved - grandTotal
-  gtr.getCell(10).value = grandApproved > 0 ? grandTotal / grandApproved : 0
-  applyRowStyle(r, STYLES.grand, DATA_FMT)
-  r += 2 // kosong sebelum summary
+  writeAggRow('GRAND TOTAL', grand, STYLES.grand)
+  r += 1 // kosong sebelum ringkasan
 
-  // ── Summary Tujuan Transfer ───────────────────────────────────────────────────
-  ws.mergeCells(`A${r}:J${r}`)
+  // ── Ringkasan tujuan (Final vs Draft) ──────────────────────────────────────────
+  ws.mergeCells(`A${r}:O${r}`)
   ws.getRow(r).height = 20
   ws.getRow(r).getCell(1).value = 'RINGKASAN TRANSFER BERDASARKAN TUJUAN'
   applyRowStyle(r, STYLES.sumTitle)
   r++
 
-  // Header summary
-  ws.mergeCells(`A${r}:C${r}`)
-  ws.mergeCells(`D${r}:G${r}`)
-  ws.mergeCells(`H${r}:J${r}`)
+  const sumMerge = (rowN: number) => {
+    ws.mergeCells(`A${rowN}:C${rowN}`)
+    ws.mergeCells(`D${rowN}:F${rowN}`)
+    ws.mergeCells(`G${rowN}:I${rowN}`)
+    ws.mergeCells(`J${rowN}:L${rowN}`)
+    ws.mergeCells(`M${rowN}:O${rowN}`)
+  }
+
+  sumMerge(r)
   ws.getRow(r).height = 16
   ws.getRow(r).getCell(1).value = 'Tujuan Transfer'
-  ws.getRow(r).getCell(4).value = 'Jumlah (Rp)'
-  ws.getRow(r).getCell(8).value = '% dari Total Transfer'
+  ws.getRow(r).getCell(4).value = 'Sudah ditransfer'
+  ws.getRow(r).getCell(7).value = 'Draft'
+  ws.getRow(r).getCell(10).value = 'Total (Final + Draft)'
+  ws.getRow(r).getCell(13).value = '% dari Total'
   applyRowStyle(r, STYLES.sumHdr)
   r++
 
-  // Baris per tujuan
-  const sumDest = [
-    { label: 'Rekening Kebun', value: grandKebun,   style: STYLES.sumKebun   },
-    { label: 'Pribadi',        value: grandPribadi, style: STYLES.sumPribadi },
-    { label: 'Vendor',         value: grandVendor,  style: STYLES.sumVendor  },
+  const gFinal: DestBreakdown = { rek_kebun: grand[1], pribadi: grand[2], vendor: grand[3] }
+  const gDraft: DestBreakdown = { rek_kebun: grand[4], pribadi: grand[5], vendor: grand[6] }
+  const grandCombined = grand[1] + grand[2] + grand[3] + grand[4] + grand[5] + grand[6]
+
+  const sumRows: { label: string; dest: TransferDest; style: XLStyle }[] = [
+    { label: 'Rekening Kebun', dest: 'rek_kebun', style: STYLES.sumKebun },
+    { label: 'Pribadi',        dest: 'pribadi',   style: STYLES.sumPribadi },
+    { label: 'Vendor',         dest: 'vendor',    style: STYLES.sumVendor },
   ]
-  for (const sd of sumDest) {
-    ws.mergeCells(`A${r}:C${r}`)
-    ws.mergeCells(`D${r}:G${r}`)
-    ws.mergeCells(`H${r}:J${r}`)
+  for (const sr of sumRows) {
+    const fin = gFinal[sr.dest], drf = gDraft[sr.dest], tot = fin + drf
+    sumMerge(r)
     ws.getRow(r).height = 16
-    ws.getRow(r).getCell(1).value = sd.label
-    ws.getRow(r).getCell(4).value = sd.value
-    ws.getRow(r).getCell(8).value = grandTotal > 0 ? sd.value / grandTotal : 0
-    applyRowStyle(r, sd.style, { 4: NUM_FMT, 8: PCT_FMT })
+    ws.getRow(r).getCell(1).value = sr.label
+    ws.getRow(r).getCell(4).value = fin
+    ws.getRow(r).getCell(7).value = drf
+    ws.getRow(r).getCell(10).value = tot
+    ws.getRow(r).getCell(13).value = grandCombined > 0 ? tot / grandCombined : 0
+    applyRowStyle(r, sr.style, { 4: NUM_FMT, 7: NUM_FMT, 10: NUM_FMT, 13: PCT_FMT })
     r++
   }
 
-  // Total summary
-  ws.mergeCells(`A${r}:C${r}`)
-  ws.mergeCells(`D${r}:G${r}`)
-  ws.mergeCells(`H${r}:J${r}`)
+  const totFin = grand[1] + grand[2] + grand[3]
+  const totDrf = grand[4] + grand[5] + grand[6]
+  sumMerge(r)
   ws.getRow(r).height = 18
   ws.getRow(r).getCell(1).value = 'TOTAL'
-  ws.getRow(r).getCell(4).value = grandTotal
-  ws.getRow(r).getCell(8).value = grandTotal > 0 ? 1 : 0
-  applyRowStyle(r, STYLES.sumTotal, { 4: NUM_FMT, 8: PCT_FMT })
+  ws.getRow(r).getCell(4).value = totFin
+  ws.getRow(r).getCell(7).value = totDrf
+  ws.getRow(r).getCell(10).value = totFin + totDrf
+  ws.getRow(r).getCell(13).value = grandCombined > 0 ? 1 : 0
+  applyRowStyle(r, STYLES.sumTotal, { 4: NUM_FMT, 7: NUM_FMT, 10: NUM_FMT, 13: PCT_FMT })
 
-  // ── Download ─────────────────────────────────────────────────────────────────
+  // ── Download ────────────────────────────────────────────────────────────────────
   const buf  = await wb.xlsx.writeBuffer()
   const blob = new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' })
   const url  = URL.createObjectURL(blob)
@@ -394,35 +422,108 @@ export function TransferBulkPage() {
       return res.data.data
     },
     enabled: !!pdoId,
+    // Form = single source of truth untuk draft. Hindari refetch tak terduga
+    // (mis. window focus) yang akan menimpa input user; hanya refetch saat kita invalidate.
+    refetchOnWindowFocus: false,
   })
 
   const unitId = summary?.plantation_unit?.id ?? null
 
+  // Form = single source of truth untuk draft. Aturan prefill kolom Jumlah:
+  //  • Sebelum user pernah menyimpan (draft/permanen) di halaman ini → prefill
+  //       = sisa dana tersedia (jumlah pengajuan − yang sudah ditransfer permanen).
+  //  • Setelah user menyimpan draft/permanen (refetch) →
+  //       - item yang PUNYA draft → tampilkan nilai draft-nya,
+  //       - item tanpa draft      → 0 (mis. sengaja di-nol-kan user).
+  //
+  // PENTING: flag ini ditandai oleh AKSI SIMPAN user (lihat onSuccess di bawah),
+  // bukan oleh berapa kali efek ini berjalan. React Query bisa mengembalikan data
+  // cache (stale) lalu data segar menyusul untuk pdoId yang sama — kalau flag
+  // ditandai berdasarkan siklus efek, kedatangan data kedua akan salah dianggap
+  // "bukan pertama kali" dan menol-kan kolom Jumlah secara keliru.
+  const hasSavedRef = useRef(false)
+
+  useEffect(() => {
+    hasSavedRef.current = false
+  }, [pdoId])
+
   useEffect(() => {
     if (!summary?.details) return
+    const firstLoad = !hasSavedRef.current
+
     setRows(
-      summary.details.map((d) => ({
-        pdo_detail_id: d.pdo_detail_id,
-        isSplit:       isSplitForUnit(d.expense_item, unitId),
-        normal: {
-          amount:           d.remaining > 0 ? d.remaining : 0,
-          transfer_date:    today,
-          reference_number: '',
-          notes:            '',
-          dest:             'rek_kebun',
-        },
-        split: {
-          amount1:          0,
-          dest1:            'rek_kebun',
-          amount2:          0,
-          dest2:            'pribadi',
-          transfer_date:    today,
-          reference_number: '',
-          notes:            '',
-        },
-      }))
+      summary.details.map((d) => {
+        const isSplit   = isSplitForUnit(d.expense_item, unitId)
+        const available = Math.max(d.amount_approved - d.total_transferred, 0)
+        const drafts    = d.draft_entries
+
+        if (isSplit) {
+          const a1 = drafts[0]
+          const a2 = drafts[1]
+          return {
+            pdo_detail_id: d.pdo_detail_id,
+            isSplit:       true,
+            normal: { amount: 0, transfer_date: today, reference_number: '', notes: '', dest: 'rek_kebun' as TransferDest },
+            split: {
+              amount1:          a1 ? a1.amount : 0,
+              dest1:            (a1?.transfer_destination ?? 'rek_kebun') as TransferDest,
+              amount2:          a2 ? a2.amount : 0,
+              dest2:            (a2?.transfer_destination ?? 'pribadi') as TransferDest,
+              transfer_date:    today,
+              reference_number: '',
+              notes:            '',
+            },
+          }
+        }
+
+        const amount = d.draft_total > 0 ? d.draft_total : (firstLoad ? available : 0)
+        return {
+          pdo_detail_id: d.pdo_detail_id,
+          isSplit:       false,
+          normal: {
+            amount,
+            transfer_date:    today,
+            reference_number: '',
+            notes:            '',
+            dest:             (drafts[0]?.transfer_destination ?? 'rek_kebun') as TransferDest,
+          },
+          split: {
+            amount1: 0, dest1: 'rek_kebun' as TransferDest,
+            amount2: 0, dest2: 'pribadi' as TransferDest,
+            transfer_date: today, reference_number: '', notes: '',
+          },
+        }
+      })
     )
-  }, [summary, unitId])
+  }, [summary, unitId, pdoId])
+
+  const details = useMemo(() => summary?.details ?? [], [summary])
+
+  // ── Cards live: committed + draft tersimpan + input form saat ini ──────────────
+  const cards = useMemo(() => {
+    const totalPengajuan = details.reduce((s, d) => s + d.amount_approved, 0)
+    const dest: DestBreakdown = { rek_kebun: 0, pribadi: 0, vendor: 0 }
+
+    // Committed (final) saja. Nilai draft sudah tercermin di input form (rows),
+    // jadi tidak ditambahkan lagi di sini agar tidak dobel.
+    for (const d of details) {
+      dest.rek_kebun += d.final_by_dest.rek_kebun
+      dest.pribadi   += d.final_by_dest.pribadi
+      dest.vendor    += d.final_by_dest.vendor
+    }
+    for (const row of rows) {
+      if (row.isSplit) {
+        if (Number(row.split.amount1) > 0) dest[row.split.dest1] += Number(row.split.amount1)
+        if (Number(row.split.amount2) > 0) dest[row.split.dest2] += Number(row.split.amount2)
+      } else if (Number(row.normal.amount) > 0) {
+        dest[row.normal.dest] += Number(row.normal.amount)
+      }
+    }
+    const totalTransfer = dest.rek_kebun + dest.pribadi + dest.vendor
+    return { totalPengajuan, dest, sisa: totalPengajuan - totalTransfer }
+  }, [details, rows])
+
+  const hasDrafts = useMemo(() => details.some((d) => d.draft_entries.length > 0), [details])
 
   const toggleExpand = (id: string) => {
     setExpandedIds((prev) => {
@@ -440,93 +541,71 @@ export function TransferBulkPage() {
     setRows((prev) => prev.map((r, i) => i === idx ? { ...r, split: { ...r.split, [field]: value } } : r))
   }
 
+  const invalidate = () => {
+    qc.invalidateQueries({ queryKey: ['transfer-summary', pdoId] })
+    qc.invalidateQueries({ queryKey: ['transfer-pdo-summary'] })
+  }
+
+  const errMsg = (err: unknown, fallback: string) =>
+    (err as { response?: { data?: { error?: { message?: string } } }; message?: string })
+      ?.response?.data?.error?.message ?? (err as { message?: string })?.message ?? fallback
+
   const save = useMutation({
     mutationFn: () => {
       const entries: object[] = []
-
-      rows.forEach((row, idx) => {
-        const detail = summary?.details[idx]
-        if (!detail) return
-
+      rows.forEach((row) => {
         if (row.isSplit) {
-          if (Number(row.split.amount1) > 0) {
-            entries.push({
-              pdo_detail_id:        row.pdo_detail_id,
-              amount:               Number(row.split.amount1),
-              transfer_date:        row.split.transfer_date,
-              reference_number:     row.split.reference_number || null,
-              notes:                row.split.notes || null,
-              transfer_destination: row.split.dest1,
-            })
-          }
-          if (Number(row.split.amount2) > 0) {
-            entries.push({
-              pdo_detail_id:        row.pdo_detail_id,
-              amount:               Number(row.split.amount2),
-              transfer_date:        row.split.transfer_date,
-              reference_number:     row.split.reference_number || null,
-              notes:                row.split.notes || null,
-              transfer_destination: row.split.dest2,
-            })
-          }
-        } else {
-          if (Number(row.normal.amount) > 0) {
-            entries.push({
-              pdo_detail_id:        row.pdo_detail_id,
-              amount:               Number(row.normal.amount),
-              transfer_date:        row.normal.transfer_date,
-              reference_number:     row.normal.reference_number || null,
-              notes:                row.normal.notes || null,
-              transfer_destination: row.normal.dest,
-            })
-          }
+          if (Number(row.split.amount1) > 0) entries.push({ pdo_detail_id: row.pdo_detail_id, amount: Number(row.split.amount1), transfer_date: row.split.transfer_date, reference_number: row.split.reference_number || null, notes: row.split.notes || null, transfer_destination: row.split.dest1 })
+          if (Number(row.split.amount2) > 0) entries.push({ pdo_detail_id: row.pdo_detail_id, amount: Number(row.split.amount2), transfer_date: row.split.transfer_date, reference_number: row.split.reference_number || null, notes: row.split.notes || null, transfer_destination: row.split.dest2 })
+        } else if (Number(row.normal.amount) > 0) {
+          entries.push({ pdo_detail_id: row.pdo_detail_id, amount: Number(row.normal.amount), transfer_date: row.normal.transfer_date, reference_number: row.normal.reference_number || null, notes: row.normal.notes || null, transfer_destination: row.normal.dest })
         }
       })
-
-      if (!entries.length) throw new Error('Tidak ada item dengan jumlah > 0')
+      // entries kosong = hapus semua draft (sinkronisasi form → draft)
       return api.post(`/pdo/${pdoId}/transfers/bulk`, { entries })
     },
-    onSuccess: () => {
-      toast('Transfer berhasil dicatat')
-      qc.invalidateQueries({ queryKey: ['transfer-summary', pdoId] })
-      qc.invalidateQueries({ queryKey: ['transfer-pdo-summary'] })
-    },
-    onError: (err: unknown) => {
-      const msg = (err as { response?: { data?: { error?: { message?: string } } }; message?: string })
-        ?.response?.data?.error?.message ?? (err as { message?: string })?.message ?? 'Gagal menyimpan transfer'
-      toast(msg, 'error')
-    },
+    onSuccess: () => { hasSavedRef.current = true; toast('Draft transfer berhasil disimpan'); invalidate() },
+    onError: (err) => toast(errMsg(err, 'Gagal menyimpan draft'), 'error'),
+  })
+
+  const commit = useMutation({
+    mutationFn: () => api.post(`/pdo/${pdoId}/transfers/commit`),
+    onSuccess: () => { hasSavedRef.current = true; toast('Semua draft berhasil disimpan permanen'); invalidate() },
+    onError: (err) => toast(errMsg(err, 'Gagal menyimpan permanen'), 'error'),
   })
 
   const handleSave = () => {
     for (let i = 0; i < rows.length; i++) {
       const row    = rows[i]
-      const detail = summary?.details[i]
+      const detail = details[i]
       if (!detail) continue
       const itemName = detail.expense_item?.name ?? detail.description
+      // Draft menggantikan draft lama → batas = pengajuan − yang sudah permanen.
+      const available = Math.max(detail.amount_approved - detail.total_transferred, 0)
 
       if (row.isSplit) {
         const total = Number(row.split.amount1) + Number(row.split.amount2)
-        if (total > detail.remaining) {
-          toast(`"${itemName}": total split (${fmt(total)}) melebihi sisa dana (${fmt(detail.remaining)})`, 'error')
+        if (total > available) {
+          toast(`"${itemName}": total split (${fmt(total)}) melebihi sisa dana (${fmt(available)})`, 'error')
           return
         }
         if (Number(row.split.amount1) > 0 && Number(row.split.amount2) > 0 && row.split.dest1 === row.split.dest2) {
           toast(`"${itemName}": tujuan transfer 1 dan 2 tidak boleh sama`, 'error')
           return
         }
-      } else {
-        const amt = Number(row.normal.amount)
-        if (amt > detail.remaining) {
-          toast(`"${itemName}": jumlah melebihi sisa dana (${fmt(detail.remaining)})`, 'error')
-          return
-        }
+      } else if (Number(row.normal.amount) > available) {
+        toast(`"${itemName}": jumlah melebihi sisa dana (${fmt(available)})`, 'error')
+        return
       }
     }
     save.mutate()
   }
 
-  const details = summary?.details ?? []
+  const handleCommit = () => {
+    if (!hasDrafts) { toast('Belum ada draft untuk disimpan permanen', 'error'); return }
+    if (!window.confirm('Simpan permanen semua draft transfer PDO ini? Setelah permanen, transfer akan dihitung di semua laporan.')) return
+    commit.mutate()
+  }
 
   return (
     <div>
@@ -538,7 +617,7 @@ export function TransferBulkPage() {
           <h2 className="text-[28px] font-[950] text-ink">
             Detail Transfer — {isLoading ? '...' : summary?.pdo_number ?? pdoId}
           </h2>
-          <p className="text-muted text-sm mt-1">Catat transfer per item biaya untuk PDO ini.</p>
+          <p className="text-muted text-sm mt-1">Catat transfer per item biaya sebagai draft, review lewat Excel, lalu simpan permanen.</p>
         </div>
         {summary && (
           <Button variant="secondary" size="sm" onClick={() => { void exportToExcel(summary) }}>
@@ -548,11 +627,20 @@ export function TransferBulkPage() {
         )}
       </div>
 
+      {/* ── Cards ringkasan live ─────────────────────────────────────────────── */}
+      <div className="grid grid-cols-2 md:grid-cols-5 gap-3 mb-6">
+        <SummaryCard label="Total Pengajuan" value={cards.totalPengajuan} tone="neutral" />
+        <SummaryCard label="Transfer — Rek. Kebun" value={cards.dest.rek_kebun} tone="teal" />
+        <SummaryCard label="Transfer — Pribadi" value={cards.dest.pribadi} tone="amber" />
+        <SummaryCard label="Transfer — Vendor" value={cards.dest.vendor} tone="blue" />
+        <SummaryCard label="Sisa Dana" value={cards.sisa} tone={cards.sisa < 0 ? 'red' : 'green'} />
+      </div>
+
       <div className="overflow-auto border border-line rounded-drawer bg-white mb-4">
         <table className="w-full border-collapse" style={{ minWidth: 1400 }}>
           <thead>
             <tr>
-              {['Kategori / Sub-Kategori', 'Item Biaya', 'Total Pengajuan', 'Transfer Sebelumnya', 'Sisa Dana', 'Tujuan Transfer', 'Jumlah (Rp)', 'Tanggal', 'No. Referensi', 'Catatan'].map((h) => (
+              {['Kategori / Sub-Kategori', 'Item Biaya', 'Total Pengajuan', 'Sudah Ditransfer', 'Draft', 'Sisa Dana', 'Tujuan Transfer', 'Jumlah (Rp)', 'Tanggal', 'No. Referensi', 'Catatan'].map((h) => (
                 <th key={h} className="px-3 py-3 text-left text-[11px] font-bold uppercase tracking-wider text-muted bg-[#f7faf7] whitespace-nowrap">
                   {h}
                 </th>
@@ -563,7 +651,7 @@ export function TransferBulkPage() {
             {isLoading ? (
               Array.from({ length: 5 }).map((_, i) => (
                 <tr key={i}>
-                  {Array.from({ length: 10 }).map((__, j) => (
+                  {Array.from({ length: 11 }).map((__, j) => (
                     <td key={j} className="px-3 py-3"><div className="h-4 bg-[#f0f4f0] rounded animate-pulse" /></td>
                   ))}
                 </tr>
@@ -571,37 +659,57 @@ export function TransferBulkPage() {
             ) : details.map((detail, idx) => {
               const row      = rows[idx]
               if (!row) return null
-              const hasHistory    = detail.entries.length > 0
+              const hasHistory   = detail.entries.length > 0
+              const draftCount   = detail.draft_entries.length
+              const available    = Math.max(detail.amount_approved - detail.total_transferred, 0)
               const isExpanded   = expandedIds.has(detail.pdo_detail_id)
               const itemCode     = detail.expense_item?.code
               const itemName     = detail.expense_item?.name ?? '—'
               const itemLabel    = itemCode ? `[${itemCode}] ${itemName}` : itemName
-              const categoryLabel = detail.category
-                ? `${detail.category.code} — ${detail.category.name}`
-                : '—'
-              const subcategoryLabel = detail.subcategory
-                ? `${detail.subcategory.code} — ${detail.subcategory.name}`
-                : null
+              const categoryLabel = detail.category ? `${detail.category.code} — ${detail.category.name}` : '—'
+              const subcategoryLabel = detail.subcategory ? `${detail.subcategory.code} — ${detail.subcategory.name}` : null
 
-              const historyToggle = hasHistory ? (
-                <button
-                  type="button"
-                  onClick={() => toggleExpand(detail.pdo_detail_id)}
-                  className="ml-2 inline-flex items-center gap-0.5 text-xs text-blue-600 hover:text-blue-800 font-normal"
-                >
-                  Riwayat ({detail.entries.length})
-                  {isExpanded ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
-                </button>
-              ) : null
+              const toggles = (
+                <span className="inline-flex gap-2 ml-2">
+                  {draftCount > 0 && (
+                    <button type="button" onClick={() => toggleExpand(detail.pdo_detail_id)} className="inline-flex items-center gap-0.5 text-xs text-amber-600 hover:text-amber-800 font-normal">
+                      Draft ({draftCount})
+                      {isExpanded ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
+                    </button>
+                  )}
+                  {hasHistory && (
+                    <button type="button" onClick={() => toggleExpand(detail.pdo_detail_id)} className="inline-flex items-center gap-0.5 text-xs text-blue-600 hover:text-blue-800 font-normal">
+                      Riwayat ({detail.entries.length})
+                    </button>
+                  )}
+                </span>
+              )
+
+              const metaCols = (
+                <>
+                  <td className="px-3 py-2 text-sm">{fmt(detail.amount_approved)}</td>
+                  <td className="px-3 py-2 text-sm text-teal-700 font-medium">{fmt(detail.total_transferred)}</td>
+                  <td className="px-3 py-2 text-sm text-amber-600 font-medium">{detail.draft_total > 0 ? fmt(detail.draft_total) : '—'}</td>
+                  <td className="px-3 py-2 text-sm font-bold text-green-700">{fmt(detail.remaining)}</td>
+                </>
+              )
+
+              const expandedRow = isExpanded && (
+                <tr key={`${detail.pdo_detail_id}-exp`}>
+                  <td colSpan={11} className="px-0 py-0 bg-gray-50 border-t border-dashed border-line">
+                    {draftCount > 0 && <DraftTable entries={detail.draft_entries} />}
+                    {hasHistory && <HistoryTable entries={detail.entries} />}
+                  </td>
+                </tr>
+              )
 
               if (row.isSplit) {
                 const totalSplit  = Number(row.split.amount1) + Number(row.split.amount2)
-                const overLimit   = totalSplit > detail.remaining
+                const overLimit   = totalSplit > available
                 const sameDestErr = Number(row.split.amount1) > 0 && Number(row.split.amount2) > 0 && row.split.dest1 === row.split.dest2
 
                 return (
                   <>
-                    {/* Baris header item */}
                     <tr key={`${detail.pdo_detail_id}-header`} className="border-t-2 border-line bg-[#f7faf7]">
                       <td className="px-3 py-2 text-xs text-muted">
                         <div className="font-[700] text-ink">{categoryLabel}</div>
@@ -610,114 +718,55 @@ export function TransferBulkPage() {
                       <td className="px-3 py-2 font-bold text-sm">
                         {itemLabel}
                         <span className="ml-2 text-xs bg-blue-100 text-blue-700 px-1.5 py-0.5 rounded font-normal">Split</span>
-                        {historyToggle}
+                        {toggles}
                       </td>
-                      <td className="px-3 py-2 text-sm">{fmt(detail.amount_approved)}</td>
-                      <td className="px-3 py-2 text-sm">{fmt(detail.total_transferred)}</td>
-                      <td className="px-3 py-2 text-sm font-bold text-green-700">{fmt(detail.remaining)}</td>
+                      {metaCols}
                       <td colSpan={5} className="px-3 py-2 text-xs text-muted">
                         <div className="flex items-center gap-2 flex-wrap">
-                          <div>
-                            <span className="font-bold mr-1">Tgl:</span>
-                            <input
-                              type="date"
-                              value={row.split.transfer_date}
-                              onChange={(e) => updateSplit(idx, 'transfer_date', e.target.value)}
-                              className="input-base w-36 text-sm"
-                            />
-                          </div>
-                          <div>
-                            <span className="font-bold mr-1">Ref:</span>
-                            <input
-                              type="text"
-                              placeholder="No. Referensi"
-                              value={row.split.reference_number}
-                              onChange={(e) => updateSplit(idx, 'reference_number', e.target.value)}
-                              className="input-base w-32 text-sm"
-                            />
-                          </div>
-                          <div>
-                            <span className="font-bold mr-1">Catatan:</span>
-                            <input
-                              type="text"
-                              placeholder="Catatan"
-                              value={row.split.notes}
-                              onChange={(e) => updateSplit(idx, 'notes', e.target.value)}
-                              className="input-base w-32 text-sm"
-                            />
-                          </div>
+                          <div><span className="font-bold mr-1">Tgl:</span>
+                            <input type="date" value={row.split.transfer_date} onChange={(e) => updateSplit(idx, 'transfer_date', e.target.value)} className="input-base w-36 text-sm" /></div>
+                          <div><span className="font-bold mr-1">Ref:</span>
+                            <input type="text" placeholder="No. Referensi" value={row.split.reference_number} onChange={(e) => updateSplit(idx, 'reference_number', e.target.value)} className="input-base w-32 text-sm" /></div>
+                          <div><span className="font-bold mr-1">Catatan:</span>
+                            <input type="text" placeholder="Catatan" value={row.split.notes} onChange={(e) => updateSplit(idx, 'notes', e.target.value)} className="input-base w-32 text-sm" /></div>
                         </div>
                         {overLimit && <p className="text-red-500 text-xs mt-1">Total split melebihi sisa dana</p>}
                         {sameDestErr && <p className="text-red-500 text-xs">Tujuan 1 dan 2 tidak boleh sama</p>}
                       </td>
                     </tr>
-                    {/* Sub-baris 1 */}
                     <tr key={`${detail.pdo_detail_id}-s1`} className="border-t border-dashed border-line">
                       <td className="px-3 py-2 pl-8 text-xs text-muted">↳ Tujuan 1</td>
-                      <td colSpan={4} />
+                      <td colSpan={5} />
                       <td className="px-3 py-2">
-                        <select
-                          value={row.split.dest1}
-                          onChange={(e) => updateSplit(idx, 'dest1', e.target.value as TransferDest)}
-                          className={`input-base w-32 text-sm ${sameDestErr ? 'border-red-400' : ''}`}
-                        >
-                          {DEST_OPTIONS.map((d) => (
-                            <option key={d} value={d}>{DEST_LABELS[d]}</option>
-                          ))}
+                        <select value={row.split.dest1} onChange={(e) => updateSplit(idx, 'dest1', e.target.value as TransferDest)} className={`input-base w-32 text-sm ${sameDestErr ? 'border-red-400' : ''}`}>
+                          {DEST_OPTIONS.map((d) => <option key={d} value={d}>{DEST_LABELS[d]}</option>)}
                         </select>
                       </td>
                       <td className="px-3 py-2">
-                        <input
-                          type="number"
-                          min={0}
-                          value={row.split.amount1}
-                          onChange={(e) => updateSplit(idx, 'amount1', e.target.value)}
-                          className={`input-base w-36 ${overLimit ? 'border-red-400' : ''}`}
-                        />
+                        <input type="number" min={0} value={row.split.amount1} onChange={(e) => updateSplit(idx, 'amount1', e.target.value)} className={`input-base w-36 ${overLimit ? 'border-red-400' : ''}`} />
                       </td>
                       <td colSpan={3} />
                     </tr>
-                    {/* Sub-baris 2 */}
                     <tr key={`${detail.pdo_detail_id}-s2`} className="border-t border-dashed border-line">
                       <td className="px-3 py-2 pl-8 text-xs text-muted">↳ Tujuan 2</td>
-                      <td colSpan={4} />
+                      <td colSpan={5} />
                       <td className="px-3 py-2">
-                        <select
-                          value={row.split.dest2}
-                          onChange={(e) => updateSplit(idx, 'dest2', e.target.value as TransferDest)}
-                          className={`input-base w-32 text-sm ${sameDestErr ? 'border-red-400' : ''}`}
-                        >
-                          {DEST_OPTIONS.map((d) => (
-                            <option key={d} value={d}>{DEST_LABELS[d]}</option>
-                          ))}
+                        <select value={row.split.dest2} onChange={(e) => updateSplit(idx, 'dest2', e.target.value as TransferDest)} className={`input-base w-32 text-sm ${sameDestErr ? 'border-red-400' : ''}`}>
+                          {DEST_OPTIONS.map((d) => <option key={d} value={d}>{DEST_LABELS[d]}</option>)}
                         </select>
                       </td>
                       <td className="px-3 py-2">
-                        <input
-                          type="number"
-                          min={0}
-                          value={row.split.amount2}
-                          onChange={(e) => updateSplit(idx, 'amount2', e.target.value)}
-                          className={`input-base w-36 ${overLimit ? 'border-red-400' : ''}`}
-                        />
+                        <input type="number" min={0} value={row.split.amount2} onChange={(e) => updateSplit(idx, 'amount2', e.target.value)} className={`input-base w-36 ${overLimit ? 'border-red-400' : ''}`} />
                       </td>
                       <td colSpan={3} />
                     </tr>
-                    {/* Riwayat */}
-                    {isExpanded && (
-                      <tr key={`${detail.pdo_detail_id}-history`}>
-                        <td colSpan={10} className="px-0 py-0 bg-gray-50 border-t border-dashed border-line">
-                          <HistoryTable entries={detail.entries} />
-                        </td>
-                      </tr>
-                    )}
+                    {expandedRow}
                   </>
                 )
               }
 
               // Normal mode
-              const amtNum  = Number(row.normal.amount)
-              const overLim = amtNum > detail.remaining
+              const overLim = Number(row.normal.amount) > available
 
               return (
                 <>
@@ -728,67 +777,29 @@ export function TransferBulkPage() {
                     </td>
                     <td className="px-3 py-3 text-sm font-medium whitespace-nowrap">
                       {itemLabel}
-                      {historyToggle}
+                      {toggles}
                     </td>
-                    <td className="px-3 py-3 text-sm">{fmt(detail.amount_approved)}</td>
-                    <td className="px-3 py-3 text-sm">{fmt(detail.total_transferred)}</td>
-                    <td className="px-3 py-3 text-sm font-bold text-green-700">{fmt(detail.remaining)}</td>
+                    {metaCols}
                     <td className="px-3 py-2">
-                      <select
-                        value={row.normal.dest}
-                        onChange={(e) => updateNormal(idx, 'dest', e.target.value as TransferDest)}
-                        className="input-base w-32 text-sm"
-                      >
-                        {DEST_OPTIONS.map((d) => (
-                          <option key={d} value={d}>{DEST_LABELS[d]}</option>
-                        ))}
+                      <select value={row.normal.dest} onChange={(e) => updateNormal(idx, 'dest', e.target.value as TransferDest)} className="input-base w-32 text-sm">
+                        {DEST_OPTIONS.map((d) => <option key={d} value={d}>{DEST_LABELS[d]}</option>)}
                       </select>
                     </td>
                     <td className="px-3 py-2">
-                      <input
-                        type="number"
-                        min={0}
-                        max={detail.remaining}
-                        value={row.normal.amount}
-                        onChange={(e) => updateNormal(idx, 'amount', e.target.value)}
-                        className={`input-base w-36 ${overLim ? 'border-red-400' : ''}`}
-                      />
+                      <input type="number" min={0} max={available} value={row.normal.amount} onChange={(e) => updateNormal(idx, 'amount', e.target.value)} className={`input-base w-36 ${overLim ? 'border-red-400' : ''}`} />
                       {overLim && <p className="text-red-500 text-xs mt-1">Melebihi sisa dana</p>}
                     </td>
                     <td className="px-3 py-2">
-                      <input
-                        type="date"
-                        value={row.normal.transfer_date}
-                        onChange={(e) => updateNormal(idx, 'transfer_date', e.target.value)}
-                        className="input-base w-36"
-                      />
+                      <input type="date" value={row.normal.transfer_date} onChange={(e) => updateNormal(idx, 'transfer_date', e.target.value)} className="input-base w-36" />
                     </td>
                     <td className="px-3 py-2">
-                      <input
-                        type="text"
-                        placeholder="TRF/2026/001"
-                        value={row.normal.reference_number}
-                        onChange={(e) => updateNormal(idx, 'reference_number', e.target.value)}
-                        className="input-base w-36"
-                      />
+                      <input type="text" placeholder="TRF/2026/001" value={row.normal.reference_number} onChange={(e) => updateNormal(idx, 'reference_number', e.target.value)} className="input-base w-36" />
                     </td>
                     <td className="px-3 py-2">
-                      <input
-                        type="text"
-                        value={row.normal.notes}
-                        onChange={(e) => updateNormal(idx, 'notes', e.target.value)}
-                        className="input-base w-40"
-                      />
+                      <input type="text" value={row.normal.notes} onChange={(e) => updateNormal(idx, 'notes', e.target.value)} className="input-base w-40" />
                     </td>
                   </tr>
-                  {/* Riwayat */}
-                  {isExpanded && (
-                    <tr key={`${detail.pdo_detail_id}-history`}>
-                      <td colSpan={9} className="px-0 py-0 bg-gray-50 border-t border-dashed border-line">
-                        <HistoryTable entries={detail.entries} />
-                      </td>
-                    </tr>
-                  )}
+                  {expandedRow}
                 </>
               )
             })}
@@ -798,15 +809,39 @@ export function TransferBulkPage() {
 
       <div className="flex justify-end gap-2">
         <Button variant="secondary" onClick={() => navigate('/transfer')}>Kembali</Button>
-        <Button onClick={handleSave} loading={save.isPending}>
-          Simpan Semua
+        <Button variant="secondary" onClick={handleSave} loading={save.isPending}>
+          Simpan sebagai Draft
+        </Button>
+        <Button onClick={handleCommit} loading={commit.isPending} disabled={!hasDrafts}>
+          Simpan Permanen
         </Button>
       </div>
     </div>
   )
 }
 
-// ─── sub-component riwayat ────────────────────────────────────────────────────
+// ─── card ringkasan ─────────────────────────────────────────────────────────────
+
+type CardTone = 'neutral' | 'teal' | 'amber' | 'blue' | 'green' | 'red'
+const TONE: Record<CardTone, string> = {
+  neutral: 'text-ink',
+  teal:    'text-teal-700',
+  amber:   'text-amber-600',
+  blue:    'text-blue-700',
+  green:   'text-green-700',
+  red:     'text-red-600',
+}
+
+function SummaryCard({ label, value, tone }: { label: string; value: number; tone: CardTone }) {
+  return (
+    <div className="rounded-drawer border border-line bg-white px-4 py-3">
+      <p className="text-[11px] font-bold uppercase tracking-wider text-muted">{label}</p>
+      <p className={`mt-1 text-lg font-[800] ${TONE[tone]}`}>{fmt(value)}</p>
+    </div>
+  )
+}
+
+// ─── sub-component: draft editor ────────────────────────────────────────────────
 
 const DEST_LABELS_MAP: Record<string, string> = {
   rek_kebun: 'Rek. Kebun',
@@ -822,10 +857,44 @@ function fmtDate(dateStr: string): string {
   return new Date(dateStr).toLocaleDateString('id-ID', { day: '2-digit', month: 'short', year: 'numeric' })
 }
 
+// Tampilan draft read-only. Perubahan draft dilakukan lewat kolom "Jumlah" di
+// form utama (single source of truth), lalu klik "Simpan sebagai Draft".
+function DraftTable({ entries }: { entries: TransferEntryRecord[] }) {
+  return (
+    <div className="px-6 py-3">
+      <p className="text-xs font-bold text-amber-600 mb-2 uppercase tracking-wider">Draft Transfer (belum permanen)</p>
+      <table className="w-full text-xs border-collapse">
+        <thead>
+          <tr className="text-left text-muted">
+            <th className="pb-1 pr-4 font-semibold">Tanggal</th>
+            <th className="pb-1 pr-4 font-semibold">Tujuan</th>
+            <th className="pb-1 pr-4 font-semibold">Jumlah</th>
+            <th className="pb-1 pr-4 font-semibold">No. Referensi</th>
+            <th className="pb-1 font-semibold">Catatan</th>
+          </tr>
+        </thead>
+        <tbody>
+          {entries.map((e) => (
+            <tr key={e.id} className="border-t border-line">
+              <td className="py-1.5 pr-4">{fmtDate(e.transfer_date)}</td>
+              <td className="py-1.5 pr-4">{DEST_LABELS_MAP[e.transfer_destination] ?? e.transfer_destination}</td>
+              <td className="py-1.5 pr-4 font-medium text-amber-600">{fmtRp(e.amount)}</td>
+              <td className="py-1.5 pr-4 text-muted">{e.reference_number ?? '—'}</td>
+              <td className="py-1.5 text-muted">{e.notes ?? '—'}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  )
+}
+
+// ─── sub-component: riwayat committed ────────────────────────────────────────────
+
 function HistoryTable({ entries }: { entries: TransferEntryRecord[] }) {
   return (
     <div className="px-6 py-3">
-      <p className="text-xs font-bold text-muted mb-2 uppercase tracking-wider">Riwayat Transfer</p>
+      <p className="text-xs font-bold text-muted mb-2 uppercase tracking-wider">Riwayat Transfer (permanen)</p>
       <table className="w-full text-xs border-collapse">
         <thead>
           <tr className="text-left text-muted">

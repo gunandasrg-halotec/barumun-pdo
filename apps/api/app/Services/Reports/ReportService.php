@@ -49,7 +49,7 @@ class ReportService
             JOIN expense_items ei ON ei.id = pd.expense_item_id
             JOIN expense_subcategories esc ON esc.id = ei.subcategory_id
             JOIN expense_categories ec ON ec.id = esc.category_id
-            LEFT JOIN transfer_entries te ON te.pdo_detail_id = pd.id
+            LEFT JOIN transfer_entries te ON te.pdo_detail_id = pd.id AND te.status = 'committed'
             LEFT JOIN realization_entries re ON re.pdo_detail_id = pd.id
             WHERE ph.company_id = ?
               AND ph.period_year  = ?
@@ -173,7 +173,7 @@ class ReportService
             JOIN expense_items ei ON ei.subcategory_id = esc.id
             JOIN pdo_details pd ON pd.expense_item_id = ei.id
             JOIN pdo_headers ph ON ph.id = pd.pdo_header_id
-            LEFT JOIN transfer_entries te ON te.pdo_detail_id = pd.id
+            LEFT JOIN transfer_entries te ON te.pdo_detail_id = pd.id AND te.status = 'committed'
             LEFT JOIN realization_entries re ON re.pdo_detail_id = pd.id
             WHERE ec.company_id = ?
               AND ph.period_year  = ?

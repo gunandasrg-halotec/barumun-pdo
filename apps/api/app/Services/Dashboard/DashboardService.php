@@ -49,7 +49,7 @@ class DashboardService
                 COALESCE(SUM(te.amount), 0)  AS total_transferred
             FROM pdo_headers ph
             LEFT JOIN pdo_details pd ON pd.pdo_header_id = ph.id
-            LEFT JOIN transfer_entries te ON te.pdo_detail_id = pd.id
+            LEFT JOIN transfer_entries te ON te.pdo_detail_id = pd.id AND te.status = 'committed'
             WHERE ph.company_id = ?
               AND ph.period_month = ?
               AND ph.period_year  = ?
@@ -86,7 +86,7 @@ class DashboardService
             SELECT te.transfer_destination, COALESCE(SUM(te.amount), 0) AS subtotal
             FROM pdo_headers ph
             LEFT JOIN pdo_details pd ON pd.pdo_header_id = ph.id
-            LEFT JOIN transfer_entries te ON te.pdo_detail_id = pd.id
+            LEFT JOIN transfer_entries te ON te.pdo_detail_id = pd.id AND te.status = 'committed'
             WHERE ph.company_id = ?
               AND ph.period_month = ?
               AND ph.period_year  = ?
@@ -126,7 +126,7 @@ class DashboardService
             FROM pdo_headers ph
             LEFT JOIN plantation_units pu ON pu.id = ph.plantation_unit_id
             LEFT JOIN pdo_details pd ON pd.pdo_header_id = ph.id
-            LEFT JOIN transfer_entries te ON te.pdo_detail_id = pd.id
+            LEFT JOIN transfer_entries te ON te.pdo_detail_id = pd.id AND te.status = 'committed'
             WHERE ph.company_id = ?
               AND ph.period_month = ?
               AND ph.period_year  = ?
