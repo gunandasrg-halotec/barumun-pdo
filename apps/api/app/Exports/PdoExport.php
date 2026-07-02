@@ -98,7 +98,11 @@ class PdoExport implements WithEvents, ShouldAutoSize
                         // ── Item rows ────────────────────────────────────
                         foreach ($subGroup['details'] as $detail) {
                             $item  = $detail->expenseItem;
-                            $saldo = ($detail->amount ?? 0)
+                            // Item potongan (is_deduction) → Jumlah signed (minus), mengurangi total.
+                            $signedAmount = ($item?->is_deduction ?? false)
+                                ? -($detail->amount ?? 0)
+                                : ($detail->amount ?? 0);
+                            $saldo = $signedAmount
                                    - ($detail->total_transfer ?? 0)
                                    - ($detail->total_realization ?? 0);
 
@@ -110,7 +114,7 @@ class PdoExport implements WithEvents, ShouldAutoSize
                                 $detail->quantity,
                                 $detail->unit ?? '—',
                                 $detail->rate ?? 0,
-                                $detail->amount ?? 0,
+                                $signedAmount,
                                 $detail->total_transfer ?? 0,
                                 $detail->total_realization ?? 0,
                                 $saldo,

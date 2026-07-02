@@ -129,7 +129,10 @@ class PdoService
         return [
             'pdo'         => $pdo->makeHidden('details'),
             'categories'  => $categoriesArray,
-            'grand_total' => $pdo->details->sum('amount'),
+            // Signed: item potongan (is_deduction) mengurangi total pengajuan.
+            'grand_total' => $pdo->details->sum(
+                fn ($d) => ($d->expenseItem?->is_deduction ?? false) ? -$d->amount : $d->amount
+            ),
         ];
     }
 
