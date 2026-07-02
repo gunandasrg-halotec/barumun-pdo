@@ -26,9 +26,11 @@ class PdoService
     public function listPdo(array $filters = []): LengthAwarePaginator
     {
         return PdoHeader::with(['plantationUnit', 'creator'])
+            // total_amount = grand_total_amount (kolom tersimpan, sudah signed sesuai is_deduction —
+            // lihat PdoService::syncGrandTotal). JANGAN hitung ulang SUM(amount) mentah di sini,
+            // karena itu mengabaikan is_deduction dan akan berbeda dengan Total Pengajuan di Detail PDO.
+            ->addSelect('pdo_headers.grand_total_amount as total_amount')
             ->addSelect([
-                'total_amount' => \App\Models\PdoDetail::selectRaw('COALESCE(SUM(amount), 0)')
-                    ->whereColumn('pdo_header_id', 'pdo_headers.id'),
                 'total_transferred' => \DB::table('transfer_entries')
                     ->selectRaw('COALESCE(SUM(transfer_entries.amount), 0)')
                     ->join('pdo_details', 'pdo_details.id', '=', 'transfer_entries.pdo_detail_id')
