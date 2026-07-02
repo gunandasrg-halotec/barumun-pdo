@@ -39,7 +39,7 @@ class PdoService
                     ->join('pdo_details', 'pdo_details.id', '=', 'realization_entries.pdo_detail_id')
                     ->whereColumn('pdo_details.pdo_header_id', 'pdo_headers.id'),
             ])
-            ->addSelect(\DB::raw('(
+            ->addSelect(\DB::raw("(
                 COALESCE((SELECT SUM(te.amount) FROM transfer_entries te
                           JOIN pdo_details pd ON pd.id = te.pdo_detail_id
                           WHERE pd.pdo_header_id = pdo_headers.id
@@ -48,7 +48,7 @@ class PdoService
                 COALESCE((SELECT SUM(re.amount) FROM realization_entries re
                           JOIN pdo_details pd ON pd.id = re.pdo_detail_id
                           WHERE pd.pdo_header_id = pdo_headers.id), 0)
-            ) as balance'))
+            ) as balance"))
             ->when(!empty($filters['search']), fn ($q) => $q->where('pdo_number', 'ilike', '%' . $filters['search'] . '%'))
             ->when(!empty($filters['status']), fn ($q) => $q->where('status', $filters['status']))
             ->when(!empty($filters['period_year']), fn ($q) => $q->where('period_year', $filters['period_year']))

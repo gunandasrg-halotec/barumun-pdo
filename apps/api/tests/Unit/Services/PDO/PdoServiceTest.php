@@ -9,7 +9,9 @@ use App\Models\ExpenseSubcategory;
 use App\Models\PdoDetail;
 use App\Models\PdoHeader;
 use App\Models\PlantationUnit;
+use App\Models\RealizationEntry;
 use App\Models\Role;
+use App\Models\TransferEntry;
 use App\Models\User;
 use App\Services\PDO\PdoService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -217,6 +219,40 @@ class PdoServiceTest extends TestCase
         ], $this->kerani);
 
         $this->assertMatchesRegularExpression('/^PDO-2026-06-.+-\d{3}$/', $pdo->pdo_number);
+    }
+
+    public function test_list_pdo_includes_balance_from_committed_transfer_minus_realization(): void
+    {
+        $pdo = PdoHeader::factory()->create([
+            'company_id'         => $this->companyId,
+            'plantation_unit_id' => $this->unit->id,
+            'created_by'         => $this->kerani->id,
+            'status'             => PdoHeader::STATUS_DRAFT,
+        ]);
+
+        $detail = PdoDetail::factory()->create([
+            'pdo_header_id' => $pdo->id,
+            'amount'        => 900000,
+        ]);
+
+        TransferEntry::factory()->create([
+            'pdo_detail_id' => $detail->id,
+            'recorded_by'   => $this->kerani->id,
+            'amount'        => 700000,
+        ]);
+
+        RealizationEntry::factory()->create([
+            'pdo_detail_id' => $detail->id,
+            'recorded_by'   => $this->kerani->id,
+            'amount'        => 250000,
+        ]);
+
+        $row = $this->service->listPdo()->getCollection()->firstWhere('id', $pdo->id);
+
+        $this->assertNotNull($row);
+        $this->assertEquals(700000, (int) $row->total_transferred);
+        $this->assertEquals(250000, (int) $row->total_realized);
+        $this->assertEquals(450000, (int) $row->balance);
     }
 
     // ─────────────────────────────────────────────────────
