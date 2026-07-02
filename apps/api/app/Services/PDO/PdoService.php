@@ -26,6 +26,10 @@ class PdoService
     public function listPdo(array $filters = []): LengthAwarePaginator
     {
         return PdoHeader::with(['plantationUnit', 'creator'])
+            // WAJIB: pilih kolom dasar eksplisit. addSelect('string') pertama akan
+            // menyetel columns hanya ke string itu (tidak otomatis menambah *),
+            // sehingga kolom pdo_number/status/dll hilang dan frontend crash.
+            ->select('pdo_headers.*')
             // total_amount = grand_total_amount (kolom tersimpan, sudah signed sesuai is_deduction —
             // lihat PdoService::syncGrandTotal). JANGAN hitung ulang SUM(amount) mentah di sini,
             // karena itu mengabaikan is_deduction dan akan berbeda dengan Total Pengajuan di Detail PDO.
