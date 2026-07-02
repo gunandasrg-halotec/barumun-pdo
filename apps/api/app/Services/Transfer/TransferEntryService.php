@@ -421,7 +421,9 @@ class TransferEntryService
         return $pdos->map(function (PdoHeader $pdo) {
             $details = $pdo->details()->get();
 
-            $totalAmount   = $details->sum('amount');
+            // total_amount = grand_total_amount (signed sesuai is_deduction), konsisten
+            // dengan Daftar PDO. JANGAN sum('amount') mentah — mengabaikan potongan.
+            $totalAmount   = (int) $pdo->grand_total_amount;
             $totalTransfer = $details->sum('total_transferred');
 
             // Per-destination totals
