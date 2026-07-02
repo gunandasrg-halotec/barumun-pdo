@@ -26,6 +26,7 @@ interface ExpenseItemInfo {
   id: string
   code: string
   name: string
+  is_deduction: boolean
   split_transfer: boolean
   split_transfer_plantation_unit_ids: string[] | null
 }
@@ -288,12 +289,14 @@ async function exportToExcel(summary: PdoSummaryData) {
       const subAcc = zero()
 
       for (const d of sub.items) {
+        // Item potongan: Total Pengajuan tampil sebagai nilai minus (mengurangi total).
+        const signedApproved = d.expense_item?.is_deduction ? -d.amount_approved : d.amount_approved
         const dr = ws.getRow(r)
         dr.height = 16
         dr.getCell(1).value = itemNo++
         dr.getCell(2).value = d.expense_item?.code ?? ''
         dr.getCell(3).value = d.expense_item?.name ?? d.description
-        dr.getCell(4).value = d.amount_approved
+        dr.getCell(4).value = signedApproved
         dr.getCell(5).value = d.final_by_dest.rek_kebun
         dr.getCell(6).value = d.final_by_dest.pribadi
         dr.getCell(7).value = d.final_by_dest.vendor
@@ -309,7 +312,7 @@ async function exportToExcel(summary: PdoSummaryData) {
         r++
 
         const rowAcc: Acc = [
-          d.amount_approved,
+          signedApproved,
           d.final_by_dest.rek_kebun, d.final_by_dest.pribadi, d.final_by_dest.vendor,
           d.draft_by_dest.rek_kebun, d.draft_by_dest.pribadi, d.draft_by_dest.vendor,
         ]
@@ -453,6 +456,20 @@ export function TransferBulkPage() {
 
     setRows(
       summary.details.map((d) => {
+        // Item potongan (is_deduction) tidak bisa ditransfer — kolom Jumlah dikunci 0.
+        if (d.expense_item?.is_deduction) {
+          return {
+            pdo_detail_id: d.pdo_detail_id,
+            isSplit:       false,
+            normal: { amount: 0, transfer_date: today, reference_number: '', notes: '', dest: 'rek_kebun' as TransferDest },
+            split: {
+              amount1: 0, dest1: 'rek_kebun' as TransferDest,
+              amount2: 0, dest2: 'pribadi' as TransferDest,
+              transfer_date: today, reference_number: '', notes: '',
+            },
+          }
+        }
+
         const isSplit   = isSplitForUnit(d.expense_item, unitId)
         const available = Math.max(d.amount_approved - d.total_transferred, 0)
         const drafts    = d.draft_entries
@@ -501,7 +518,17 @@ export function TransferBulkPage() {
 
   // ── Cards live: committed + draft tersimpan + input form saat ini ──────────────
   const cards = useMemo(() => {
-    const totalPengajuan = details.reduce((s, d) => s + d.amount_approved, 0)
+    // Total Pengajuan signed: item potongan (is_deduction) MENGURANGI total —
+    // harus sama dengan grand_total_amount di halaman Daftar PDO.
+    const totalPengajuan = details.reduce(
+      (s, d) => s + (d.expense_item?.is_deduction ? -d.amount_approved : d.amount_approved),
+      0,
+    )
+    // Total potongan (nominal seluruh item is_deduction), ditampilkan sebagai minus.
+    const totalPotongan = details.reduce(
+      (s, d) => s + (d.expense_item?.is_deduction ? d.amount_approved : 0),
+      0,
+    )
     const dest: DestBreakdown = { rek_kebun: 0, pribadi: 0, vendor: 0 }
 
     // Committed (final) saja. Nilai draft sudah tercermin di input form (rows),
@@ -520,7 +547,7 @@ export function TransferBulkPage() {
       }
     }
     const totalTransfer = dest.rek_kebun + dest.pribadi + dest.vendor
-    return { totalPengajuan, dest, sisa: totalPengajuan - totalTransfer }
+    return { totalPengajuan, totalPotongan, dest, sisa: totalPengajuan - totalTransfer }
   }, [details, rows])
 
   const hasDrafts = useMemo(() => details.some((d) => d.draft_entries.length > 0), [details])
@@ -628,8 +655,9 @@ export function TransferBulkPage() {
       </div>
 
       {/* ── Cards ringkasan live ─────────────────────────────────────────────── */}
-      <div className="grid grid-cols-2 md:grid-cols-5 gap-3 mb-6">
+      <div className="grid grid-cols-2 md:grid-cols-6 gap-3 mb-6">
         <SummaryCard label="Total Pengajuan" value={cards.totalPengajuan} tone="neutral" />
+        <SummaryCard label="Total Potongan" value={-cards.totalPotongan} tone="red" />
         <SummaryCard label="Transfer — Rek. Kebun" value={cards.dest.rek_kebun} tone="teal" />
         <SummaryCard label="Transfer — Pribadi" value={cards.dest.pribadi} tone="amber" />
         <SummaryCard label="Transfer — Vendor" value={cards.dest.vendor} tone="blue" />
@@ -661,6 +689,7 @@ export function TransferBulkPage() {
               if (!row) return null
               const hasHistory   = detail.entries.length > 0
               const draftCount   = detail.draft_entries.length
+              const isDeduction  = detail.expense_item?.is_deduction ?? false
               const available    = Math.max(detail.amount_approved - detail.total_transferred, 0)
               const isExpanded   = expandedIds.has(detail.pdo_detail_id)
               const itemCode     = detail.expense_item?.code
@@ -687,7 +716,10 @@ export function TransferBulkPage() {
 
               const metaCols = (
                 <>
-                  <td className="px-3 py-2 text-sm">{fmt(detail.amount_approved)}</td>
+                  {/* Item potongan tampil sebagai nilai minus */}
+                  <td className={`px-3 py-2 text-sm ${isDeduction ? 'text-red-600 font-medium' : ''}`}>
+                    {isDeduction ? `-${fmt(detail.amount_approved)}` : fmt(detail.amount_approved)}
+                  </td>
                   <td className="px-3 py-2 text-sm text-teal-700 font-medium">{fmt(detail.total_transferred)}</td>
                   <td className="px-3 py-2 text-sm text-amber-600 font-medium">{detail.draft_total > 0 ? fmt(detail.draft_total) : '—'}</td>
                   <td className="px-3 py-2 text-sm font-bold text-green-700">{fmt(detail.remaining)}</td>
@@ -777,27 +809,36 @@ export function TransferBulkPage() {
                     </td>
                     <td className="px-3 py-3 text-sm font-medium whitespace-nowrap">
                       {itemLabel}
+                      {isDeduction && <span className="ml-2 text-xs bg-red-100 text-red-700 px-1.5 py-0.5 rounded font-normal">Potongan</span>}
                       {toggles}
                     </td>
                     {metaCols}
-                    <td className="px-3 py-2">
-                      <select value={row.normal.dest} onChange={(e) => updateNormal(idx, 'dest', e.target.value as TransferDest)} className="input-base w-32 text-sm">
-                        {DEST_OPTIONS.map((d) => <option key={d} value={d}>{DEST_LABELS[d]}</option>)}
-                      </select>
-                    </td>
-                    <td className="px-3 py-2">
-                      <input type="number" min={0} max={available} value={row.normal.amount} onChange={(e) => updateNormal(idx, 'amount', e.target.value)} className={`input-base w-36 ${overLim ? 'border-red-400' : ''}`} />
-                      {overLim && <p className="text-red-500 text-xs mt-1">Melebihi sisa dana</p>}
-                    </td>
-                    <td className="px-3 py-2">
-                      <input type="date" value={row.normal.transfer_date} onChange={(e) => updateNormal(idx, 'transfer_date', e.target.value)} className="input-base w-36" />
-                    </td>
-                    <td className="px-3 py-2">
-                      <input type="text" placeholder="TRF/2026/001" value={row.normal.reference_number} onChange={(e) => updateNormal(idx, 'reference_number', e.target.value)} className="input-base w-36" />
-                    </td>
-                    <td className="px-3 py-2">
-                      <input type="text" value={row.normal.notes} onChange={(e) => updateNormal(idx, 'notes', e.target.value)} className="input-base w-40" />
-                    </td>
+                    {isDeduction ? (
+                      <td colSpan={5} className="px-3 py-2 text-xs text-muted italic">
+                        Item potongan — mengurangi total PDO, tidak dapat ditransfer.
+                      </td>
+                    ) : (
+                      <>
+                        <td className="px-3 py-2">
+                          <select value={row.normal.dest} onChange={(e) => updateNormal(idx, 'dest', e.target.value as TransferDest)} className="input-base w-32 text-sm">
+                            {DEST_OPTIONS.map((d) => <option key={d} value={d}>{DEST_LABELS[d]}</option>)}
+                          </select>
+                        </td>
+                        <td className="px-3 py-2">
+                          <input type="number" min={0} max={available} value={row.normal.amount} onChange={(e) => updateNormal(idx, 'amount', e.target.value)} className={`input-base w-36 ${overLim ? 'border-red-400' : ''}`} />
+                          {overLim && <p className="text-red-500 text-xs mt-1">Melebihi sisa dana</p>}
+                        </td>
+                        <td className="px-3 py-2">
+                          <input type="date" value={row.normal.transfer_date} onChange={(e) => updateNormal(idx, 'transfer_date', e.target.value)} className="input-base w-36" />
+                        </td>
+                        <td className="px-3 py-2">
+                          <input type="text" placeholder="TRF/2026/001" value={row.normal.reference_number} onChange={(e) => updateNormal(idx, 'reference_number', e.target.value)} className="input-base w-36" />
+                        </td>
+                        <td className="px-3 py-2">
+                          <input type="text" value={row.normal.notes} onChange={(e) => updateNormal(idx, 'notes', e.target.value)} className="input-base w-40" />
+                        </td>
+                      </>
+                    )}
                   </tr>
                   {expandedRow}
                 </>

@@ -69,6 +69,7 @@ class TransferEntryService
                     ? array_merge(
                         $detail->expenseItem->only(['id', 'code', 'name']),
                         [
+                            'is_deduction'                       => (bool) $detail->expenseItem->is_deduction,
                             'split_transfer'                     => (bool) $detail->expenseItem->split_transfer,
                             'split_transfer_plantation_unit_ids' => $detail->expenseItem->split_transfer_plantation_unit_ids,
                         ]
