@@ -402,8 +402,68 @@ class TransferEntryService
                 );
             }
 
+            // Potongan otomatis: kurangi transfer rek_kebun sebesar nilai item potongan,
+            // hanya SEKALI per PDO (di commit pertama). Guard exactly-once.
+            $this->applyDeductionEntries($pdo, $actor);
+
             return $drafts->count();
         });
+    }
+
+    /**
+     * Buat entri transfer negatif ke rek_kebun untuk tiap item potongan (is_deduction),
+     * agar total transfer ke rek kebun ter-net (berkurang) sebesar nilai potongan.
+     *
+     * EXACTLY-ONCE: dilewati bila item potongan sudah punya entri otomatis committed —
+     * jadi tidak dobel walau user simpan permanen berkali-kali (transfer bertahap).
+     */
+    private function applyDeductionEntries(PdoHeader $pdo, User $actor): void
+    {
+        $deductionDetails = $pdo->details()
+            ->whereHas('expenseItem', fn ($q) => $q->where('is_deduction', true))
+            ->with('expenseItem')
+            ->get();
+
+        $now = now();
+
+        foreach ($deductionDetails as $detail) {
+            if (($detail->amount ?? 0) <= 0) {
+                continue;
+            }
+
+            // Guard: sudah pernah dicatat sebagai potongan otomatis committed?
+            $alreadyApplied = TransferEntry::where('pdo_detail_id', $detail->id)
+                ->where('is_auto_generated', true)
+                ->exists(); // global scope 'committed_only' → hanya committed yang dihitung
+
+            if ($alreadyApplied) {
+                continue;
+            }
+
+            $entry = TransferEntry::create([
+                'pdo_detail_id'        => $detail->id,
+                'recorded_by'          => $actor->id,
+                'entry_source'         => TransferEntry::SOURCE_SYSTEM,
+                'is_auto_generated'    => true,
+                'status'               => TransferEntry::STATUS_COMMITTED,
+                'committed_at'         => $now,
+                'committed_by'         => $actor->id,
+                'transfer_date'        => $now->toDateString(),
+                'amount'               => -$detail->amount, // negatif: mengurangi rek_kebun
+                'reference_number'     => null,
+                'notes'                => 'Potongan otomatis (mengurangi transfer Rek. Kebun)',
+                'transfer_destination' => TransferEntry::DEST_REK_KEBUN,
+            ]);
+
+            AuditLog::record(
+                actor: $actor,
+                entityType: 'transfer_entries',
+                entityId: $entry->id,
+                action: 'INSERT',
+                oldValues: null,
+                newValues: $entry->toArray()
+            );
+        }
     }
 
     /**

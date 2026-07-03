@@ -537,6 +537,13 @@ export function TransferBulkPage() {
       dest.rek_kebun += d.final_by_dest.rek_kebun
       dest.pribadi   += d.final_by_dest.pribadi
       dest.vendor    += d.final_by_dest.vendor
+
+      // Proyeksi potongan yang BELUM committed: potongan akan dikurangkan dari
+      // rek_kebun saat simpan permanen. final_by_dest.rek_kebun < 0 = sudah
+      // dicatat (jangan dobel); == 0 = belum → proyeksikan pengurangannya.
+      if (d.expense_item?.is_deduction && d.final_by_dest.rek_kebun === 0) {
+        dest.rek_kebun -= d.amount_approved
+      }
     }
     for (const row of rows) {
       if (row.isSplit) {
@@ -714,12 +721,18 @@ export function TransferBulkPage() {
                 </span>
               )
 
-              const metaCols = (
+              const metaCols = isDeduction ? (
                 <>
-                  {/* Item potongan tampil sebagai nilai minus */}
-                  <td className={`px-3 py-2 text-sm ${isDeduction ? 'text-red-600 font-medium' : ''}`}>
-                    {isDeduction ? `-${fmt(detail.amount_approved)}` : fmt(detail.amount_approved)}
-                  </td>
+                  {/* Item potongan: Total Pengajuan minus; kolom transfer/sisa tak berlaku */}
+                  <td className="px-3 py-2 text-sm text-red-600 font-medium">-{fmt(detail.amount_approved)}</td>
+                  {/* Sudah Ditransfer = potongan yang sudah diterapkan (negatif) bila sudah committed */}
+                  <td className="px-3 py-2 text-sm text-red-600 font-medium">{detail.total_transferred < 0 ? fmt(detail.total_transferred) : '—'}</td>
+                  <td className="px-3 py-2 text-sm text-muted">—</td>
+                  <td className="px-3 py-2 text-sm text-muted">—</td>
+                </>
+              ) : (
+                <>
+                  <td className="px-3 py-2 text-sm">{fmt(detail.amount_approved)}</td>
                   <td className="px-3 py-2 text-sm text-teal-700 font-medium">{fmt(detail.total_transferred)}</td>
                   <td className="px-3 py-2 text-sm text-amber-600 font-medium">{detail.draft_total > 0 ? fmt(detail.draft_total) : '—'}</td>
                   <td className="px-3 py-2 text-sm font-bold text-green-700">{fmt(detail.remaining)}</td>
@@ -815,7 +828,7 @@ export function TransferBulkPage() {
                     {metaCols}
                     {isDeduction ? (
                       <td colSpan={5} className="px-3 py-2 text-xs text-muted italic">
-                        Item potongan — mengurangi total PDO, tidak dapat ditransfer.
+                        Item potongan — otomatis dikurangkan dari transfer Rek. Kebun (−{fmt(detail.amount_approved)}) saat simpan permanen.
                       </td>
                     ) : (
                       <>
