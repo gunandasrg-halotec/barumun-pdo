@@ -346,7 +346,7 @@ class TransferEntryService
      * Simpan permanen: ubah SEMUA draft PDO menjadi committed sekaligus.
      * Re-validasi budget per detail sebelum commit.
      */
-    public function commitDrafts(PdoHeader $pdo, User $actor): int
+    public function commitDrafts(PdoHeader $pdo, User $actor, array $deductionDests = []): int
     {
         if (! $pdo->isFinal()) {
             abort(response()->json([
@@ -355,7 +355,7 @@ class TransferEntryService
             ], 409));
         }
 
-        return DB::transaction(function () use ($pdo, $actor) {
+        return DB::transaction(function () use ($pdo, $actor, $deductionDests) {
             $drafts = TransferEntry::onlyDrafts()
                 ->whereHas('pdoDetail', fn ($q) => $q->where('pdo_header_id', $pdo->id))
                 ->lockForUpdate()
@@ -402,9 +402,10 @@ class TransferEntryService
                 );
             }
 
-            // Potongan otomatis: kurangi transfer rek_kebun sebesar nilai item potongan,
+            // Potongan otomatis: kurangi transfer sebesar nilai item potongan,
             // hanya SEKALI per PDO (di commit pertama). Guard exactly-once.
-            $this->applyDeductionEntries($pdo, $actor);
+            // Tujuan default rek_kebun, tapi bisa dipilih user per item ($deductionDests).
+            $this->applyDeductionEntries($pdo, $actor, $deductionDests);
 
             return $drafts->count();
         });
@@ -417,8 +418,10 @@ class TransferEntryService
      * EXACTLY-ONCE: dilewati bila item potongan sudah punya entri otomatis committed —
      * jadi tidak dobel walau user simpan permanen berkali-kali (transfer bertahap).
      */
-    private function applyDeductionEntries(PdoHeader $pdo, User $actor): void
+    private function applyDeductionEntries(PdoHeader $pdo, User $actor, array $deductionDests = []): void
     {
+        $validDests = [TransferEntry::DEST_REK_KEBUN, TransferEntry::DEST_PRIBADI, TransferEntry::DEST_VENDOR];
+
         $deductionDetails = $pdo->details()
             ->whereHas('expenseItem', fn ($q) => $q->where('is_deduction', true))
             ->with('expenseItem')
@@ -440,6 +443,13 @@ class TransferEntryService
                 continue;
             }
 
+            // Tujuan potongan: pilihan user (default rek_kebun), divalidasi.
+            $dest = $deductionDests[$detail->id] ?? TransferEntry::DEST_REK_KEBUN;
+            if (! in_array($dest, $validDests, true)) {
+                $dest = TransferEntry::DEST_REK_KEBUN;
+            }
+            $destLabel = ['rek_kebun' => 'Rek. Kebun', 'pribadi' => 'Pribadi', 'vendor' => 'Vendor'][$dest];
+
             $entry = TransferEntry::create([
                 'pdo_detail_id'        => $detail->id,
                 'recorded_by'          => $actor->id,
@@ -449,10 +459,10 @@ class TransferEntryService
                 'committed_at'         => $now,
                 'committed_by'         => $actor->id,
                 'transfer_date'        => $now->toDateString(),
-                'amount'               => -$detail->amount, // negatif: mengurangi rek_kebun
+                'amount'               => -$detail->amount, // negatif: mengurangi transfer
                 'reference_number'     => null,
-                'notes'                => 'Potongan otomatis (mengurangi transfer Rek. Kebun)',
-                'transfer_destination' => TransferEntry::DEST_REK_KEBUN,
+                'notes'                => "Potongan otomatis (mengurangi transfer {$destLabel})",
+                'transfer_destination' => $dest,
             ]);
 
             AuditLog::record(

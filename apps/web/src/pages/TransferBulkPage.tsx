@@ -456,12 +456,15 @@ export function TransferBulkPage() {
 
     setRows(
       summary.details.map((d) => {
-        // Item potongan (is_deduction) tidak bisa ditransfer — kolom Jumlah dikunci 0.
+        // Item potongan (is_deduction): Jumlah dikunci 0. Tujuan transfer bisa
+        // dipilih user selama BELUM committed. Bila sudah committed, ambil tujuan
+        // dari entri potongan (breakdown final yang bernilai negatif).
         if (d.expense_item?.is_deduction) {
+          const committedDest = DEST_OPTIONS.find((k) => d.final_by_dest[k] < 0)
           return {
             pdo_detail_id: d.pdo_detail_id,
             isSplit:       false,
-            normal: { amount: 0, transfer_date: today, reference_number: '', notes: '', dest: 'rek_kebun' as TransferDest },
+            normal: { amount: 0, transfer_date: today, reference_number: '', notes: '', dest: committedDest ?? 'rek_kebun' },
             split: {
               amount1: 0, dest1: 'rek_kebun' as TransferDest,
               amount2: 0, dest2: 'pribadi' as TransferDest,
@@ -592,7 +595,16 @@ export function TransferBulkPage() {
   })
 
   const commit = useMutation({
-    mutationFn: () => api.post(`/pdo/${pdoId}/transfers/commit`),
+    mutationFn: () => {
+      // Tujuan potongan pilihan user (item is_deduction yang belum committed).
+      const deduction_destinations: Record<string, TransferDest> = {}
+      details.forEach((d, i) => {
+        if (d.expense_item?.is_deduction && d.total_transferred >= 0 && rows[i]) {
+          deduction_destinations[d.pdo_detail_id] = rows[i].normal.dest
+        }
+      })
+      return api.post(`/pdo/${pdoId}/transfers/commit`, { deduction_destinations })
+    },
     onSuccess: () => { hasSavedRef.current = true; toast('Semua draft berhasil disimpan permanen'); invalidate() },
     onError: (err) => toast(errMsg(err, 'Gagal menyimpan permanen'), 'error'),
   })
@@ -686,6 +698,9 @@ export function TransferBulkPage() {
               const hasHistory   = detail.entries.length > 0
               const draftCount   = detail.draft_entries.length
               const isDeduction  = detail.expense_item?.is_deduction ?? false
+              // Potongan dianggap sudah committed bila total transfernya negatif
+              // (entri potongan otomatis sudah dibuat saat simpan permanen).
+              const isDeductionCommitted = isDeduction && detail.total_transferred < 0
               const available    = Math.max(detail.amount_approved - detail.total_transferred, 0)
               const isExpanded   = expandedIds.has(detail.pdo_detail_id)
               const itemCode     = detail.expense_item?.code
@@ -816,9 +831,23 @@ export function TransferBulkPage() {
                     </td>
                     {metaCols}
                     {isDeduction ? (
-                      <td colSpan={5} className="px-3 py-2 text-xs text-muted italic">
-                        Item potongan — otomatis dikurangkan dari transfer Rek. Kebun (−{fmt(detail.amount_approved)}) saat simpan permanen.
-                      </td>
+                      isDeductionCommitted ? (
+                        <td colSpan={5} className="px-3 py-2 text-xs text-muted italic">
+                          Potongan sudah dikurangkan dari transfer {DEST_LABELS[row.normal.dest]} (−{fmt(detail.amount_approved)}).
+                        </td>
+                      ) : (
+                        <>
+                          {/* Belum committed: tujuan boleh dipilih; field lain disabled */}
+                          <td className="px-3 py-2">
+                            <select value={row.normal.dest} onChange={(e) => updateNormal(idx, 'dest', e.target.value as TransferDest)} className="input-base w-32 text-sm">
+                              {DEST_OPTIONS.map((d) => <option key={d} value={d}>{DEST_LABELS[d]}</option>)}
+                            </select>
+                          </td>
+                          <td colSpan={4} className="px-3 py-2 text-xs text-muted italic">
+                            Potongan −{fmt(detail.amount_approved)} akan dikurangkan dari transfer {DEST_LABELS[row.normal.dest]} saat simpan permanen.
+                          </td>
+                        </>
+                      )
                     ) : (
                       <>
                         <td className="px-3 py-2">

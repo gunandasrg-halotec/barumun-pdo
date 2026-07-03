@@ -132,11 +132,17 @@ class TransferEntryController extends Controller
      */
     public function commitDrafts(Request $request, PdoHeader $pdo): JsonResponse
     {
+        $request->validate([
+            // Map pdo_detail_id (item potongan) → tujuan transfer pilihan user.
+            'deduction_destinations'   => ['sometimes', 'array'],
+            'deduction_destinations.*' => ['string', 'in:rek_kebun,pribadi,vendor'],
+        ]);
+
         if (! $request->user()?->canRecordTransfer()) {
             abort(response()->json(['success' => false, 'error' => ['code' => 'FORBIDDEN', 'message' => 'Anda tidak berhak menyimpan transfer dana.']], 403));
         }
 
-        $count = $this->service->commitDrafts($pdo, $request->user());
+        $count = $this->service->commitDrafts($pdo, $request->user(), $request->input('deduction_destinations', []));
 
         return response()->json(['success' => true, 'data' => ['committed' => $count], 'message' => "{$count} transfer berhasil disimpan permanen."]);
     }
