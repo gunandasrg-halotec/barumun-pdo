@@ -91,6 +91,8 @@ Route::prefix('v1')->middleware(['auth:sanctum', 'ensure.unit.access'])->group(f
         // Realisasi per PDO
         Route::get('realizations', [RealizationEntryController::class, 'summaryByPdo']);
         Route::get('realizations/items', [RealizationEntryController::class, 'itemsByPdo']);
+        // BR-REAL-005: item yang boleh direalisasi actor + saldo kantong
+        Route::get('realizations/available', [RealizationEntryController::class, 'availableByPdo']);
         // BR-CLOSE-003: write realisasi diblokir untuk PDO closed
         Route::post('realizations', [RealizationEntryController::class, 'store'])->middleware('check.pdo.status');
     });

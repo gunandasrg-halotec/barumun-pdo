@@ -10,7 +10,25 @@ import { EmptyState } from '@/components/ui/EmptyState'
 import { useToastStore } from '@/store/toast.store'
 import { fmt, fmtDate } from '@/lib/format'
 import { Plus, Upload, AlertCircle } from 'lucide-react'
-import type { ApiResponse, RealizationEntry, PdoHeader, PdoDetail, AuthUser } from '@/types'
+import type { ApiResponse, RealizationEntry, PdoHeader, AuthUser } from '@/types'
+
+// Item yang boleh direalisasi actor untuk PDO tertentu, beserta saldo kantong
+// (bucket = total transfer ke kantong actor; saldo = bucket - realisasi kelompok itu).
+// Lihat BR-REAL-005 / GET /pdo/{pdo}/realizations/available.
+interface RealizationAvailableItem {
+  pdo_detail_id:  string
+  expense_item:   { id: string; code: string; name: string } | null
+  description:    string
+  bucket:         number
+  realized_group: number
+  saldo:          number
+}
+
+// BR-REAL-005: STAFF_PURCHASING & MANAJER_KEUANGAN sama-sama kantong pribadi/vendor —
+// keduanya wajib pakai metode/sumber dana non-kas_kebun.
+function isPribadiVendorRole(user: AuthUser | undefined): boolean {
+  return user?.role?.code === 'STAFF_PURCHASING' || user?.role?.code === 'MANAJER_KEUANGAN'
+}
 
 const schema = z.object({
   pdo_header_id:    z.string().uuid('Pilih PDO'),
@@ -61,17 +79,19 @@ export function RealizationPage() {
     resolver: zodResolver(schema),
     defaultValues: {
       transaction_date: new Date().toISOString().split('T')[0],
-      payment_method: currentUser?.role?.code === 'STAFF_PURCHASING' ? 'transfer' : 'tunai',
-      funding_source: currentUser?.role?.code === 'STAFF_PURCHASING' ? 'rekening_utama' : 'kas_kebun',
+      payment_method: isPribadiVendorRole(currentUser) ? 'transfer' : 'tunai',
+      funding_source: isPribadiVendorRole(currentUser) ? 'rekening_utama' : 'kas_kebun',
     },
   })
 
   const selectedPdoId = watch('pdo_header_id')
 
+  // BR-REAL-005: hanya item yang boleh direalisasi actor (sesuai kantong role-nya),
+  // dengan saldo per kantong — bukan saldo transfer gabungan semua tujuan.
   const { data: pdoDetails } = useQuery({
-    queryKey: ['pdo-details', selectedPdoId],
+    queryKey: ['realizations-available', selectedPdoId],
     queryFn: async () => {
-      const res = await api.get<ApiResponse<PdoDetail[]>>(`/pdo/${selectedPdoId}/details`)
+      const res = await api.get<ApiResponse<RealizationAvailableItem[]>>(`/pdo/${selectedPdoId}/realizations/available`)
       return res.data.data
     },
     enabled: !!selectedPdoId,
@@ -224,12 +244,15 @@ export function RealizationPage() {
             <select {...register('pdo_detail_id')} className="input-base" disabled={!selectedPdoId}>
               <option value="">Pilih item...</option>
               {pdoDetails?.map((d) => (
-                <option key={d.id} value={d.id}>
-                  {d.expense_item?.name ?? d.description} — Saldo: {fmt((d.total_transferred ?? 0) - (d.total_realized ?? 0))}
+                <option key={d.pdo_detail_id} value={d.pdo_detail_id}>
+                  {d.expense_item?.name ?? d.description} — Saldo: {fmt(d.saldo)}
                 </option>
               ))}
             </select>
             {errors.pdo_detail_id && <p className="field-error">{errors.pdo_detail_id.message}</p>}
+            {selectedPdoId && pdoDetails?.length === 0 && (
+              <p className="text-xs text-muted mt-1">Tidak ada item yang bisa Anda realisasi untuk PDO ini.</p>
+            )}
           </div>
 
           {apiError && (

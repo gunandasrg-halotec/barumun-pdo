@@ -24,6 +24,9 @@ class RealizationEntry extends Model
     const FUNDING_REKENING_KEBUN = 'rekening_kebun';
     const FUNDING_REKENING_UTAMA = 'rekening_utama';
 
+    const SETTLEMENT_KEBUN          = 'kebun';
+    const SETTLEMENT_PRIBADI_VENDOR = 'pribadi_vendor';
+
     protected $fillable = [
         'pdo_detail_id',
         'recorded_by',
@@ -33,6 +36,7 @@ class RealizationEntry extends Model
         'proof_number',
         'funding_source',
         'explanation',
+        'settlement_group',
     ];
 
     protected function casts(): array

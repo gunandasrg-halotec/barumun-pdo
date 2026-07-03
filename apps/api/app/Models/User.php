@@ -114,6 +114,22 @@ class User extends Authenticatable
      */
     public function canRecordRealization(): bool
     {
-        return $this->hasAnyRole(['KERANI', 'STAFF_PURCHASING']);
+        return $this->hasAnyRole(['KERANI', 'STAFF_PURCHASING', 'MANAJER_KEUANGAN']);
+    }
+
+    /**
+     * BR-REAL-005: kantong realisasi yang boleh dipakai role ini.
+     * KERANI → kantong rek_kebun. STAFF_PURCHASING & MANAJER_KEUANGAN →
+     * kantong pribadi+vendor. Role lain → null (tidak boleh realisasi).
+     */
+    public function realizationSettlementGroup(): ?string
+    {
+        if ($this->hasRole('KERANI')) {
+            return RealizationEntry::SETTLEMENT_KEBUN;
+        }
+        if ($this->hasAnyRole(['STAFF_PURCHASING', 'MANAJER_KEUANGAN'])) {
+            return RealizationEntry::SETTLEMENT_PRIBADI_VENDOR;
+        }
+        return null;
     }
 }
