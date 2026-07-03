@@ -25,10 +25,17 @@ interface TransferEntry {
   notes:                string | null
 }
 
+interface CategoryInfo {
+  code: string
+  name: string
+}
+
 interface TransferDetailItem {
   pdo_detail_id: string
   description:   string
   expense_item:  { id: string; code: string; name: string } | null
+  category:      CategoryInfo | null
+  subcategory:   CategoryInfo | null
   entries:       TransferEntry[]
 }
 
@@ -101,7 +108,12 @@ export function PdoListPage() {
   })
 
   const flatEntries = transferDetail?.details.flatMap((d) =>
-    d.entries.map((e) => ({ ...e, item_name: d.expense_item?.name ?? d.description }))
+    d.entries.map((e) => ({
+      ...e,
+      item_name:        d.expense_item?.name ?? d.description,
+      category_name:    d.category ? `${d.category.code} — ${d.category.name}` : '—',
+      subcategory_name: d.subcategory ? `${d.subcategory.code} — ${d.subcategory.name}` : '—',
+    }))
   ) ?? []
 
   const destTotals = flatEntries.reduce<Record<string, number>>((acc, e) => {
@@ -313,7 +325,7 @@ export function PdoListPage() {
               <table className="w-full border-collapse text-sm">
                 <thead>
                   <tr>
-                    {['Tanggal', 'Item', 'Tujuan Transfer', 'Jumlah'].map((h) => (
+                    {['Tanggal', 'Kategori', 'Sub-Kategori', 'Item', 'Tujuan Transfer', 'Jumlah'].map((h) => (
                       <th key={h} className="px-3 py-2 text-left text-[11px] font-bold uppercase tracking-wider text-muted bg-[#f7faf7]">
                         {h}
                       </th>
@@ -322,13 +334,15 @@ export function PdoListPage() {
                 </thead>
                 <tbody>
                   {flatEntries.length === 0 ? (
-                    <tr><td colSpan={4} className="px-3 py-6 text-center text-muted">Belum ada data transfer</td></tr>
+                    <tr><td colSpan={6} className="px-3 py-6 text-center text-muted">Belum ada data transfer</td></tr>
                   ) : (
                     flatEntries
                       .sort((a, b) => a.transfer_date.localeCompare(b.transfer_date))
                       .map((e) => (
                         <tr key={e.id} className="border-t border-line hover:bg-[#fbfdfb]">
                           <td className="px-3 py-2 whitespace-nowrap">{fmtDate(e.transfer_date)}</td>
+                          <td className="px-3 py-2 whitespace-nowrap">{e.category_name}</td>
+                          <td className="px-3 py-2 whitespace-nowrap">{e.subcategory_name}</td>
                           <td className="px-3 py-2">{e.item_name}</td>
                           <td className="px-3 py-2 whitespace-nowrap">{DEST_LABEL[e.transfer_destination] ?? e.transfer_destination}</td>
                           <td className="px-3 py-2 text-right font-bold whitespace-nowrap">{fmt(e.amount)}</td>
