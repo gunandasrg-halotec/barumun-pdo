@@ -535,16 +535,12 @@ export function TransferBulkPage() {
     const dest: DestBreakdown = { rek_kebun: 0, pribadi: 0, vendor: 0 }
 
     for (const d of details) {
-      // Committed (final) + draft tersimpan saja.
+      // Hanya transfer yang SUDAH tercatat: committed (final) + draft tersimpan.
+      // Potongan sudah menjadi entri negatif committed (di rek_kebun) saat simpan
+      // permanen, jadi otomatis ikut ter-net di sini — tidak perlu proyeksi lagi.
       dest.rek_kebun += d.final_by_dest.rek_kebun + d.draft_by_dest.rek_kebun
       dest.pribadi   += d.final_by_dest.pribadi   + d.draft_by_dest.pribadi
       dest.vendor    += d.final_by_dest.vendor    + d.draft_by_dest.vendor
-
-      // Proyeksi potongan yang BELUM committed (potongan dicatat saat simpan
-      // permanen). final < 0 = sudah dicatat (jangan dobel); == 0 = belum.
-      if (d.expense_item?.is_deduction && d.final_by_dest.rek_kebun === 0) {
-        dest.rek_kebun -= d.amount_approved
-      }
     }
     const totalTransfer = dest.rek_kebun + dest.pribadi + dest.vendor
     return { totalPengajuan, totalPotongan, dest, sisa: totalPengajuan - totalTransfer }
