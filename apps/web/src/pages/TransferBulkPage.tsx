@@ -516,7 +516,10 @@ export function TransferBulkPage() {
 
   const details = useMemo(() => summary?.details ?? [], [summary])
 
-  // ── Cards live: committed + draft tersimpan + input form saat ini ──────────────
+  // ── Cards ringkasan: hanya transfer yang SUDAH tercatat (committed + draft) ─────
+  // Nilai kolom "Jumlah" pada form (input yang belum disimpan) TIDAK diikutkan —
+  // itu hanya usulan/prefill, kalau dijumlahkan membuat rek kebun membengkak dan
+  // Sisa Dana selalu 0.
   const cards = useMemo(() => {
     // Total Pengajuan signed: item potongan (is_deduction) MENGURANGI total —
     // harus sama dengan grand_total_amount di halaman Daftar PDO.
@@ -531,31 +534,21 @@ export function TransferBulkPage() {
     )
     const dest: DestBreakdown = { rek_kebun: 0, pribadi: 0, vendor: 0 }
 
-    // Committed (final) saja. Nilai draft sudah tercermin di input form (rows),
-    // jadi tidak ditambahkan lagi di sini agar tidak dobel.
     for (const d of details) {
-      dest.rek_kebun += d.final_by_dest.rek_kebun
-      dest.pribadi   += d.final_by_dest.pribadi
-      dest.vendor    += d.final_by_dest.vendor
+      // Committed (final) + draft tersimpan saja.
+      dest.rek_kebun += d.final_by_dest.rek_kebun + d.draft_by_dest.rek_kebun
+      dest.pribadi   += d.final_by_dest.pribadi   + d.draft_by_dest.pribadi
+      dest.vendor    += d.final_by_dest.vendor    + d.draft_by_dest.vendor
 
-      // Proyeksi potongan yang BELUM committed: potongan akan dikurangkan dari
-      // rek_kebun saat simpan permanen. final_by_dest.rek_kebun < 0 = sudah
-      // dicatat (jangan dobel); == 0 = belum → proyeksikan pengurangannya.
+      // Proyeksi potongan yang BELUM committed (potongan dicatat saat simpan
+      // permanen). final < 0 = sudah dicatat (jangan dobel); == 0 = belum.
       if (d.expense_item?.is_deduction && d.final_by_dest.rek_kebun === 0) {
         dest.rek_kebun -= d.amount_approved
       }
     }
-    for (const row of rows) {
-      if (row.isSplit) {
-        if (Number(row.split.amount1) > 0) dest[row.split.dest1] += Number(row.split.amount1)
-        if (Number(row.split.amount2) > 0) dest[row.split.dest2] += Number(row.split.amount2)
-      } else if (Number(row.normal.amount) > 0) {
-        dest[row.normal.dest] += Number(row.normal.amount)
-      }
-    }
     const totalTransfer = dest.rek_kebun + dest.pribadi + dest.vendor
     return { totalPengajuan, totalPotongan, dest, sisa: totalPengajuan - totalTransfer }
-  }, [details, rows])
+  }, [details])
 
   const hasDrafts = useMemo(() => details.some((d) => d.draft_entries.length > 0), [details])
 
