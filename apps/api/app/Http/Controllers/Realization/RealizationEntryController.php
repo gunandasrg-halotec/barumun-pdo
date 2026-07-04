@@ -15,11 +15,18 @@ class RealizationEntryController extends Controller
 {
     public function __construct(private readonly RealizationEntryService $service) {}
 
-    /** GET /realization-entries?pdo_detail_id= */
+    /** GET /realization-entries?pdo_detail_id=&unit_ids[]=&unit_ids[]= */
     public function index(Request $request): JsonResponse
     {
+        $user    = $request->user();
         $filters = $request->only(['pdo_detail_id']);
-        $data    = $this->service->list($request->user(), $filters);
+
+        // unit_ids filter only applies to HO users (those without a fixed plantation unit)
+        if (!$user->plantation_unit_id && $request->has('unit_ids')) {
+            $filters['unit_ids'] = array_filter((array) $request->input('unit_ids'));
+        }
+
+        $data = $this->service->list($user, $filters);
 
         return response()->json(['success' => true, 'data' => $data]);
     }

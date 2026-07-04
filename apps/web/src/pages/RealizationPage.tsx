@@ -5,10 +5,12 @@ import { Button } from '@/components/ui/Button'
 import { Modal } from '@/components/ui/Modal'
 import { EmptyState } from '@/components/ui/EmptyState'
 import { DateRangePickerButton } from '@/components/ui/DateRangePickerButton'
+import { UnitMultiSelectButton } from '@/components/ui/UnitMultiSelectButton'
+import { useAuthStore } from '@/store/auth.store'
 import { useToastStore } from '@/store/toast.store'
 import { fmt, fmtDate } from '@/lib/format'
 import { Upload, AlertCircle, Search, ChevronDown, ChevronRight } from 'lucide-react'
-import type { ApiResponse, RealizationEntry } from '@/types'
+import type { ApiResponse, PlantationUnit, RealizationEntry } from '@/types'
 
 const PAYMENT_LABEL: Record<string, string> = {
   tunai: 'Tunai', transfer: 'Transfer Bank',
@@ -21,21 +23,36 @@ const FUNDING_LABEL: Record<string, string> = {
 const COLS = ['PDO', 'Item PDO', 'No. Ref', 'Tanggal', 'Jumlah', 'Metode', 'Sumber Dana', 'Dicatat Oleh', 'Bukti', 'Aksi']
 
 export function RealizationPage() {
+  const user  = useAuthStore((s) => s.user)
   const toast = useToastStore((s) => s.push)
   const qc    = useQueryClient()
-  const [uploadId,  setUploadId]  = useState<string | null>(null)
-  const [file,      setFile]      = useState<File | null>(null)
-  const [search,    setSearch]    = useState('')
-  const [startDate, setStartDate] = useState('')
-  const [endDate,   setEndDate]   = useState('')
-  const [collapsed, setCollapsed] = useState<Record<string, boolean>>({})
+  const [uploadId,   setUploadId]  = useState<string | null>(null)
+  const [file,       setFile]      = useState<File | null>(null)
+  const [search,     setSearch]    = useState('')
+  const [startDate,  setStartDate] = useState('')
+  const [endDate,    setEndDate]   = useState('')
+  const [collapsed,  setCollapsed] = useState<Record<string, boolean>>({})
+  const [unitIds,    setUnitIds]   = useState<string[]>([])
 
-  const hasFilter = !!(search.trim() || startDate || endDate)
+  const isHO = !user?.plantation_unit?.id
+
+  const { data: units } = useQuery({
+    queryKey: ['plantation-units'],
+    queryFn: async () => {
+      const res = await api.get<ApiResponse<PlantationUnit[]>>('/plantation-units')
+      return res.data.data
+    },
+    enabled: isHO,
+  })
+
+  const hasFilter = !!(search.trim() || startDate || endDate || unitIds.length)
 
   const { data: realizations, isLoading } = useQuery({
-    queryKey: ['realizations'],
+    queryKey: ['realizations', unitIds],
     queryFn: async () => {
-      const res = await api.get<ApiResponse<RealizationEntry[]>>('/realization-entries')
+      const params = new URLSearchParams()
+      unitIds.forEach((id) => params.append('unit_ids[]', id))
+      const res = await api.get<ApiResponse<RealizationEntry[]>>('/realization-entries', { params })
       return res.data.data
     },
     enabled: hasFilter,
@@ -108,6 +125,15 @@ export function RealizationPage() {
 
       {/* Filter Bar */}
       <div className="card mb-5 flex flex-wrap gap-3 items-end">
+        {isHO && units && (
+          <div className="flex items-end">
+            <UnitMultiSelectButton
+              units={units}
+              selected={unitIds}
+              onChange={setUnitIds}
+            />
+          </div>
+        )}
         <div className="flex items-end">
           <DateRangePickerButton
             startDate={startDate}
