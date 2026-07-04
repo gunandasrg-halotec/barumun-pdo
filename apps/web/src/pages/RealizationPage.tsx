@@ -1,7 +1,4 @@
-import { useEffect, useState } from 'react'
-import { useForm } from 'react-hook-form'
-import { zodResolver } from '@hookform/resolvers/zod'
-import { z } from 'zod'
+import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '@/lib/api'
 import { Button } from '@/components/ui/Button'
@@ -9,124 +6,28 @@ import { Modal } from '@/components/ui/Modal'
 import { EmptyState } from '@/components/ui/EmptyState'
 import { useToastStore } from '@/store/toast.store'
 import { fmt, fmtDate } from '@/lib/format'
-import { Plus, Upload, AlertCircle } from 'lucide-react'
-import type { ApiResponse, RealizationEntry, PdoHeader, AuthUser } from '@/types'
+import { Upload, AlertCircle } from 'lucide-react'
+import type { ApiResponse, RealizationEntry } from '@/types'
 
-// Item yang boleh direalisasi actor untuk PDO tertentu, beserta saldo kantong
-// (bucket = total transfer ke kantong actor; saldo = bucket - realisasi kelompok itu).
-// Lihat BR-REAL-005 / GET /pdo/{pdo}/realizations/available.
-interface RealizationAvailableItem {
-  pdo_detail_id:  string
-  expense_item:   { id: string; code: string; name: string } | null
-  description:    string
-  bucket:         number
-  realized_group: number
-  saldo:          number
+const PAYMENT_LABEL: Record<string, string> = {
+  tunai: 'Tunai', transfer: 'Transfer Bank',
 }
 
-// BR-REAL-005: STAFF_PURCHASING & MANAJER_KEUANGAN sama-sama kantong pribadi/vendor —
-// keduanya wajib pakai metode/sumber dana non-kas_kebun.
-function isPribadiVendorRole(user: AuthUser | undefined): boolean {
-  return user?.role?.code === 'STAFF_PURCHASING' || user?.role?.code === 'MANAJER_KEUANGAN'
+const FUNDING_LABEL: Record<string, string> = {
+  kas_kebun: 'Kas Kebun', rekening_kebun: 'Rekening Kebun', rekening_utama: 'Rekening Utama',
 }
-
-const schema = z.object({
-  pdo_header_id:    z.string().uuid('Pilih PDO'),
-  pdo_detail_id:    z.string().uuid('Pilih item biaya'),
-  transaction_date: z.string().min(1, 'Tanggal wajib diisi'),
-  amount:           z.coerce.number().min(1, 'Jumlah harus > 0'),
-  payment_method:   z.enum(['tunai', 'transfer']),
-  funding_source:   z.enum(['kas_kebun', 'rekening_kebun', 'rekening_utama']),
-  proof_number: z.string().min(1, 'No. referensi wajib diisi'),
-  explanation:      z.string().nullable().optional(),
-})
-
-type Form = z.infer<typeof schema>
 
 export function RealizationPage() {
   const toast = useToastStore((s) => s.push)
   const qc    = useQueryClient()
-  const [open, setOpen]           = useState(false)
-  const [uploadId, setUploadId]   = useState<string | null>(null)
-  const [file, setFile]           = useState<File | null>(null)
-  const [apiError, setApiError]   = useState<string | null>(null)
-
-  const { data: currentUser } = useQuery({
-    queryKey: ['auth/me'],
-    queryFn: async () => {
-      const res = await api.get<ApiResponse<AuthUser>>('/auth/me')
-      return res.data.data
-    },
-  })
+  const [uploadId, setUploadId] = useState<string | null>(null)
+  const [file, setFile]         = useState<File | null>(null)
 
   const { data: realizations, isLoading } = useQuery({
     queryKey: ['realizations'],
     queryFn: async () => {
       const res = await api.get<ApiResponse<RealizationEntry[]>>('/realization-entries')
       return res.data.data
-    },
-  })
-
-  const { data: pdoList } = useQuery({
-    queryKey: ['pdo-active'],
-    queryFn: async () => {
-      const res = await api.get<ApiResponse<PdoHeader[]>>('/pdo', { params: { status: 'final' } })
-      return res.data.data
-    },
-  })
-
-  const { register, handleSubmit, watch, reset, setValue, formState: { errors } } = useForm<Form>({
-    resolver: zodResolver(schema),
-    defaultValues: {
-      transaction_date: new Date().toISOString().split('T')[0],
-      payment_method: isPribadiVendorRole(currentUser) ? 'transfer' : 'tunai',
-      funding_source: isPribadiVendorRole(currentUser) ? 'rekening_utama' : 'kas_kebun',
-    },
-  })
-
-  const selectedPdoId       = watch('pdo_header_id')
-  const selectedPaymentMethod = watch('payment_method')
-
-  // BR-REAL-006: sumber dana dikunci mengikuti metode pembayaran.
-  // Kantong Pribadi/Vendor (STAFF_PURCHASING, MANAJER_KEUANGAN) selalu Rekening Utama.
-  // Kantong Kebun (role lain, mis. KERANI): Tunai -> Kas Kebun, Transfer -> Rekening Kebun.
-  useEffect(() => {
-    if (isPribadiVendorRole(currentUser)) {
-      setValue('funding_source', 'rekening_utama')
-      return
-    }
-    setValue('funding_source', selectedPaymentMethod === 'transfer' ? 'rekening_kebun' : 'kas_kebun')
-  }, [currentUser, selectedPaymentMethod, setValue])
-
-  // BR-REAL-005: hanya item yang boleh direalisasi actor (sesuai kantong role-nya),
-  // dengan saldo per kantong — bukan saldo transfer gabungan semua tujuan.
-  const { data: pdoDetails } = useQuery({
-    queryKey: ['realizations-available', selectedPdoId],
-    queryFn: async () => {
-      const res = await api.get<ApiResponse<RealizationAvailableItem[]>>(`/pdo/${selectedPdoId}/realizations/available`)
-      return res.data.data
-    },
-    enabled: !!selectedPdoId,
-  })
-
-  const save = useMutation({
-    mutationFn: (data: Form) => {
-      const { pdo_header_id: _h, ...payload } = data
-      return api.post<ApiResponse<RealizationEntry>>('/realization-entries', payload)
-    },
-    onSuccess: (res) => {
-      setApiError(null)
-      toast('Realisasi berhasil dicatat')
-      qc.invalidateQueries({ queryKey: ['realizations'] })
-      const entry = res.data.data
-      setOpen(false)
-      reset()
-      setUploadId(entry.id)
-    },
-    onError: (error: any) => {
-      const message = error?.response?.data?.message || error?.message || 'Gagal menyimpan realisasi'
-      setApiError(message)
-      toast(message, 'error')
     },
   })
 
@@ -148,28 +49,13 @@ export function RealizationPage() {
     onError: () => toast('Gagal upload bukti', 'error'),
   })
 
-  const PAYMENT_LABEL: Record<string, string> = {
-    tunai: 'Tunai', transfer: 'Transfer Bank',
-  }
-
-  const FUNDING_LABEL: Record<string, string> = {
-    kas_kebun: 'Kas Kebun', rekening_kebun: 'Rekening Kebun', rekening_utama: 'Rekening Utama',
-  }
-
-  // Kantong Pribadi/Vendor (STAFF_PURCHASING, MANAJER_KEUANGAN) hanya bisa Transfer Bank.
-  // Kantong Kebun (mis. KERANI) boleh pilih Tunai atau Transfer Bank.
-  const availablePaymentMethods = isPribadiVendorRole(currentUser) ? ['transfer'] : ['tunai', 'transfer']
-
   return (
     <div>
       <div className="flex items-start justify-between mb-6">
         <div>
           <h2 className="text-[28px] font-[950] text-ink">Realisasi Biaya</h2>
-          <p className="text-muted text-sm mt-1">Input pengeluaran aktual dan upload bukti pembayaran.</p>
+          <p className="text-muted text-sm mt-1">Daftar semua realisasi pengeluaran yang sudah dicatat.</p>
         </div>
-        <Button onClick={() => setOpen(true)}>
-          <Plus className="w-4 h-4" /> Input Realisasi
-        </Button>
       </div>
 
       <div className="overflow-auto border border-line rounded-drawer bg-white">
@@ -211,7 +97,7 @@ export function RealizationPage() {
                 <td className="px-4 py-3 text-sm">{fmtDate(r.transaction_date)}</td>
                 <td className="px-4 py-3 text-sm font-bold">{fmt(r.amount)}</td>
                 <td className="px-4 py-3 text-sm">{PAYMENT_LABEL[r.payment_method]}</td>
-                <td className="px-4 py-3 text-sm">{r.funding_source}</td>
+                <td className="px-4 py-3 text-sm">{FUNDING_LABEL[r.funding_source] ?? r.funding_source}</td>
                 <td className="px-4 py-3 text-sm">{r.recorder?.full_name ?? '—'}</td>
                 <td className="px-4 py-3">
                   {r.attachments?.length ? (
@@ -236,120 +122,21 @@ export function RealizationPage() {
         </table>
       </div>
 
-      {/* Modal Input Realisasi */}
-      <Modal open={open} onClose={() => { setOpen(false); reset(); setApiError(null) }} title="Input Realisasi Biaya">
-        <form onSubmit={handleSubmit((d) => save.mutate(d))} className="flex flex-col gap-4">
-          <div>
-            <label className="label">Pilih PDO (status Final)</label>
-            <select {...register('pdo_header_id')} className="input-base">
-              <option value="">Pilih PDO...</option>
-              {pdoList?.map((p) => (
-                <option key={p.id} value={p.id}>{p.pdo_number} — {p.plantation_unit?.name}</option>
-              ))}
-            </select>
-            {errors.pdo_header_id && <p className="field-error">{errors.pdo_header_id.message}</p>}
-          </div>
-
-          <div>
-            <label className="label">Item Biaya</label>
-            <select {...register('pdo_detail_id')} className="input-base" disabled={!selectedPdoId}>
-              <option value="">Pilih item...</option>
-              {pdoDetails?.map((d) => (
-                <option key={d.pdo_detail_id} value={d.pdo_detail_id}>
-                  {d.expense_item?.name ?? d.description} — Saldo: {fmt(d.saldo)}
-                </option>
-              ))}
-            </select>
-            {errors.pdo_detail_id && <p className="field-error">{errors.pdo_detail_id.message}</p>}
-            {selectedPdoId && pdoDetails?.length === 0 && (
-              <p className="text-xs text-muted mt-1">Tidak ada item yang bisa Anda realisasi untuk PDO ini.</p>
-            )}
-          </div>
-
-          {apiError && (
-            <div className="p-3 bg-red-50 border border-red-200 rounded text-sm text-red-700">
-              <p className="font-bold mb-1">Kesalahan server:</p>
-              <p>{apiError}</p>
-            </div>
-          )}
-
-          {Object.keys(errors).length > 0 && (
-            <div className="p-3 bg-red-50 border border-red-200 rounded text-sm text-red-700">
-              <p className="font-bold mb-1">Ada kesalahan di form:</p>
-              <ul className="list-disc list-inside">
-                {Object.entries(errors).map(([field, error]: [string, any]) => (
-                  <li key={field}>{error?.message || `${field} tidak valid`}</li>
-                ))}
-              </ul>
-            </div>
-          )}
-
-          <div className="grid grid-cols-1 desk:grid-cols-2 gap-3">
-            <div>
-              <label className="label">Tanggal Transaksi</label>
-              <input type="date" {...register('transaction_date')} className="input-base" />
-            </div>
-            <div>
-              <label className="label">Jumlah (Rp)</label>
-              <input type="number" {...register('amount')} className="input-base" />
-              {errors.amount && <p className="field-error">{errors.amount.message}</p>}
-            </div>
-          </div>
-
-          <div className="grid grid-cols-1 desk:grid-cols-2 gap-3">
-            <div>
-              <label className="label">Metode Pembayaran</label>
-              <select {...register('payment_method')} className="input-base">
-                {availablePaymentMethods.includes('tunai') && <option value="tunai">Tunai</option>}
-                {availablePaymentMethods.includes('transfer') && <option value="transfer">Transfer Bank</option>}
-              </select>
-            </div>
-            <div>
-              <label className="label">Sumber Dana</label>
-              {/* Dikunci otomatis mengikuti Metode Pembayaran (BR-REAL-006) — tidak bisa dipilih manual.
-                  Semua opsi tetap dirender (bukan cuma 1 dinamis) agar setValue() selalu punya
-                  <option> yang cocok, apa pun urutan render vs efek — hindari select tampil blank. */}
-              <select {...register('funding_source')} className="input-base bg-[#f7faf7]" disabled>
-                <option value="kas_kebun">{FUNDING_LABEL.kas_kebun}</option>
-                <option value="rekening_kebun">{FUNDING_LABEL.rekening_kebun}</option>
-                <option value="rekening_utama">{FUNDING_LABEL.rekening_utama}</option>
-              </select>
-            </div>
-          </div>
-
-          <div>
-            <label className="label">No. Referensi / Kuitansi</label>
-            <input {...register('proof_number')} className="input-base" placeholder="KWT/2026/001" />
-            {errors.proof_number && <p className="field-error">{errors.proof_number.message}</p>}
-          </div>
-
-          <div>
-            <label className="label">Penjelasan (opsional)</label>
-            <input {...register('explanation')} className="input-base" />
-          </div>
-
-          <div className="flex justify-end gap-2 pt-2">
-            <Button type="button" variant="secondary" onClick={() => { setOpen(false); reset() }}>Batal</Button>
-            <Button type="submit" loading={save.isPending}>Simpan Realisasi</Button>
-          </div>
-        </form>
-      </Modal>
-
       {/* Modal Upload Bukti */}
-      <Modal open={!!uploadId && !open} onClose={() => { setUploadId(null); setFile(null) }} title="Upload Bukti Pembayaran">
+      <Modal open={!!uploadId} onClose={() => { setUploadId(null); setFile(null) }} title="Upload Bukti Pembayaran">
         <p className="text-sm text-muted mb-4">
           Upload foto/scan kuitansi, bon, atau bukti transfer. Format: JPG, PNG, PDF. Maks 10 MB.
         </p>
         <div
           className="border-2 border-dashed border-line rounded-drawer p-8 text-center cursor-pointer hover:border-green transition-colors"
-          onClick={() => document.getElementById('file-upload')?.click()}
+          onClick={() => document.getElementById('file-upload-realisasi')?.click()}
         >
           <Upload className="w-8 h-8 text-muted mx-auto mb-2" />
           <p className="text-sm text-muted">
             {file ? file.name : 'Klik atau drag file ke sini'}
           </p>
           <input
-            id="file-upload"
+            id="file-upload-realisasi"
             type="file"
             accept=".jpg,.jpeg,.png,.pdf"
             className="hidden"

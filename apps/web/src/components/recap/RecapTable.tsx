@@ -15,11 +15,12 @@ function SaldoCell({ value, className = '' }: { value: number; className?: strin
 
 interface Props {
   data: RecapResponse
+  onRealizationClick?: (pdoDetailId: string, itemName: string) => void
 }
 
 const COL_HEADERS = ['No', 'Kode', 'Uraian', 'Pengajuan', 'Total Transfer', 'Total Realisasi', 'Saldo']
 
-export function RecapTable({ data }: Props) {
+export function RecapTable({ data, onRealizationClick }: Props) {
   const allCodes = data.categories.map((c) => c.category_code)
   const [expanded, setExpanded] = useState<Set<string>>(new Set(allCodes))
 
@@ -110,7 +111,18 @@ export function RecapTable({ data }: Props) {
                     </td>
                     <td className="px-3 py-1.5 text-right border border-[#e5e7eb]">{idr(item.amount)}</td>
                     <td className="px-3 py-1.5 text-right border border-[#e5e7eb]">{idr(item.total_transfer)}</td>
-                    <td className="px-3 py-1.5 text-right border border-[#e5e7eb]">{idr(item.total_realization)}</td>
+                    <td className="px-3 py-1.5 text-right border border-[#e5e7eb]">
+                      {item.total_realization > 0 && onRealizationClick ? (
+                        <button
+                          className="text-green font-semibold hover:underline w-full text-right"
+                          onClick={() => onRealizationClick(item.pdo_detail_id, item.item_name)}
+                        >
+                          {idr(item.total_realization)}
+                        </button>
+                      ) : (
+                        idr(item.total_realization)
+                      )}
+                    </td>
                     <SaldoCell value={item.saldo} className="border border-[#e5e7eb]" />
                   </tr>
                 )),

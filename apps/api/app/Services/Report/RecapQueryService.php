@@ -26,6 +26,7 @@ class RecapQueryService
                 ei.id            AS item_id,
                 ei.code          AS item_code,
                 ei.name          AS item_name,
+                pd.id            AS pdo_detail_id,
                 pd.account_number,
                 pd.description,
                 CASE WHEN ei.is_deduction THEN -pd.amount ELSE pd.amount END AS pengajuan,
@@ -48,7 +49,7 @@ class RecapQueryService
                 ec.id, ec.code, ec.name, ec.display_order,
                 es.id, es.code, es.name, es.display_order,
                 ei.id, ei.code, ei.name, ei.is_deduction,
-                pd.account_number, pd.description, pd.amount
+                pd.id, pd.account_number, pd.description, pd.amount
             ORDER BY ec.display_order, es.display_order, ei.id
         ', [
             'year'        => $year,
@@ -118,6 +119,7 @@ class RecapQueryService
             $itemCounter++;
             $categories[$catPos]['subcategories'][$subPos]['items'][] = [
                 'no'               => $itemCounter,
+                'pdo_detail_id'    => $row->pdo_detail_id,
                 'item_code'        => $row->item_code,
                 'item_name'        => $row->item_name,
                 'account_number'   => $row->account_number,

@@ -1,5 +1,6 @@
 export interface RecapItem {
   no: number
+  pdo_detail_id: string
   item_code: string
   item_name: string
   account_number: string
