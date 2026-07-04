@@ -14,6 +14,7 @@ import { useToastStore } from '@/store/toast.store'
 import { fmt, fmtDate } from '@/lib/format'
 import type { ApiResponse, PlantationUnit, PdoHeader, RealizationEntry, AuthUser } from '@/types'
 import { Download, Search, Plus, Upload } from 'lucide-react'
+import { DateRangePickerButton } from '@/components/ui/DateRangePickerButton'
 import type { RecapResponse } from '@/types/recap'
 
 const MONTHS = [
@@ -83,15 +84,6 @@ export function RekapitulasiPage() {
     return `${year}-${String(month).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
   })()
 
-  const startDateError = startDate && (startDate < periodMin || startDate > periodMax)
-    ? `Tanggal di luar periode (${periodMin} — ${periodMax})`
-    : null
-  const endDateError = endDate && (endDate < periodMin || endDate > periodMax)
-    ? `Tanggal di luar periode (${periodMin} — ${periodMax})`
-    : endDate && startDate && endDate < startDate
-    ? 'Tanggal akhir tidak boleh sebelum tanggal mulai'
-    : null
-
   // ── Modal state ──────────────────────────────────────────────────────────
   const [inputOpen, setInputOpen]         = useState(false)
   const [apiError,  setApiError]          = useState<string | null>(null)
@@ -118,9 +110,9 @@ export function RekapitulasiPage() {
     setEndDate('')
   }, [year, month])
 
-  // Only pass valid dates to the API
-  const validStartDate = startDate && !startDateError ? startDate : undefined
-  const validEndDate   = endDate   && !endDateError   ? endDate   : undefined
+  // Only pass dates that exist (validation handled inside DateRangePickerButton — onChange only fires on valid input)
+  const validStartDate = startDate || undefined
+  const validEndDate   = endDate   || undefined
 
   // ── Recap data ───────────────────────────────────────────────────────────
   const { data: recap, isFetching, isError } = useRecapData(
@@ -348,30 +340,14 @@ export function RekapitulasiPage() {
           </select>
         </div>
 
-        <div>
-          <label className="label">Tanggal Mulai</label>
-          <input
-            type="date"
-            className={`input-base ${startDateError ? 'border-red-400' : ''}`}
-            value={startDate}
+        <div className="flex items-end">
+          <DateRangePickerButton
+            startDate={startDate}
+            endDate={endDate}
             min={periodMin}
             max={periodMax}
-            onChange={(e) => setStartDate(e.target.value)}
+            onChange={(s, e) => { setStartDate(s); setEndDate(e) }}
           />
-          {startDateError && <p className="text-[11px] text-red-500 mt-0.5">{startDateError}</p>}
-        </div>
-
-        <div>
-          <label className="label">Tanggal Akhir</label>
-          <input
-            type="date"
-            className={`input-base ${endDateError ? 'border-red-400' : ''}`}
-            value={endDate}
-            min={startDate || periodMin}
-            max={periodMax}
-            onChange={(e) => setEndDate(e.target.value)}
-          />
-          {endDateError && <p className="text-[11px] text-red-500 mt-0.5">{endDateError}</p>}
         </div>
 
         <div className="flex-1 min-w-[200px]">
