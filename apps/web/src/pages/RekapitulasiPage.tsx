@@ -7,14 +7,13 @@ import { api } from '@/lib/api'
 import { Button } from '@/components/ui/Button'
 import { Modal } from '@/components/ui/Modal'
 import { EmptyState } from '@/components/ui/EmptyState'
-import { useReportExport } from '@/hooks/useReportExport'
 import { useRecapData } from '@/hooks/useRecapData'
 import { RecapTable } from '@/components/recap/RecapTable'
 import { useAuthStore } from '@/store/auth.store'
 import { useToastStore } from '@/store/toast.store'
 import { fmt, fmtDate } from '@/lib/format'
 import type { ApiResponse, PlantationUnit, PdoHeader, RealizationEntry, AuthUser } from '@/types'
-import { Download, FileText, Search, Plus, Upload } from 'lucide-react'
+import { Download, Search, Plus, Upload } from 'lucide-react'
 import type { RecapResponse } from '@/types/recap'
 
 const MONTHS = [
@@ -82,8 +81,6 @@ export function RekapitulasiPage() {
   const [file,      setFile]              = useState<File | null>(null)
   // realisasi detail modal
   const [detailItem, setDetailItem]       = useState<{ pdoDetailId: string; itemName: string } | null>(null)
-
-  const { startExport, isExporting } = useReportExport()
 
   // ── Plantation units (cross-unit roles only) ─────────────────────────────
   const { data: units } = useQuery({
@@ -228,11 +225,26 @@ export function RekapitulasiPage() {
     return { ...recap, categories }
   }, [recap, search, realizationFilter])
 
-  const exportFilters = {
-    period_year:  year,
-    period_month: month,
-    ...(resolvedUnitId ? { unit_id: resolvedUnitId } : {}),
-    ...(categoryId     ? { category_id: categoryId } : {}),
+  const [excelLoading, setExcelLoading] = useState(false)
+
+  const downloadExcel = async () => {
+    if (!resolvedUnitId) return
+    setExcelLoading(true)
+    try {
+      const params: Record<string, string | number> = { period_year: year, period_month: month, unit_id: resolvedUnitId }
+      if (categoryId) params.category_id = categoryId
+      const res = await api.get('/reports/recap/export', { params, responseType: 'blob' })
+      const url = URL.createObjectURL(res.data)
+      const a   = document.createElement('a')
+      a.href    = url
+      a.download = `BukuKasKebun_${year}_${month}${resolvedUnitId ? '' : ''}.xlsx`
+      a.click()
+      URL.revokeObjectURL(url)
+    } catch {
+      toast('Gagal mengunduh Excel', 'error')
+    } finally {
+      setExcelLoading(false)
+    }
   }
 
   return (
@@ -246,27 +258,16 @@ export function RekapitulasiPage() {
           </p>
         </div>
         <div className="flex gap-2">
-          {activePdo && (
+          {activePdo?.status === 'final' && (
             <Button onClick={() => setInputOpen(true)}>
               <Plus className="w-4 h-4" /> Input Realisasi
             </Button>
           )}
-          <Button
-            variant="secondary"
-            size="sm"
-            loading={isExporting}
-            onClick={() => startExport({ report_type: 'recap', format: 'xlsx', filters: exportFilters as any })}
-          >
-            <Download className="w-4 h-4" /> Excel
-          </Button>
-          <Button
-            variant="secondary"
-            size="sm"
-            loading={isExporting}
-            onClick={() => startExport({ report_type: 'recap', format: 'pdf', filters: exportFilters as any })}
-          >
-            <FileText className="w-4 h-4" /> PDF
-          </Button>
+          {resolvedUnitId && (
+            <Button variant="secondary" size="sm" loading={excelLoading} onClick={downloadExcel}>
+              <Download className="w-4 h-4" /> Excel
+            </Button>
+          )}
         </div>
       </div>
 
@@ -480,6 +481,8 @@ export function RekapitulasiPage() {
         open={!!detailItem}
         onClose={() => setDetailItem(null)}
         title={`Detail Realisasi — ${detailItem?.itemName ?? ''}`}
+        width="w-[820px]"
+        className="!max-h-none"
       >
         {detailFetching ? (
           <div className="space-y-3 py-2">
@@ -490,8 +493,8 @@ export function RekapitulasiPage() {
         ) : !detailEntries?.length ? (
           <EmptyState message="Belum ada data realisasi." />
         ) : (
-          <div className="overflow-auto">
-            <table className="w-full border-collapse text-sm" style={{ minWidth: 520 }}>
+          <div>
+            <table className="w-full border-collapse text-sm">
               <thead>
                 <tr>
                   {['No. Ref', 'Tanggal', 'Jumlah', 'Metode', 'Sumber Dana', 'Dicatat Oleh'].map((h) => (

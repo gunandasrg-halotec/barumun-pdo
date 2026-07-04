@@ -147,6 +147,7 @@ Route::prefix('v1')->middleware(['auth:sanctum', 'ensure.unit.access'])->group(f
     Route::get('reports/over-budget', [ReportController::class, 'overBudget']);
     Route::get('reports/missing-proof', [ReportController::class, 'missingProof']);
     Route::get('reports/recap', [RecapController::class, 'index']);
+    Route::get('reports/recap/export', [RecapController::class, 'exportExcel']);
     Route::post('reports/export', [ReportController::class, 'export']);
     Route::get('reports/export/{job}', [ReportController::class, 'exportStatus']);
 
