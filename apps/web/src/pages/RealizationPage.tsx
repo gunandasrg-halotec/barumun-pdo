@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
@@ -35,7 +35,7 @@ const schema = z.object({
   pdo_detail_id:    z.string().uuid('Pilih item biaya'),
   transaction_date: z.string().min(1, 'Tanggal wajib diisi'),
   amount:           z.coerce.number().min(1, 'Jumlah harus > 0'),
-  payment_method:   z.enum(['tunai', 'transfer', 'kas_kecil']),
+  payment_method:   z.enum(['tunai', 'transfer']),
   funding_source:   z.enum(['kas_kebun', 'rekening_kebun', 'rekening_utama']),
   proof_number: z.string().min(1, 'No. referensi wajib diisi'),
   explanation:      z.string().nullable().optional(),
@@ -75,7 +75,7 @@ export function RealizationPage() {
     },
   })
 
-  const { register, handleSubmit, watch, reset, formState: { errors } } = useForm<Form>({
+  const { register, handleSubmit, watch, reset, setValue, formState: { errors } } = useForm<Form>({
     resolver: zodResolver(schema),
     defaultValues: {
       transaction_date: new Date().toISOString().split('T')[0],
@@ -84,7 +84,19 @@ export function RealizationPage() {
     },
   })
 
-  const selectedPdoId = watch('pdo_header_id')
+  const selectedPdoId       = watch('pdo_header_id')
+  const selectedPaymentMethod = watch('payment_method')
+
+  // BR-REAL-006: sumber dana dikunci mengikuti metode pembayaran.
+  // Kantong Pribadi/Vendor (STAFF_PURCHASING, MANAJER_KEUANGAN) selalu Rekening Utama.
+  // Kantong Kebun (role lain, mis. KERANI): Tunai -> Kas Kebun, Transfer -> Rekening Kebun.
+  useEffect(() => {
+    if (isPribadiVendorRole(currentUser)) {
+      setValue('funding_source', 'rekening_utama')
+      return
+    }
+    setValue('funding_source', selectedPaymentMethod === 'transfer' ? 'rekening_kebun' : 'kas_kebun')
+  }, [currentUser, selectedPaymentMethod, setValue])
 
   // BR-REAL-005: hanya item yang boleh direalisasi actor (sesuai kantong role-nya),
   // dengan saldo per kantong — bukan saldo transfer gabungan semua tujuan.
@@ -137,25 +149,16 @@ export function RealizationPage() {
   })
 
   const PAYMENT_LABEL: Record<string, string> = {
-    tunai: 'Tunai', transfer: 'Transfer Bank', kas_kecil: 'Kas Kecil',
+    tunai: 'Tunai', transfer: 'Transfer Bank',
   }
 
-  const getAvailablePaymentMethods = () => {
-    if (currentUser?.role?.code === 'STAFF_PURCHASING') {
-      return ['transfer']
-    }
-    return ['tunai', 'transfer', 'kas_kecil']
+  const FUNDING_LABEL: Record<string, string> = {
+    kas_kebun: 'Kas Kebun', rekening_kebun: 'Rekening Kebun', rekening_utama: 'Rekening Utama',
   }
 
-  const getAvailableFundingSources = () => {
-    if (currentUser?.role?.code === 'STAFF_PURCHASING') {
-      return ['rekening_utama']
-    }
-    return ['kas_kebun', 'rekening_kebun']
-  }
-
-  const availablePaymentMethods = getAvailablePaymentMethods()
-  const availableFundingSources = getAvailableFundingSources()
+  // Kantong Pribadi/Vendor (STAFF_PURCHASING, MANAJER_KEUANGAN) hanya bisa Transfer Bank.
+  // Kantong Kebun (mis. KERANI) boleh pilih Tunai atau Transfer Bank.
+  const availablePaymentMethods = isPribadiVendorRole(currentUser) ? ['transfer'] : ['tunai', 'transfer']
 
   return (
     <div>
@@ -289,19 +292,19 @@ export function RealizationPage() {
             <div>
               <label className="label">Metode Pembayaran</label>
               <select {...register('payment_method')} className="input-base">
-                <option value="">Pilih metode...</option>
                 {availablePaymentMethods.includes('tunai') && <option value="tunai">Tunai</option>}
                 {availablePaymentMethods.includes('transfer') && <option value="transfer">Transfer Bank</option>}
-                {availablePaymentMethods.includes('kas_kecil') && <option value="kas_kecil">Kas Kecil</option>}
               </select>
             </div>
             <div>
               <label className="label">Sumber Dana</label>
-              <select {...register('funding_source')} className="input-base">
-                <option value="">Pilih sumber...</option>
-                {availableFundingSources.includes('kas_kebun') && <option value="kas_kebun">Kas Kebun</option>}
-                {availableFundingSources.includes('rekening_kebun') && <option value="rekening_kebun">Rekening Kebun</option>}
-                {availableFundingSources.includes('rekening_utama') && <option value="rekening_utama">Rekening Utama</option>}
+              {/* Dikunci otomatis mengikuti Metode Pembayaran (BR-REAL-006) — tidak bisa dipilih manual.
+                  Semua opsi tetap dirender (bukan cuma 1 dinamis) agar setValue() selalu punya
+                  <option> yang cocok, apa pun urutan render vs efek — hindari select tampil blank. */}
+              <select {...register('funding_source')} className="input-base bg-[#f7faf7]" disabled>
+                <option value="kas_kebun">{FUNDING_LABEL.kas_kebun}</option>
+                <option value="rekening_kebun">{FUNDING_LABEL.rekening_kebun}</option>
+                <option value="rekening_utama">{FUNDING_LABEL.rekening_utama}</option>
               </select>
             </div>
           </div>
