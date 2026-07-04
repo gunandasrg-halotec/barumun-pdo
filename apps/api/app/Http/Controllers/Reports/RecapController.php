@@ -24,6 +24,8 @@ class RecapController extends Controller
             'period_month' => ['required', 'integer', 'between:1,12'],
             'unit_id'      => ['nullable', 'uuid'],
             'category_id'  => ['nullable', 'uuid'],
+            'start_date'   => ['nullable', 'date_format:Y-m-d'],
+            'end_date'     => ['nullable', 'date_format:Y-m-d'],
         ]);
 
         $user = $request->user();
@@ -43,6 +45,8 @@ class RecapController extends Controller
             'period_month' => $request->integer('period_month'),
             'unit_id'      => $unitId,
             'category_id'  => $request->input('category_id'),
+            'start_date'   => $request->input('start_date') ?: null,
+            'end_date'     => $request->input('end_date')   ?: null,
         ];
 
         $recap = $this->service->getRecapData($filters);
@@ -71,6 +75,8 @@ class RecapController extends Controller
             'period_month' => ['required', 'integer', 'between:1,12'],
             'unit_id'      => ['nullable', 'uuid'],
             'category_id'  => ['nullable', 'uuid'],
+            'start_date'   => ['nullable', 'date_format:Y-m-d'],
+            'end_date'     => ['nullable', 'date_format:Y-m-d'],
         ]);
 
         $user   = $request->user();
@@ -85,13 +91,18 @@ class RecapController extends Controller
             'period_month' => $request->integer('period_month'),
             'unit_id'      => $unitId,
             'category_id'  => $request->input('category_id'),
+            'start_date'   => $request->input('start_date') ?: null,
+            'end_date'     => $request->input('end_date')   ?: null,
         ];
 
-        $recap    = $this->service->getRecapData($filters);
-        $unit     = PlantationUnit::find($unitId);
-        $month    = $filters['period_month'];
-        $year     = $filters['period_year'];
-        $filename = "BukuKasKebun_{$year}_{$month}" . ($unit ? "_{$unit->code}" : '') . '.xlsx';
+        $recap      = $this->service->getRecapData($filters);
+        $unit       = PlantationUnit::find($unitId);
+        $month      = $filters['period_month'];
+        $year       = $filters['period_year'];
+        $dateSuffix = ($filters['start_date'] || $filters['end_date'])
+            ? '_' . ($filters['start_date'] ?? '') . '_sd_' . ($filters['end_date'] ?? '')
+            : '';
+        $filename   = "BukuKasKebun_{$year}_{$month}" . ($unit ? "_{$unit->code}" : '') . $dateSuffix . '.xlsx';
 
         return Excel::download(new RecapDirectExport($recap, $unit, $month, $year), $filename);
     }

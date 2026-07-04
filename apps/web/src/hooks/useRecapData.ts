@@ -8,6 +8,8 @@ export interface RecapFilters {
   period_month: number
   unit_id?: string
   category_id?: string
+  start_date?: string
+  end_date?: string
 }
 
 export function useRecapData(filters: RecapFilters, enabled = true) {
@@ -20,6 +22,8 @@ export function useRecapData(filters: RecapFilters, enabled = true) {
       }
       if (filters.unit_id)     params.unit_id     = filters.unit_id
       if (filters.category_id) params.category_id = filters.category_id
+      if (filters.start_date)  params.start_date  = filters.start_date
+      if (filters.end_date)    params.end_date    = filters.end_date
 
       const res = await api.get<ApiResponse<RecapResponse>>('/reports/recap', { params })
       return res.data.data

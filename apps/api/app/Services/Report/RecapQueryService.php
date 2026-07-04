@@ -12,6 +12,8 @@ class RecapQueryService
         $month      = $filters['period_month'];
         $unitId     = $filters['unit_id'];
         $categoryId = $filters['category_id'] ?? null;
+        $startDate  = $filters['start_date']  ?? null;
+        $endDate    = $filters['end_date']    ?? null;
 
         $rows = DB::select('
             SELECT
@@ -40,6 +42,8 @@ class RecapQueryService
             JOIN expense_categories ec      ON ec.id = es.category_id
             LEFT JOIN transfer_entries te   ON te.pdo_detail_id = pd.id
             LEFT JOIN realization_entries re ON re.pdo_detail_id = pd.id
+                AND (CAST(:start_date AS date) IS NULL OR re.transaction_date >= CAST(:start_date2 AS date))
+                AND (CAST(:end_date   AS date) IS NULL OR re.transaction_date <= CAST(:end_date2   AS date))
             WHERE ph.period_year  = :year
               AND ph.period_month = :month
               AND ph.plantation_unit_id = :unit_id
@@ -55,8 +59,12 @@ class RecapQueryService
             'year'        => $year,
             'month'       => $month,
             'unit_id'     => $unitId,
-            'category_id' => $categoryId,
-            'category_id2'=> $categoryId,
+            'category_id'  => $categoryId,
+            'category_id2' => $categoryId,
+            'start_date'   => $startDate,
+            'start_date2'  => $startDate,
+            'end_date'     => $endDate,
+            'end_date2'    => $endDate,
         ]);
 
         return $this->buildHierarchy($rows);

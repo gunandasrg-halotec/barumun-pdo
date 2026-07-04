@@ -73,6 +73,24 @@ export function RekapitulasiPage() {
   const [categoryId]                              = useState('')
   const [realizationFilter, setRealizationFilter] = useState<'all' | 'has' | 'no'>('all')
   const [search,            setSearch]            = useState('')
+  const [startDate,         setStartDate]         = useState('')
+  const [endDate,           setEndDate]           = useState('')
+
+  // ── Period boundaries (for date range validation) ────────────────────────
+  const periodMin = `${year}-${String(month).padStart(2, '0')}-01`
+  const periodMax = (() => {
+    const d = new Date(year, month, 0) // last day of month
+    return `${year}-${String(month).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+  })()
+
+  const startDateError = startDate && (startDate < periodMin || startDate > periodMax)
+    ? `Tanggal di luar periode (${periodMin} — ${periodMax})`
+    : null
+  const endDateError = endDate && (endDate < periodMin || endDate > periodMax)
+    ? `Tanggal di luar periode (${periodMin} — ${periodMax})`
+    : endDate && startDate && endDate < startDate
+    ? 'Tanggal akhir tidak boleh sebelum tanggal mulai'
+    : null
 
   // ── Modal state ──────────────────────────────────────────────────────────
   const [inputOpen, setInputOpen]         = useState(false)
@@ -94,9 +112,26 @@ export function RekapitulasiPage() {
 
   const resolvedUnitId = isCrossUnit ? unitId : (user?.plantation_unit?.id ?? '')
 
+  // Reset date filters when period changes
+  useEffect(() => {
+    setStartDate('')
+    setEndDate('')
+  }, [year, month])
+
+  // Only pass valid dates to the API
+  const validStartDate = startDate && !startDateError ? startDate : undefined
+  const validEndDate   = endDate   && !endDateError   ? endDate   : undefined
+
   // ── Recap data ───────────────────────────────────────────────────────────
   const { data: recap, isFetching, isError } = useRecapData(
-    { period_year: year, period_month: month, unit_id: resolvedUnitId || undefined, category_id: categoryId || undefined },
+    {
+      period_year:  year,
+      period_month: month,
+      unit_id:      resolvedUnitId || undefined,
+      category_id:  categoryId    || undefined,
+      start_date:   validStartDate,
+      end_date:     validEndDate,
+    },
     !!resolvedUnitId,
   )
 
@@ -232,7 +267,9 @@ export function RekapitulasiPage() {
     setExcelLoading(true)
     try {
       const params: Record<string, string | number> = { period_year: year, period_month: month, unit_id: resolvedUnitId }
-      if (categoryId) params.category_id = categoryId
+      if (categoryId)      params.category_id = categoryId
+      if (validStartDate)  params.start_date  = validStartDate
+      if (validEndDate)    params.end_date    = validEndDate
       const res = await api.get('/reports/recap/export', { params, responseType: 'blob' })
       const url = URL.createObjectURL(res.data)
       const a   = document.createElement('a')
@@ -309,6 +346,32 @@ export function RekapitulasiPage() {
             <option value="has">Sudah ada realisasi</option>
             <option value="no">Belum ada realisasi</option>
           </select>
+        </div>
+
+        <div>
+          <label className="label">Tanggal Mulai</label>
+          <input
+            type="date"
+            className={`input-base ${startDateError ? 'border-red-400' : ''}`}
+            value={startDate}
+            min={periodMin}
+            max={periodMax}
+            onChange={(e) => setStartDate(e.target.value)}
+          />
+          {startDateError && <p className="text-[11px] text-red-500 mt-0.5">{startDateError}</p>}
+        </div>
+
+        <div>
+          <label className="label">Tanggal Akhir</label>
+          <input
+            type="date"
+            className={`input-base ${endDateError ? 'border-red-400' : ''}`}
+            value={endDate}
+            min={startDate || periodMin}
+            max={periodMax}
+            onChange={(e) => setEndDate(e.target.value)}
+          />
+          {endDateError && <p className="text-[11px] text-red-500 mt-0.5">{endDateError}</p>}
         </div>
 
         <div className="flex-1 min-w-[200px]">
