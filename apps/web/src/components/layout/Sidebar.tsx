@@ -12,9 +12,9 @@ const NAV_ITEMS = [
   { to: '/pdo',          icon: List,            label: 'Daftar PDO',      roles: null },
   { to: '/transfer',     icon: ArrowRightLeft,  label: 'Transfer Dana',   roles: null },
   { to: '/realisasi',    icon: Wallet,          label: 'Realisasi Dana',  roles: null },
+  { to: '/rekapitulasi', icon: BarChart3,       label: 'Rekapitulasi',    roles: null },
   { to: '/pdo-tambahan', icon: FilePlus,        label: 'PDO Tambahan',    roles: null },
   { to: '/laporan',      icon: BarChart2,       label: 'Laporan',         roles: null },
-  { to: '/rekapitulasi', icon: BarChart3,       label: 'Rekapitulasi',    roles: null },
   { to: '/master',       icon: Database,        label: 'Master Data',     roles: null },
   { to: '/settings',     icon: Settings,        label: 'Pengaturan',      roles: ['ADMIN'] as RoleCode[] },
 ]

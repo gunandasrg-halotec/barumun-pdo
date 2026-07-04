@@ -28,7 +28,8 @@ class RecapQueryService
                 ei.name          AS item_name,
                 pd.account_number,
                 pd.description,
-                pd.amount        AS pengajuan,
+                CASE WHEN ei.is_deduction THEN -pd.amount ELSE pd.amount END AS pengajuan,
+                ei.is_deduction,
                 COALESCE(SUM(DISTINCT te.amount), 0) AS total_transfer,
                 COALESCE(SUM(DISTINCT re.amount), 0) AS total_realization
             FROM pdo_details pd
@@ -46,7 +47,7 @@ class RecapQueryService
             GROUP BY
                 ec.id, ec.code, ec.name, ec.display_order,
                 es.id, es.code, es.name, es.display_order,
-                ei.id, ei.code, ei.name,
+                ei.id, ei.code, ei.name, ei.is_deduction,
                 pd.account_number, pd.description, pd.amount
             ORDER BY ec.display_order, es.display_order, ei.id
         ', [

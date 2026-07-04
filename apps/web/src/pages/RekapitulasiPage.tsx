@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useMemo } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { api } from '@/lib/api'
 import { Button } from '@/components/ui/Button'
@@ -8,7 +8,8 @@ import { useRecapData } from '@/hooks/useRecapData'
 import { RecapTable } from '@/components/recap/RecapTable'
 import { useAuthStore } from '@/store/auth.store'
 import type { ApiResponse, PlantationUnit } from '@/types'
-import { Download, FileText } from 'lucide-react'
+import { Download, FileText, Search } from 'lucide-react'
+import type { RecapResponse } from '@/types/recap'
 
 const MONTHS = [
   'Januari', 'Februari', 'Maret', 'April', 'Mei', 'Juni',
@@ -26,10 +27,12 @@ export function RekapitulasiPage() {
   const role    = user?.role?.code ?? ''
   const isCrossUnit = CROSS_UNIT_ROLES.includes(role)
 
-  const [year,       setYear]       = useState(currentYear)
-  const [month,      setMonth]      = useState(currentMonth)
-  const [unitId,     setUnitId]     = useState(user?.plantation_unit?.id ?? '')
-  const [categoryId] = useState('')
+  const [year,               setYear]               = useState(currentYear)
+  const [month,              setMonth]              = useState(currentMonth)
+  const [unitId,             setUnitId]             = useState(user?.plantation_unit?.id ?? '')
+  const [categoryId]                                = useState('')
+  const [realizationFilter,  setRealizationFilter]  = useState<'all' | 'has' | 'no'>('all')
+  const [search,             setSearch]             = useState('')
 
   const { startExport, isExporting } = useReportExport()
 
@@ -48,6 +51,32 @@ export function RekapitulasiPage() {
     { period_year: year, period_month: month, unit_id: resolvedUnitId || undefined, category_id: categoryId || undefined },
     !!resolvedUnitId,
   )
+
+  const filteredRecap = useMemo((): RecapResponse | null => {
+    if (!recap) return null
+    const q = search.trim().toLowerCase()
+
+    const categories = recap.categories
+      .map((cat) => {
+        const subcategories = cat.subcategories
+          .map((sub) => {
+            const items = sub.items.filter((item) => {
+              const matchSearch = !q || item.item_name.toLowerCase().includes(q) || item.item_code.toLowerCase().includes(q)
+              const matchFilter =
+                realizationFilter === 'all' ||
+                (realizationFilter === 'has' && item.total_realization > 0) ||
+                (realizationFilter === 'no'  && item.total_realization === 0)
+              return matchSearch && matchFilter
+            })
+            return { ...sub, items }
+          })
+          .filter((sub) => sub.items.length > 0)
+        return { ...cat, subcategories }
+      })
+      .filter((cat) => cat.subcategories.length > 0)
+
+    return { ...recap, categories }
+  }, [recap, search, realizationFilter])
 
   const exportFilters = {
     period_year:  year,
@@ -117,6 +146,29 @@ export function RekapitulasiPage() {
             </select>
           </div>
         )}
+
+        <div>
+          <label className="label">Realisasi</label>
+          <select className="input-base" value={realizationFilter} onChange={(e) => setRealizationFilter(e.target.value as 'all' | 'has' | 'no')}>
+            <option value="all">Semua</option>
+            <option value="has">Sudah ada realisasi</option>
+            <option value="no">Belum ada realisasi</option>
+          </select>
+        </div>
+
+        <div className="flex-1 min-w-[200px]">
+          <label className="label">Cari Item Biaya</label>
+          <div className="relative">
+            <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-4 h-4 text-muted pointer-events-none" />
+            <input
+              type="text"
+              className="input-base pl-8"
+              placeholder="Nama atau kode item..."
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+            />
+          </div>
+        </div>
       </div>
 
       {/* Content */}
@@ -132,7 +184,7 @@ export function RekapitulasiPage() {
         <EmptyState message="Tidak ada data rekapitulasi untuk periode dan unit ini." />
       ) : (
         <div className="card p-0 overflow-hidden">
-          {/* Summary KPI */}
+          {/* Summary KPI — selalu pakai grand total keseluruhan (bukan filtered) */}
           <div className="grid grid-cols-4 border-b border-line">
             {[
               { label: 'Total Pengajuan',   value: recap.grand_total_amount },
@@ -149,8 +201,11 @@ export function RekapitulasiPage() {
             ))}
           </div>
 
-          {/* Hierarchical table */}
-          <RecapTable data={recap} />
+          {/* Hierarchical table — filtered by search/realisasi filter */}
+          {filteredRecap && filteredRecap.categories.length > 0
+            ? <RecapTable data={filteredRecap} />
+            : <div className="p-8 text-center text-sm text-muted">Tidak ada item yang cocok dengan filter.</div>
+          }
         </div>
       )}
     </div>

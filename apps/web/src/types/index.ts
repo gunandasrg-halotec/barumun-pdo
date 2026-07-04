@@ -208,6 +208,16 @@ export type FundingSource = 'kas_kebun' | 'rekening_kebun' | 'rekening_utama'
 export interface RealizationEntry {
   id: string
   pdo_detail_id: string
+  pdo_detail?: {
+    expense_item?: {
+      name: string
+      code: string
+      subcategory?: {
+        name: string
+        category?: { name: string }
+      }
+    }
+  }
   recorded_by: string
   recorder?: AuthUser
   transaction_date: string

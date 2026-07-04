@@ -199,7 +199,15 @@ export function RealizationPage() {
             ) : realizations.map((r) => (
               <tr key={r.id} className="border-t border-line hover:bg-[#fbfdfb]">
                 <td className="px-4 py-3 font-bold text-sm">{r.proof_number}</td>
-                <td className="px-4 py-3 text-sm">{r.pdo_detail_id}</td>
+                <td className="px-4 py-3 text-sm">
+                  {r.pdo_detail?.expense_item
+                    ? [
+                        r.pdo_detail.expense_item.subcategory?.category?.name,
+                        r.pdo_detail.expense_item.subcategory?.name,
+                        r.pdo_detail.expense_item.name,
+                      ].filter(Boolean).join(' — ')
+                    : r.pdo_detail_id}
+                </td>
                 <td className="px-4 py-3 text-sm">{fmtDate(r.transaction_date)}</td>
                 <td className="px-4 py-3 text-sm font-bold">{fmt(r.amount)}</td>
                 <td className="px-4 py-3 text-sm">{PAYMENT_LABEL[r.payment_method]}</td>
