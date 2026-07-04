@@ -209,6 +209,12 @@ export interface RealizationEntry {
   id: string
   pdo_detail_id: string
   pdo_detail?: {
+    pdo_header?: {
+      id: string
+      pdo_number: string
+      period_month: number
+      period_year: number
+    }
     expense_item?: {
       name: string
       code: string
