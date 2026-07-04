@@ -42,10 +42,10 @@ export function DateRangePickerButton({ startDate, endDate, min, max, onChange }
     return () => document.removeEventListener('mousedown', handler)
   }, [open, startDate, endDate])
 
-  const startError = draftStart && (draftStart < min || draftStart > max)
+  const startError = draftStart && min && max && (draftStart < min || draftStart > max)
     ? `Di luar periode (${min} — ${max})`
     : null
-  const endError = draftEnd && (draftEnd < min || draftEnd > max)
+  const endError = draftEnd && min && max && (draftEnd < min || draftEnd > max)
     ? `Di luar periode (${min} — ${max})`
     : draftEnd && draftStart && draftEnd < draftStart
     ? 'Tanggal akhir tidak boleh sebelum tanggal mulai'
@@ -101,8 +101,8 @@ export function DateRangePickerButton({ startDate, endDate, min, max, onChange }
                 type="date"
                 className={`input-base ${startError ? 'border-red-400' : ''}`}
                 value={draftStart}
-                min={min}
-                max={draftEnd || max}
+                min={min || undefined}
+                max={draftEnd || max || undefined}
                 onChange={(e) => setDraftStart(e.target.value)}
               />
               {startError && <p className="text-[11px] text-red-500 mt-0.5">{startError}</p>}
@@ -114,8 +114,8 @@ export function DateRangePickerButton({ startDate, endDate, min, max, onChange }
                 type="date"
                 className={`input-base ${endError ? 'border-red-400' : ''}`}
                 value={draftEnd}
-                min={draftStart || min}
-                max={max}
+                min={draftStart || min || undefined}
+                max={max || undefined}
                 onChange={(e) => setDraftEnd(e.target.value)}
               />
               {endError && <p className="text-[11px] text-red-500 mt-0.5">{endError}</p>}

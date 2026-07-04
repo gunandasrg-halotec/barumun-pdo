@@ -1,12 +1,13 @@
-import { useState } from 'react'
+import { useState, useMemo } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '@/lib/api'
 import { Button } from '@/components/ui/Button'
 import { Modal } from '@/components/ui/Modal'
 import { EmptyState } from '@/components/ui/EmptyState'
+import { DateRangePickerButton } from '@/components/ui/DateRangePickerButton'
 import { useToastStore } from '@/store/toast.store'
 import { fmt, fmtDate } from '@/lib/format'
-import { Upload, AlertCircle } from 'lucide-react'
+import { Upload, AlertCircle, Search } from 'lucide-react'
 import type { ApiResponse, RealizationEntry } from '@/types'
 
 const PAYMENT_LABEL: Record<string, string> = {
@@ -20,8 +21,11 @@ const FUNDING_LABEL: Record<string, string> = {
 export function RealizationPage() {
   const toast = useToastStore((s) => s.push)
   const qc    = useQueryClient()
-  const [uploadId, setUploadId] = useState<string | null>(null)
-  const [file, setFile]         = useState<File | null>(null)
+  const [uploadId,   setUploadId]   = useState<string | null>(null)
+  const [file,       setFile]       = useState<File | null>(null)
+  const [search,     setSearch]     = useState('')
+  const [startDate,  setStartDate]  = useState('')
+  const [endDate,    setEndDate]    = useState('')
 
   const { data: realizations, isLoading } = useQuery({
     queryKey: ['realizations'],
@@ -49,12 +53,60 @@ export function RealizationPage() {
     onError: () => toast('Gagal upload bukti', 'error'),
   })
 
+  const filtered = useMemo(() => {
+    if (!realizations) return []
+    const q = search.trim().toLowerCase()
+    return realizations.filter((r) => {
+      const itemLabel = r.pdo_detail?.expense_item
+        ? [
+            r.pdo_detail.expense_item.subcategory?.category?.name,
+            r.pdo_detail.expense_item.subcategory?.name,
+            r.pdo_detail.expense_item.name,
+          ].filter(Boolean).join(' ')
+        : ''
+      const matchSearch = !q ||
+        r.proof_number.toLowerCase().includes(q) ||
+        itemLabel.toLowerCase().includes(q) ||
+        (r.recorder?.full_name ?? '').toLowerCase().includes(q)
+      const matchDate =
+        (!startDate || r.transaction_date >= startDate) &&
+        (!endDate   || r.transaction_date <= endDate)
+      return matchSearch && matchDate
+    })
+  }, [realizations, search, startDate, endDate])
+
   return (
     <div>
       <div className="flex items-start justify-between mb-6">
         <div>
           <h2 className="text-[28px] font-[950] text-ink">Realisasi Biaya</h2>
           <p className="text-muted text-sm mt-1">Daftar semua realisasi pengeluaran yang sudah dicatat.</p>
+        </div>
+      </div>
+
+      {/* Filter Bar */}
+      <div className="card mb-5 flex flex-wrap gap-3 items-end">
+        <div className="flex items-end">
+          <DateRangePickerButton
+            startDate={startDate}
+            endDate={endDate}
+            min=""
+            max=""
+            onChange={(s, e) => { setStartDate(s); setEndDate(e) }}
+          />
+        </div>
+        <div className="flex-1 min-w-[200px]">
+          <label className="label">Cari</label>
+          <div className="relative">
+            <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-4 h-4 text-muted pointer-events-none" />
+            <input
+              type="text"
+              className="input-base pl-8"
+              placeholder="No. ref, item biaya, atau nama pencatat..."
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+            />
+          </div>
         </div>
       </div>
 
@@ -80,9 +132,9 @@ export function RealizationPage() {
                   ))}
                 </tr>
               ))
-            ) : !realizations?.length ? (
-              <tr><td colSpan={9} className="p-8"><EmptyState /></td></tr>
-            ) : realizations.map((r) => (
+            ) : !filtered.length ? (
+              <tr><td colSpan={9} className="p-8"><EmptyState message="Tidak ada data yang cocok dengan filter." /></td></tr>
+            ) : filtered.map((r) => (
               <tr key={r.id} className="border-t border-line hover:bg-[#fbfdfb]">
                 <td className="px-4 py-3 font-bold text-sm">{r.proof_number}</td>
                 <td className="px-4 py-3 text-sm">
