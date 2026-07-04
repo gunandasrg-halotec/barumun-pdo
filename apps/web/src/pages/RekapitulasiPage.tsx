@@ -236,10 +236,15 @@ export function RekapitulasiPage() {
           .map((sub) => {
             const items = sub.items.filter((item) => {
               const matchSearch = !q || item.item_name.toLowerCase().includes(q) || item.item_code.toLowerCase().includes(q)
+              // When date filter is active, only show rows that have realization in that range
+              const hasDateFilter = !!(startDate || endDate)
               const matchFilter =
-                realizationFilter === 'all' ||
-                (realizationFilter === 'has' && item.total_realization > 0) ||
-                (realizationFilter === 'no'  && item.total_realization === 0)
+                (hasDateFilter && item.total_realization > 0) ||
+                (!hasDateFilter && (
+                  realizationFilter === 'all' ||
+                  (realizationFilter === 'has' && item.total_realization > 0) ||
+                  (realizationFilter === 'no'  && item.total_realization === 0)
+                ))
               return matchSearch && matchFilter
             })
             return { ...sub, items }
