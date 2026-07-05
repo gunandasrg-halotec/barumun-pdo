@@ -8,6 +8,7 @@ import { api } from '@/lib/api'
 import { Button } from '@/components/ui/Button'
 import { Modal } from '@/components/ui/Modal'
 import { EmptyState } from '@/components/ui/EmptyState'
+import { TransferTransactionsSection } from '@/components/transfer/TransferTransactionsSection'
 import { useToastStore } from '@/store/toast.store'
 import { fmt, fmtDate } from '@/lib/format'
 import { Plus, FileText } from 'lucide-react'
@@ -270,6 +271,9 @@ export function TransferPage() {
           </tbody>
         </table>
       </div>
+
+      {/* ─── Tabel transaksi transfer (transaction-level) ─────────── */}
+      <TransferTransactionsSection />
 
       {/* ─── Modal Single Entry ───────────────────────────────────── */}
       <Modal open={open} onClose={handleClose} title="Catat Transfer Dana">

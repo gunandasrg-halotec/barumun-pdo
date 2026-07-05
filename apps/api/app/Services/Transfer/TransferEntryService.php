@@ -15,11 +15,19 @@ class TransferEntryService
 {
     /**
      * Daftar semua transfer dalam perusahaan (untuk halaman Transfer Dana).
+     * Scoped by company_id; unit-bound roles (KERANI/ASISTEN) juga scoped by unit.
+     * HO user bisa memfilter dengan unit_ids.
      */
-    public function listAll(User $actor): Collection
+    public function listAll(User $actor, array $filters = []): Collection
     {
-        return TransferEntry::with(['pdoDetail.expenseItem', 'pdoDetail.pdoHeader.plantationUnit', 'recorder'])
+        return TransferEntry::with([
+                'pdoDetail.expenseItem.subcategory.category',
+                'pdoDetail.pdoHeader.plantationUnit',
+                'recorder',
+            ])
             ->whereHas('pdoDetail.pdoHeader', fn ($q) => $q->where('company_id', $actor->company_id))
+            ->when($actor->plantation_unit_id, fn ($q) => $q->whereHas('pdoDetail.pdoHeader', fn ($qq) => $qq->where('plantation_unit_id', $actor->plantation_unit_id)))
+            ->when(!empty($filters['unit_ids']), fn ($q) => $q->whereHas('pdoDetail.pdoHeader', fn ($qq) => $qq->whereIn('plantation_unit_id', $filters['unit_ids'])))
             ->orderByDesc('transfer_date')
             ->get();
     }

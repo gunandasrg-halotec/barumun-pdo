@@ -16,10 +16,18 @@ class TransferEntryController extends Controller
 {
     public function __construct(private readonly TransferEntryService $service) {}
 
-    /** GET /transfer-entries — semua transfer dalam perusahaan */
+    /** GET /transfer-entries?unit_ids[]= — semua transfer dalam perusahaan */
     public function all(Request $request): JsonResponse
     {
-        $entries = $this->service->listAll($request->user());
+        $user    = $request->user();
+        $filters = [];
+
+        // unit_ids filter only applies to HO users (those without a fixed plantation unit)
+        if (!$user->plantation_unit_id && $request->has('unit_ids')) {
+            $filters['unit_ids'] = array_filter((array) $request->input('unit_ids'));
+        }
+
+        $entries = $this->service->listAll($user, $filters);
 
         return response()->json(['success' => true, 'data' => $entries]);
     }

@@ -186,9 +186,28 @@ export interface PdoApprovalLog {
 
 export type TransferSource = 'system' | 'manual'
 
+export type TransferDestination = 'rek_kebun' | 'pribadi' | 'vendor'
+
 export interface TransferEntry {
   id: string
   pdo_detail_id: string
+  pdo_detail?: {
+    pdo_header?: {
+      id: string
+      pdo_number: string
+      period_month: number
+      period_year: number
+      plantation_unit?: { id: string; code: string; name: string }
+    }
+    expense_item?: {
+      name: string
+      code: string
+      subcategory?: {
+        name: string
+        category?: { name: string }
+      }
+    }
+  }
   recorded_by: string | null
   recorder?: AuthUser | null
   entry_source: TransferSource
@@ -197,6 +216,7 @@ export interface TransferEntry {
   amount: number
   reference_number: string
   notes: string | null
+  transfer_destination: TransferDestination
   created_at: string
 }
 
