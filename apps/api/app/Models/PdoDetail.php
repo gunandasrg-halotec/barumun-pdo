@@ -88,6 +88,11 @@ class PdoDetail extends Model
         return $this->belongsTo(PdoHeader::class);
     }
 
+    public function sourceSupplementary(): BelongsTo
+    {
+        return $this->belongsTo(PdoSupplementaryHeader::class, 'source_pdo_supplementary_id');
+    }
+
     public function expenseItem(): BelongsTo
     {
         return $this->belongsTo(ExpenseItem::class);

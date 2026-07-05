@@ -85,13 +85,18 @@ class PdoService
             'details.expenseItem.subcategory.category',
             'details.transferEntries',
             'details.realizationEntries',
+            'details.sourceSupplementary',
         ])->findOrFail($id);
 
         $this->hydrateDetailsExternalState($pdo->details, $pdo);
 
-        // Group details by kategori → sub-kategori
+        // Split: Bulanan items (no source) vs Tambahan items (merged from supplementary)
+        $bulananDetails   = $pdo->details->filter(fn ($d) => $d->source_pdo_supplementary_id === null);
+        $tambahannDetails = $pdo->details->filter(fn ($d) => $d->source_pdo_supplementary_id !== null);
+
+        // Group Bulanan details by kategori → sub-kategori
         $grouped = [];
-        foreach ($pdo->details as $detail) {
+        foreach ($bulananDetails as $detail) {
             $sub = $detail->expenseItem?->subcategory;
             $cat = $sub?->category;
 
@@ -126,9 +131,33 @@ class PdoService
             ->values()
             ->all();
 
+        // Group Tambahan details by source supplementary, sorted by merged_at
+        $suppGroups = [];
+        foreach ($tambahannDetails as $detail) {
+            $suppId = $detail->source_pdo_supplementary_id;
+            if (! isset($suppGroups[$suppId])) {
+                $supp = $detail->sourceSupplementary;
+                $suppGroups[$suppId] = [
+                    'supplementary'  => $supp ? $supp->only(['id', 'pdo_number', 'merged_at', 'period_month', 'period_year']) : ['id' => $suppId],
+                    'details'        => [],
+                    'subtotal_amount'=> 0,
+                ];
+            }
+            $signedAmount = ($detail->expenseItem?->is_deduction ?? false) ? -$detail->amount : $detail->amount;
+            $suppGroups[$suppId]['details'][]        = $detail;
+            $suppGroups[$suppId]['subtotal_amount'] += $signedAmount;
+        }
+
+        // Sort supplementary groups by merged_at ascending
+        $supplementaryGroups = collect(array_values($suppGroups))
+            ->sortBy(fn ($g) => $g['supplementary']['merged_at'] ?? '')
+            ->values()
+            ->all();
+
         return [
-            'pdo'         => $pdo->makeHidden('details'),
-            'categories'  => $categoriesArray,
+            'pdo'                => $pdo->makeHidden('details'),
+            'categories'         => $categoriesArray,
+            'supplementary_groups' => $supplementaryGroups,
             // Signed: item potongan (is_deduction) mengurangi total pengajuan.
             'grand_total' => $pdo->details->sum(
                 fn ($d) => ($d->expenseItem?->is_deduction ?? false) ? -$d->amount : $d->amount

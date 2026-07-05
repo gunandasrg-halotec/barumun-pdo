@@ -68,8 +68,11 @@ export function PdoDetailPage() {
   }, [])
 
   const { data: grouped, isFetching, isError, refetch } = usePdoGrouped(id)
-  const pdo     = grouped?.pdo
-  const details = grouped?.categories.flatMap((c) => c.subcategories.flatMap((s) => s.details))
+  const pdo              = grouped?.pdo
+  const details          = grouped?.categories.flatMap((c) => c.subcategories.flatMap((s) => s.details))
+  const suppGroups       = grouped?.supplementary_groups ?? []
+  const suppDetails      = suppGroups.flatMap((g) => g.details)
+  const allDetails       = [...(details ?? []), ...suppDetails]
 
   const submitMut = useMutation({
     mutationFn: () => api.post(`/pdo/${id}/submit`, {
@@ -107,9 +110,9 @@ export function PdoDetailPage() {
   )
   if (!pdo) return <div className="text-muted text-sm">PDO tidak ditemukan.</div>
 
-  const totalAmount  = details?.reduce((s, d) => s + (d.expense_item?.is_deduction ? -d.amount : d.amount), 0) ?? 0
-  const totalTransf  = details?.reduce((s, d) => s + (d.total_transferred ?? 0), 0) ?? 0
-  const totalReal    = details?.reduce((s, d) => s + (d.total_realized ?? 0), 0) ?? 0
+  const totalAmount  = allDetails.reduce((s, d) => s + (d.expense_item?.is_deduction ? -d.amount : d.amount), 0)
+  const totalTransf  = allDetails.reduce((s, d) => s + (d.total_transferred ?? 0), 0)
+  const totalReal    = allDetails.reduce((s, d) => s + (d.total_realized ?? 0), 0)
   const saldo        = totalTransf - totalReal
 
   return (
@@ -176,7 +179,7 @@ export function PdoDetailPage() {
       {/* Detail Table — grouped by kategori > sub-kategori, collapsible */}
       <div className="card">
         <h3 className="text-[17px] font-[850] mb-4">Rencana Biaya</h3>
-        {!details?.length ? (
+        {!details?.length && !suppGroups.length ? (
           <EmptyState message="Tidak ada item biaya." />
         ) : (() => {
           // Group details by category then subcategory
@@ -192,7 +195,7 @@ export function PdoDetailPage() {
             }[]
           }
           const catMap = new Map<string, CatGroup>()
-          for (const d of details) {
+          for (const d of (details ?? [])) {
             const sub  = d.expense_item?.subcategory
             const cat  = sub?.category
             const catKey   = cat?.id  ?? '__no_cat'
@@ -314,13 +317,111 @@ export function PdoDetailPage() {
                     )
                   })}
                 </tbody>
+
+                {/* ── Tambahan section: merged items from PDO Tambahan ── */}
+                {suppGroups.length > 0 && (
+                  <tbody>
+                    {/* Divider row */}
+                    <tr>
+                      <td colSpan={10} className="px-0 pt-2 pb-0">
+                        <div className="flex items-center gap-2 px-3 py-2.5 bg-amber-50 border-t-2 border-amber-400">
+                          <GitBranch className="w-4 h-4 text-amber-700 shrink-0" />
+                          <span className="text-[12px] font-[850] text-amber-800 uppercase tracking-wide">Item dari PDO Tambahan</span>
+                          <span className="ml-auto text-[11px] font-[700] text-amber-700 bg-amber-100 border border-amber-300 px-2 py-0.5 rounded-full whitespace-nowrap">
+                            digabung setelah disetujui Direktur
+                          </span>
+                        </div>
+                      </td>
+                    </tr>
+
+                    {suppGroups.map((sg) => (
+                      <>
+                        {/* Per-PDOT sub-header */}
+                        <tr key={`supp-hdr-${sg.supplementary.id}`}>
+                          <td colSpan={10} className="px-6 py-1.5 bg-amber-50 border-t border-amber-200">
+                            <div className="flex items-center gap-2 text-[12px] text-amber-700">
+                              <span className="font-[850]">{sg.supplementary.pdo_number}</span>
+                              {sg.supplementary.merged_at && (
+                                <span className="text-amber-500">· digabung {fmtDate(sg.supplementary.merged_at)}</span>
+                              )}
+                              <span className="ml-auto font-[700]">{fmt(sg.subtotal_amount)}</span>
+                            </div>
+                          </td>
+                        </tr>
+
+                        {/* Items: flat, but show cat · sub · code inline */}
+                        {sg.details.map((d) => {
+                          const sub = d.expense_item?.subcategory
+                          const cat = sub?.category
+                          const attachOpen = openAttachmentId === d.id
+                          return (
+                            <>
+                              <tr key={d.id} className="border-t border-amber-100 bg-amber-50/30 hover:bg-amber-50/60">
+                                <td className="pl-10 pr-3 py-2.5 text-sm font-bold">
+                                  <div className="flex items-center gap-1.5 flex-wrap">
+                                    {cat && (
+                                      <span className="text-[10px] font-[700] px-1.5 py-0.5 rounded bg-amber-100 text-amber-800 border border-amber-200 whitespace-nowrap">
+                                        {cat.code}
+                                      </span>
+                                    )}
+                                    {sub && (
+                                      <span className="text-[10px] font-[700] px-1.5 py-0.5 rounded bg-amber-50 text-amber-700 border border-amber-200 whitespace-nowrap">
+                                        {sub.code}
+                                      </span>
+                                    )}
+                                    {d.expense_item?.code && (
+                                      <span className="text-[10px] font-[700] px-1.5 py-0.5 rounded bg-blue-50 text-blue-700 border border-blue-100 whitespace-nowrap">
+                                        {d.expense_item.code}
+                                      </span>
+                                    )}
+                                    <span>{d.expense_item?.name ?? d.description ?? '—'}</span>
+                                  </div>
+                                  {(cat || sub) && (
+                                    <div className="text-[10px] text-amber-600 mt-0.5 pl-0.5">
+                                      {[cat?.name, sub?.name].filter(Boolean).join(' › ')}
+                                    </div>
+                                  )}
+                                </td>
+                                <td className="px-3 py-2.5 text-sm text-muted">{d.description}</td>
+                                <td className="px-3 py-2.5 text-sm">{d.quantity ?? '—'}</td>
+                                <td className="px-3 py-2.5 text-sm">{d.unit ?? '—'}</td>
+                                <td className="px-3 py-2.5 text-sm">{d.rate ? fmt(d.rate) : '—'}</td>
+                                <td className="px-3 py-2.5 text-sm font-bold">{fmt(d.amount)}</td>
+                                <td className="px-3 py-2.5 text-sm">{fmt(d.total_transferred ?? 0)}</td>
+                                <td className="px-3 py-2.5 text-sm">{fmt(d.total_realized ?? 0)}</td>
+                                <td className="px-3 py-2.5 text-sm font-bold text-green">
+                                  {fmt((d.total_transferred ?? 0) - (d.total_realized ?? 0))}
+                                </td>
+                                <td className="px-3 py-2.5">
+                                  <AttachmentBadge detailId={d.id} onClick={() => toggleAttachment(d.id)} />
+                                </td>
+                              </tr>
+                              {attachOpen && (
+                                <DetailAttachmentPanel
+                                  key={`att-supp-${d.id}`}
+                                  detailId={d.id}
+                                  canUpload={false}
+                                  colSpan={10}
+                                />
+                              )}
+                            </>
+                          )
+                        })}
+                      </>
+                    ))}
+                  </tbody>
+                )}
+
                 <tfoot>
                   <tr className="border-t-2 border-line bg-[#f7faf7]">
-                    <td colSpan={6} className="px-3 py-2.5 text-[12px] font-[950] text-muted">Total</td>
+                    <td colSpan={5} className="px-3 py-2.5 text-[12px] font-[950] text-muted">
+                      Total{suppGroups.length > 0 ? ' (Bulanan + Tambahan)' : ''}
+                    </td>
                     <td className="px-3 py-2.5 font-[950]">{fmt(totalAmount)}</td>
                     <td className="px-3 py-2.5 font-[950]">{fmt(totalTransf)}</td>
                     <td className="px-3 py-2.5 font-[950]">{fmt(totalReal)}</td>
                     <td className="px-3 py-2.5 font-[950] text-green">{fmt(saldo)}</td>
+                    <td />
                   </tr>
                 </tfoot>
               </table>

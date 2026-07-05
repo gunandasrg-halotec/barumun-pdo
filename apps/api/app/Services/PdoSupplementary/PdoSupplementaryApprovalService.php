@@ -2,6 +2,8 @@
 
 namespace App\Services\PdoSupplementary;
 
+use App\Models\AuditLog;
+use App\Models\PdoDetail;
 use App\Models\PdoSupplementaryApprovalLog;
 use App\Models\PdoSupplementaryHeader;
 use App\Models\Role;
@@ -53,7 +55,10 @@ class PdoSupplementaryApprovalService
 
             $this->appendLog($supp, $actor, 'kerani_submit', $action);
 
-            return $supp->fresh();
+            $fresh = $supp->fresh()->load(['creator', 'plantationUnit']);
+            $this->wa->notifySupplementarySubmitted($fresh);
+
+            return $fresh;
         });
     }
 
@@ -68,7 +73,22 @@ class PdoSupplementaryApprovalService
 
             $this->appendLog($supp, $actor, $stage, PdoSupplementaryApprovalLog::ACTION_APPROVE, $reason);
 
-            return $supp->fresh();
+            $fresh = $supp->fresh()->load(['creator', 'plantationUnit']);
+
+            if ($nextStatus === PdoSupplementaryHeader::STATUS_FINAL_MERGED) {
+                $this->mergeIntoParent($supp, $actor);
+                $fresh = $supp->fresh()->load(['creator', 'plantationUnit']);
+            }
+
+            match ($nextStatus) {
+                PdoSupplementaryHeader::STATUS_REVIEWED_ASISTEN   => $this->wa->notifySupplementaryApprovedByAsisten($fresh),
+                PdoSupplementaryHeader::STATUS_IN_REVIEW_MANAGER  => $this->wa->notifySupplementaryApprovedByManagerKebun($fresh),
+                PdoSupplementaryHeader::STATUS_IN_REVIEW_DIREKTUR => $this->wa->notifySupplementaryApprovedByManagerKeuangan($fresh),
+                PdoSupplementaryHeader::STATUS_FINAL_MERGED       => $this->wa->notifySupplementaryFinal($fresh),
+                default                                            => null,
+            };
+
+            return $fresh;
         });
     }
 
@@ -96,7 +116,16 @@ class PdoSupplementaryApprovalService
 
             $this->appendLog($supp, $actor, $stage, PdoSupplementaryApprovalLog::ACTION_REJECT, $reason);
 
-            return $supp->fresh();
+            $fresh = $supp->fresh()->load(['creator', 'plantationUnit']);
+
+            match (true) {
+                $actor->hasRole(Role::ASISTEN_KEBUN)                                    => $this->wa->notifySupplementaryRejectedByAsisten($fresh, $reason),
+                $actor->hasAnyRole([Role::MANAJER_KEBUN, Role::MANAJER_KEUANGAN])       => $this->wa->notifySupplementaryRejectedByManager($fresh, $reason),
+                $actor->hasRole(Role::DIREKTUR_KEUANGAN)                                => $this->wa->notifySupplementaryRejectedByDirektur($fresh, $reason),
+                default                                                                  => null,
+            };
+
+            return $fresh;
         });
     }
 
@@ -134,5 +163,44 @@ class PdoSupplementaryApprovalService
             'reason'                      => $reason,
             'sequence_number'             => $supp->nextApprovalSequence(),
         ]);
+    }
+
+    /**
+     * Auto-merge PDO Tambahan items into the parent PDO Bulanan.
+     * Called within the same DB transaction as Direktur's approval.
+     */
+    private function mergeIntoParent(PdoSupplementaryHeader $supp, User $actor): void
+    {
+        $parentPdo = $supp->parentPdo;
+        $nextOrder = ($parentPdo->details()->max('display_order') ?? 0) + 1;
+        $detailsAdded = 0;
+
+        foreach ($supp->details()->orderBy('display_order')->get() as $suppDetail) {
+            PdoDetail::create([
+                'pdo_header_id'               => $parentPdo->id,
+                'expense_item_id'             => $suppDetail->expense_item_id,
+                'source_pdo_supplementary_id' => $supp->id,
+                'account_number'              => $suppDetail->account_number,
+                'description'                 => $suppDetail->description,
+                'quantity'                    => $suppDetail->quantity,
+                'unit'                        => $suppDetail->unit,
+                'rate'                        => $suppDetail->rate,
+                'amount'                      => $suppDetail->amount,
+                'notes'                       => $suppDetail->notes,
+                'display_order'               => $nextOrder++,
+            ]);
+            $detailsAdded++;
+        }
+
+        $supp->update(['merged_at' => now()]);
+
+        AuditLog::record(
+            actor: $actor,
+            entityType: 'pdo_supplementary_headers',
+            entityId: $supp->id,
+            action: 'STATUS_CHANGE',
+            oldValues: ['merged_at' => null],
+            newValues: ['merged_at' => now()->toDateTimeString(), 'details_merged' => $detailsAdded]
+        );
     }
 }

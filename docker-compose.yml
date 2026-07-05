@@ -24,7 +24,7 @@ services:
     volumes:
       # Overlay kode custom kita ke atas scaffold Laravel (hot-reload)
       - ./apps/api/app:/var/www/api/app
-      - ./apps/api/config/services.php:/var/www/api/config/services.php
+      - ./apps/api/config:/var/www/api/config
       - ./apps/api/database:/var/www/api/database
       - ./apps/api/tests:/var/www/api/tests
       - ./apps/api/routes/api.php:/var/www/api/routes/api.php

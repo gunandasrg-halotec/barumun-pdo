@@ -38,8 +38,12 @@ DB_DATABASE_VALUE="${DB_DATABASE:-pdo_db}"
 DB_USERNAME_VALUE="${DB_USERNAME:-pdo_user}"
 DB_PASSWORD_VALUE="${DB_PASSWORD:-secret}"
 
-# Generate APP_KEY jika belum ada
-if [ -z "$APP_KEY" ] || grep -q "^APP_KEY=$" .env 2>/dev/null; then
+# APP_KEY: tulis nilai dari environment (docker-compose) ke .env agar konsisten
+# dengan proses worker `artisan serve`, yang membaca .env langsung dan TIDAK
+# mewarisi variabel environment host (lihat ServeCommand::$passthroughVariables).
+if [ -n "$APP_KEY" ]; then
+    sed -i "s|^APP_KEY=.*|APP_KEY=${APP_KEY}|" .env
+elif grep -q "^APP_KEY=$" .env 2>/dev/null; then
     echo "[PDO] Generating APP_KEY..."
     php artisan key:generate --no-interaction
 fi

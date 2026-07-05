@@ -14,6 +14,17 @@ export interface PdoGroupedResponse {
     }>
     subtotal_amount: number
   }>
+  supplementary_groups: Array<{
+    supplementary: {
+      id: string
+      pdo_number: string
+      merged_at: string | null
+      period_month: number
+      period_year: number
+    }
+    details: PdoDetail[]
+    subtotal_amount: number
+  }>
   grand_total: number
 }
 
