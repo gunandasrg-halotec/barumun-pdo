@@ -10,20 +10,8 @@ import { EmptyState } from '@/components/ui/EmptyState'
 import { useToastStore } from '@/store/toast.store'
 import { fmt, fmtDate, fmtPeriode } from '@/lib/format'
 import { canApprove, isKerani } from '@/lib/auth'
-import { ArrowLeft, CheckCircle, XCircle, AlertCircle } from 'lucide-react'
+import { ArrowLeft, CheckCircle, XCircle, AlertCircle, Clock, Circle } from 'lucide-react'
 import type { ApiResponse, PdoSupplementaryHeader, RoleCode } from '@/types'
-
-interface SupplementaryDetail {
-  id: string
-  expense_item?: { name: string }
-  description: string
-  quantity: number | null
-  unit: string | null
-  rate: number | null
-  amount: number
-  justification: string
-  notes: string | null
-}
 
 interface ApprovalLog {
   id: string
@@ -39,6 +27,23 @@ const STATUS_BADGE: Record<string, 'draft' | 'approved' | 'reject' | 'review' | 
   in_review_manager: 'review', in_review_direktur: 'review',
   final_merged: 'approved', rejected: 'reject',
 }
+
+const STATUS_LABEL: Record<string, string> = {
+  draft: 'Draft', submitted: 'Diajukan', reviewed_asisten: 'Disetujui Asisten',
+  in_review_manager: 'Disetujui Manajer Kebun', in_review_direktur: 'Disetujui Manajer Keuangan',
+  final_merged: 'Disetujui Direktur', rejected: 'Ditolak',
+}
+
+// Each step: the status achieved after that approver approves
+const PIPELINE: { role: string; label: string; doneStatus: string }[] = [
+  { role: 'KERANI',            label: 'Pengajuan oleh Kerani',       doneStatus: 'submitted'          },
+  { role: 'ASISTEN_KEBUN',     label: 'Review Asisten Kebun',        doneStatus: 'reviewed_asisten'   },
+  { role: 'MANAJER_KEBUN',     label: 'Review Manajer Kebun',        doneStatus: 'in_review_manager'  },
+  { role: 'MANAJER_KEUANGAN',  label: 'Review Manajer Keuangan',     doneStatus: 'in_review_direktur' },
+  { role: 'DIREKTUR_KEUANGAN', label: 'Persetujuan Direktur Keuangan', doneStatus: 'final_merged'     },
+]
+
+const STATUS_ORDER = ['draft', 'submitted', 'reviewed_asisten', 'in_review_manager', 'in_review_direktur', 'final_merged']
 
 export function PdoSupplementaryDetailPage() {
   const { id }   = useParams<{ id: string }>()
@@ -57,14 +62,7 @@ export function PdoSupplementaryDetailPage() {
     enabled: !!id,
   })
 
-  const { data: details } = useQuery({
-    queryKey: ['pdo-supplementary-details', id],
-    queryFn: async () => {
-      const res = await api.get<ApiResponse<SupplementaryDetail[]>>(`/pdo-supplementary/${id}/details`)
-      return res.data.data
-    },
-    enabled: !!id,
-  })
+  const details = supp?.details
 
   const { data: logs } = useQuery({
     queryKey: ['pdo-supplementary-logs', id],
@@ -80,7 +78,9 @@ export function PdoSupplementaryDetailPage() {
   const [reason, setReason]       = useState('')
 
   const submitMut = useMutation({
-    mutationFn: () => api.post(`/pdo-supplementary/${id}/submit`),
+    mutationFn: () => api.post(`/pdo-supplementary/${id}/submit`, {
+      submission_date: new Date().toISOString().split('T')[0],
+    }),
     onSuccess: () => {
       toast('PDO Tambahan berhasil diajukan')
       qc.invalidateQueries({ queryKey: ['pdo-supplementary', id] })
@@ -176,7 +176,7 @@ export function PdoSupplementaryDetailPage() {
                     <td className="px-3 py-2 text-sm">{d.unit ?? '—'}</td>
                     <td className="px-3 py-2 text-sm">{d.rate ? fmt(d.rate) : '—'}</td>
                     <td className="px-3 py-2 text-sm font-bold">{fmt(d.amount)}</td>
-                    <td className="px-3 py-2 text-sm text-muted italic">{d.justification}</td>
+                    <td className="px-3 py-2 text-sm text-muted italic">{d.notes ?? '—'}</td>
                   </tr>
                 ))}
               </tbody>
@@ -185,7 +185,62 @@ export function PdoSupplementaryDetailPage() {
         )}
       </div>
 
-      {/* Approval Log */}
+      {/* Approval Pipeline */}
+      <div className="card mb-4">
+        <h3 className="text-[17px] font-[850] mb-5">Status Persetujuan</h3>
+        {supp.status === 'rejected' ? (
+          <div className="flex items-center gap-2 text-sm text-red font-bold">
+            <XCircle className="w-5 h-5 shrink-0" />
+            Ditolak — {STATUS_LABEL[supp.status]}
+            {logs?.find((l) => l.action === 'reject') && (
+              <span className="font-normal text-muted ml-2">
+                Alasan: {logs.find((l) => l.action === 'reject')?.reason ?? '—'}
+              </span>
+            )}
+          </div>
+        ) : (
+          <div className="flex items-start gap-0">
+            {PIPELINE.map((step, i) => {
+              const currentIdx = STATUS_ORDER.indexOf(supp.status)
+              const stepIdx    = STATUS_ORDER.indexOf(step.doneStatus)
+              const isDone     = currentIdx >= stepIdx
+              const isCurrent  = STATUS_ORDER.indexOf(step.doneStatus) === currentIdx
+              const log        = logs?.find((l) => l.approval_stage && step.doneStatus.startsWith(l.approval_stage.split('_')[0]))
+
+              return (
+                <div key={step.role} className="flex-1 flex flex-col items-center text-center relative">
+                  {/* Connector line (except first) */}
+                  {i > 0 && (
+                    <div className={`absolute left-0 top-[14px] w-1/2 h-0.5 ${isDone || isCurrent ? 'bg-green' : 'bg-line'}`} />
+                  )}
+                  {/* Connector line (except last) */}
+                  {i < PIPELINE.length - 1 && (
+                    <div className={`absolute right-0 top-[14px] w-1/2 h-0.5 ${isDone && !isCurrent ? 'bg-green' : 'bg-line'}`} />
+                  )}
+                  {/* Icon */}
+                  <div className="relative z-10 mb-2">
+                    {isDone ? (
+                      <CheckCircle className="w-7 h-7 text-green" />
+                    ) : isCurrent ? (
+                      <Clock className="w-7 h-7 text-amber-400" />
+                    ) : (
+                      <Circle className="w-7 h-7 text-line" />
+                    )}
+                  </div>
+                  <p className={`text-[11px] font-bold leading-tight px-1 ${isDone ? 'text-green' : isCurrent ? 'text-amber-500' : 'text-muted'}`}>
+                    {step.label}
+                  </p>
+                  {log && (
+                    <p className="text-[10px] text-muted mt-0.5">{log.actor?.full_name}</p>
+                  )}
+                </div>
+              )
+            })}
+          </div>
+        )}
+      </div>
+
+      {/* Riwayat Approval Log */}
       {logs && logs.length > 0 && (
         <div className="card">
           <h3 className="text-[17px] font-[850] mb-4">Riwayat Approval</h3>
@@ -193,12 +248,13 @@ export function PdoSupplementaryDetailPage() {
             {logs.map((log) => (
               <div key={log.id} className="flex items-start gap-3 text-sm">
                 <div className={`w-2 h-2 rounded-full mt-1.5 shrink-0 ${
-                  log.action === 'approve' ? 'bg-green' :
+                  log.action === 'approve' || log.action === 'submit' || log.action === 'resubmit' ? 'bg-green' :
                   log.action === 'reject'  ? 'bg-red' : 'bg-amber-400'
                 }`} />
                 <div>
                   <span className="font-bold">{log.actor?.full_name ?? '—'}</span>
-                  {' · '}{log.action} · {log.approval_stage}
+                  {' · '}
+                  <span className="capitalize">{log.action.replace(/_/g, ' ')}</span>
                   {' · '}<span className="text-muted">{fmtDate(log.created_at)}</span>
                   {log.reason && (
                     <div className={`mt-1 text-xs px-2 py-1 rounded ${

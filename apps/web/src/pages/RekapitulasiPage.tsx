@@ -197,7 +197,7 @@ export function RekapitulasiPage() {
       setUploadId(entry.id)
     },
     onError: (error: any) => {
-      const message = error?.response?.data?.message || error?.message || 'Gagal menyimpan realisasi'
+      const message = error?.response?.data?.error?.message || error?.response?.data?.message || error?.message || 'Gagal menyimpan realisasi'
       setApiError(message)
       toast(message, 'error')
     },
@@ -500,7 +500,6 @@ export function RekapitulasiPage() {
 
             {apiError && (
               <div className="p-3 bg-red-50 border border-red-200 rounded text-sm text-red-700">
-                <p className="font-bold mb-1">Kesalahan server:</p>
                 <p>{apiError}</p>
               </div>
             )}

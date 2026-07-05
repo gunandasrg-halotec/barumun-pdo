@@ -192,6 +192,8 @@ export interface TransferEntry {
   id: string
   pdo_detail_id: string
   pdo_detail?: {
+    id: string
+    amount: number
     pdo_header?: {
       id: string
       pdo_number: string
@@ -292,6 +294,25 @@ export interface PdoSupplementaryHeader {
   status: SupplementaryStatus
   merged_at: string | null
   notes: string | null
+  // eager-loaded relations
+  parent_pdo?: { id: string; pdo_number: string }
+  plantation_unit?: { id: string; code: string; name: string }
+  details?: PdoSupplementaryDetail[]
+}
+
+export interface PdoSupplementaryDetail {
+  id: string
+  pdo_supplementary_header_id: string
+  expense_item_id: string
+  expense_item?: { id: string; name: string; code: string }
+  account_number: string | null
+  description: string
+  quantity: number | null
+  unit: string | null
+  rate: number | null
+  amount: number
+  notes: string | null
+  display_order: number
 }
 
 // ─── Dashboard ───────────────────────────────────────────────────────────────

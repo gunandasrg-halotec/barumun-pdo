@@ -100,8 +100,8 @@ export function PdoSupplementaryListPage() {
             ) : list.map((s) => (
               <tr key={s.id} className="border-t border-line hover:bg-[#fbfdfb]">
                 <td className="px-4 py-3 font-bold text-sm">{s.pdo_number}</td>
-                <td className="px-4 py-3 text-sm">{s.parent_pdo_header_id}</td>
-                <td className="px-4 py-3 text-sm">{s.plantation_unit_id}</td>
+                <td className="px-4 py-3 text-sm">{s.parent_pdo?.pdo_number ?? s.parent_pdo_header_id}</td>
+                <td className="px-4 py-3 text-sm">{s.plantation_unit?.name ?? s.plantation_unit_id}</td>
                 <td className="px-4 py-3 text-sm">{fmtPeriode(s.period_month, s.period_year)}</td>
                 <td className="px-4 py-3 text-sm">{fmt(0)}</td>
                 <td className="px-4 py-3">

@@ -4,6 +4,7 @@ namespace App\Services\Notification;
 
 use App\Models\NotificationTemplate;
 use App\Models\PdoHeader;
+use App\Models\PdoSupplementaryHeader;
 use App\Models\Role;
 use App\Models\SystemSetting;
 use App\Models\User;
@@ -115,6 +116,150 @@ class WhatsAppNotificationService
             $recipients,
             $this->baseVars($pdo)
         );
+    }
+
+    // ─────────────────────────────────────────────────────
+    // PDO TAMBAHAN NOTIFICATIONS
+    // ─────────────────────────────────────────────────────
+
+    /** Kerani submit PDO Tambahan → Asisten Kebun (unit sama) */
+    public function notifySupplementarySubmitted(PdoSupplementaryHeader $supp): void
+    {
+        $supp->loadMissing(['creator', 'plantationUnit']);
+        $this->send(
+            $supp->company_id,
+            NotificationTemplate::EVENT_PDO_SUBMITTED,
+            $this->suppAsistenByUnit($supp),
+            $this->suppBaseVars($supp)
+        );
+    }
+
+    /** Asisten approve PDO Tambahan → Kerani + Manajer Kebun + Manajer Keuangan */
+    public function notifySupplementaryApprovedByAsisten(PdoSupplementaryHeader $supp): void
+    {
+        $supp->loadMissing(['creator', 'plantationUnit']);
+        $recipients = $this->suppCreator($supp)
+            ->merge($this->suppByRole($supp, Role::MANAJER_KEBUN))
+            ->merge($this->suppByRole($supp, Role::MANAJER_KEUANGAN));
+
+        $this->send($supp->company_id, NotificationTemplate::EVENT_PDO_APPROVED_ASISTEN, $recipients, $this->suppBaseVars($supp));
+    }
+
+    /** Manajer Kebun approve PDO Tambahan → Manajer Keuangan + Asisten + Kerani */
+    public function notifySupplementaryApprovedByManagerKebun(PdoSupplementaryHeader $supp): void
+    {
+        $supp->loadMissing(['creator', 'plantationUnit']);
+        $recipients = $this->suppByRole($supp, Role::MANAJER_KEUANGAN)
+            ->merge($this->suppAsistenByUnit($supp))
+            ->merge($this->suppCreator($supp));
+
+        $this->send($supp->company_id, NotificationTemplate::EVENT_PDO_APPROVED_ASISTEN, $recipients, $this->suppBaseVars($supp));
+    }
+
+    /** Manajer Keuangan approve PDO Tambahan → Direktur + Asisten + Kerani */
+    public function notifySupplementaryApprovedByManagerKeuangan(PdoSupplementaryHeader $supp): void
+    {
+        $supp->loadMissing(['creator', 'plantationUnit']);
+        $recipients = $this->suppByRole($supp, Role::DIREKTUR_KEUANGAN)
+            ->merge($this->suppAsistenByUnit($supp))
+            ->merge($this->suppCreator($supp));
+
+        $this->send($supp->company_id, NotificationTemplate::EVENT_PDO_APPROVED_MANAGER, $recipients, $this->suppBaseVars($supp));
+    }
+
+    /** Direktur approve PDO Tambahan (final_merged) → Manajer Kebun + Manajer Keuangan + Asisten + Kerani */
+    public function notifySupplementaryFinal(PdoSupplementaryHeader $supp): void
+    {
+        $supp->loadMissing(['creator', 'plantationUnit']);
+        $recipients = $this->suppByRole($supp, Role::MANAJER_KEBUN)
+            ->merge($this->suppByRole($supp, Role::MANAJER_KEUANGAN))
+            ->merge($this->suppAsistenByUnit($supp))
+            ->merge($this->suppCreator($supp));
+
+        $this->send($supp->company_id, NotificationTemplate::EVENT_PDO_FINAL, $recipients, $this->suppBaseVars($supp));
+    }
+
+    /** Asisten reject PDO Tambahan → Kerani (creator) */
+    public function notifySupplementaryRejectedByAsisten(PdoSupplementaryHeader $supp, string $reason): void
+    {
+        $supp->loadMissing(['creator', 'plantationUnit']);
+        $this->send(
+            $supp->company_id,
+            NotificationTemplate::EVENT_PDO_REJECTED_ASISTEN,
+            $this->suppCreator($supp),
+            array_merge($this->suppBaseVars($supp), ['alasan_reject' => $reason, 'penolak' => 'Asisten Kebun'])
+        );
+    }
+
+    /** Manajer (Kebun/Keuangan) reject PDO Tambahan → Asisten + Kerani */
+    public function notifySupplementaryRejectedByManager(PdoSupplementaryHeader $supp, string $reason): void
+    {
+        $supp->loadMissing(['creator', 'plantationUnit']);
+        $recipients = $this->suppAsistenByUnit($supp)->merge($this->suppCreator($supp));
+
+        $this->send(
+            $supp->company_id,
+            NotificationTemplate::EVENT_PDO_REJECTED_MANAGER,
+            $recipients,
+            array_merge($this->suppBaseVars($supp), ['alasan_reject' => $reason, 'penolak' => 'Manajer'])
+        );
+    }
+
+    /** Direktur reject PDO Tambahan → Manajer Kebun + Manajer Keuangan + Asisten + Kerani */
+    public function notifySupplementaryRejectedByDirektur(PdoSupplementaryHeader $supp, string $reason): void
+    {
+        $supp->loadMissing(['creator', 'plantationUnit']);
+        $recipients = $this->suppByRole($supp, Role::MANAJER_KEUANGAN)
+            ->merge($this->suppByRole($supp, Role::MANAJER_KEBUN))
+            ->merge($this->suppAsistenByUnit($supp))
+            ->merge($this->suppCreator($supp));
+
+        $this->send(
+            $supp->company_id,
+            NotificationTemplate::EVENT_PDO_REJECTED_DIREKTUR,
+            $recipients,
+            array_merge($this->suppBaseVars($supp), ['alasan_reject' => $reason, 'penolak' => 'Direktur Keuangan'])
+        );
+    }
+
+    // ─────────────────────────────────────────────────────
+    // PDO TAMBAHAN RECIPIENT HELPERS
+    // ─────────────────────────────────────────────────────
+
+    private function suppCreator(PdoSupplementaryHeader $supp): Collection
+    {
+        $user = $supp->creator;
+        return $user ? collect([$user]) : collect();
+    }
+
+    private function suppAsistenByUnit(PdoSupplementaryHeader $supp): Collection
+    {
+        return User::with('role')
+            ->where('company_id', $supp->company_id)
+            ->where('plantation_unit_id', $supp->plantation_unit_id)
+            ->whereHas('role', fn ($q) => $q->where('code', Role::ASISTEN_KEBUN))
+            ->where('is_active', true)
+            ->get();
+    }
+
+    private function suppByRole(PdoSupplementaryHeader $supp, string $roleCode): Collection
+    {
+        return User::with('role')
+            ->where('company_id', $supp->company_id)
+            ->whereHas('role', fn ($q) => $q->where('code', $roleCode))
+            ->where('is_active', true)
+            ->get();
+    }
+
+    private function suppBaseVars(PdoSupplementaryHeader $supp): array
+    {
+        $months = ['', 'Januari', 'Februari', 'Maret', 'April', 'Mei', 'Juni',
+                   'Juli', 'Agustus', 'September', 'Oktober', 'November', 'Desember'];
+        return [
+            'nomor_pdo'  => $supp->pdo_number,
+            'periode'    => $months[$supp->period_month] . ' ' . $supp->period_year,
+            'unit_kebun' => $supp->plantationUnit?->name ?? '',
+        ];
     }
 
     /** Reminder bulanan: KERANI yang belum buat PDO bulan ini. */

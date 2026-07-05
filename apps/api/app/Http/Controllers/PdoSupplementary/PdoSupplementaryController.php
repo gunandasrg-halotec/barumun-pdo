@@ -51,10 +51,10 @@ class PdoSupplementaryController extends Controller
         return response()->json(['success' => true, 'data' => $supp]);
     }
 
-    /** PUT /pdo-supplementary/{supplementary} */
-    public function update(UpdatePdoSupplementaryRequest $request, PdoSupplementaryHeader $supplementary): JsonResponse
+    /** PUT /pdo-supplementary/{pdo_supplementary} */
+    public function update(UpdatePdoSupplementaryRequest $request, PdoSupplementaryHeader $pdo_supplementary): JsonResponse
     {
-        $updated = $this->service->update($supplementary, $request->validated(), $request->user());
+        $updated = $this->service->update($pdo_supplementary, $request->validated(), $request->user());
 
         return response()->json(['success' => true, 'data' => $updated, 'message' => 'PDO Tambahan berhasil diperbarui.']);
     }

@@ -1,4 +1,4 @@
-import { useEffect } from 'react'
+import { useEffect, useRef } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { useForm, useFieldArray } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
@@ -13,6 +13,7 @@ import { ArrowLeft, Plus, Trash2 } from 'lucide-react'
 import type { ApiResponse, PdoHeader, PdoSupplementaryHeader } from '@/types'
 
 const detailSchema = z.object({
+  id:              z.string().uuid().optional(),   // present when editing an existing detail
   expense_item_id: z.string().uuid('Pilih item'),
   description:     z.string().min(1, 'Deskripsi wajib diisi'),
   quantity:        z.coerce.number().nullable().optional(),
@@ -67,45 +68,124 @@ export function PdoSupplementaryFormPage() {
   const detailValues = watch('details')
   const totalAmount  = detailValues?.reduce((s, d) => s + (Number(d.amount) || 0), 0) ?? 0
 
+  // Tracks detail IDs that existed on the server when the form loaded, so we can
+  // detect which ones were removed in this edit session and issue DELETE for them.
+  const originalDetailIds = useRef<string[]>([])
+
   useEffect(() => {
     if (existing) {
       reset({ parent_pdo_header_id: existing.parent_pdo_header_id, notes: existing.notes ?? '' })
-      api.get<ApiResponse<unknown[]>>(`/pdo-supplementary/${id}/details`).then((res) => {
-        const details = res.data.data as Form['details']
-        details.forEach((d) => append(d))
-      })
+      originalDetailIds.current = (existing.details ?? []).map((d) => d.id)
+      existing.details?.forEach((d) => append({
+        id:              d.id,
+        expense_item_id: d.expense_item_id,
+        description:     d.description,
+        quantity:        d.quantity,
+        unit:            d.unit,
+        rate:            d.rate,
+        amount:          d.amount,
+        notes:           null,
+        justification:   d.notes ?? '',
+        display_order:   d.display_order,
+      }))
     }
   }, [existing])
 
+  // Auto-fill description, unit, rate from master item; auto-compute amount if qty available
   const handleItemChange = (idx: number, itemId: string) => {
     const item = items?.find((i) => i.id === itemId)
     if (!item) return
     setValue(`details.${idx}.description`, item.name)
     if (item.default_unit) setValue(`details.${idx}.unit`, item.default_unit)
-    if (item.default_rate) setValue(`details.${idx}.rate`, item.default_rate)
+    if (item.default_rate) {
+      setValue(`details.${idx}.rate`, item.default_rate)
+      const qty = Number(detailValues[idx]?.quantity)
+      if (qty > 0) setValue(`details.${idx}.amount`, Math.round(qty * item.default_rate))
+    }
+  }
+
+  // Recalculate amount = quantity × rate
+  const recalcAmount = (idx: number, qty: number, rate: number) => {
+    if (qty > 0 && rate > 0) setValue(`details.${idx}.amount`, Math.round(qty * rate))
+  }
+
+  // Build payload for one detail row (maps justification → notes for the API)
+  const buildDetailPayload = (d: Form['details'][number]) => ({
+    expense_item_id: d.expense_item_id,
+    description:     d.description,
+    quantity:        d.quantity ?? null,
+    unit:            d.unit     ?? null,
+    rate:            d.rate     ?? null,
+    amount:          d.amount,
+    notes:           d.justification || d.notes || null,
+    display_order:   d.display_order,
+  })
+
+  // Delete detail rows that existed originally but are no longer in the submitted form
+  const deleteRemovedDetails = async (supplementaryId: string, data: Form) => {
+    const currentIds = new Set(data.details.map((d) => d.id).filter(Boolean))
+    const removedIds = originalDetailIds.current.filter((origId) => !currentIds.has(origId))
+    for (const detailId of removedIds) {
+      await api.delete(`/pdo-supplementary/${supplementaryId}/details/${detailId}`)
+    }
   }
 
   const save = useMutation({
-    mutationFn: (data: Form) =>
-      isEdit
-        ? api.put(`/pdo-supplementary/${id}`, data)
-        : api.post('/pdo-supplementary', data),
-    onSuccess: (res) => {
-      const created = (res.data as ApiResponse<PdoSupplementaryHeader>).data
+    mutationFn: async (data: Form) => {
+      const headerPayload = { parent_pdo_header_id: data.parent_pdo_header_id, notes: data.notes }
+
+      // Step 1 — create or update the header
+      const headerRes = isEdit
+        ? await api.put(`/pdo-supplementary/${id}`, headerPayload)
+        : await api.post('/pdo-supplementary', headerPayload)
+      const header = (headerRes.data as ApiResponse<PdoSupplementaryHeader>).data
+
+      // Step 2 — delete rows removed from the form
+      if (isEdit) await deleteRemovedDetails(header.id, data)
+
+      // Step 3 — persist each remaining detail row individually
+      for (const d of data.details) {
+        const payload = buildDetailPayload(d)
+        if (d.id) {
+          await api.put(`/pdo-supplementary/${header.id}/details/${d.id}`, payload)
+        } else {
+          await api.post(`/pdo-supplementary/${header.id}/details`, payload)
+        }
+      }
+
+      return header
+    },
+    onSuccess: (header) => {
       toast(isEdit ? 'PDO Tambahan berhasil diperbarui' : 'PDO Tambahan berhasil dibuat')
       qc.invalidateQueries({ queryKey: ['pdo-supplementary'] })
-      navigate(`/pdo-tambahan/${created.id}`)
+      navigate(`/pdo-tambahan/${header.id}`)
     },
     onError: () => toast('Gagal menyimpan PDO Tambahan', 'error'),
   })
 
   const submit = useMutation({
     mutationFn: async (data: Form) => {
-      const res = isEdit
-        ? await api.put(`/pdo-supplementary/${id}`, data)
-        : await api.post('/pdo-supplementary', data)
-      const header = (res.data as ApiResponse<PdoSupplementaryHeader>).data
-      await api.post(`/pdo-supplementary/${header.id}/submit`)
+      const headerPayload = { parent_pdo_header_id: data.parent_pdo_header_id, notes: data.notes }
+
+      const headerRes = isEdit
+        ? await api.put(`/pdo-supplementary/${id}`, headerPayload)
+        : await api.post('/pdo-supplementary', headerPayload)
+      const header = (headerRes.data as ApiResponse<PdoSupplementaryHeader>).data
+
+      if (isEdit) await deleteRemovedDetails(header.id, data)
+
+      for (const d of data.details) {
+        const payload = buildDetailPayload(d)
+        if (d.id) {
+          await api.put(`/pdo-supplementary/${header.id}/details/${d.id}`, payload)
+        } else {
+          await api.post(`/pdo-supplementary/${header.id}/details`, payload)
+        }
+      }
+
+      await api.post(`/pdo-supplementary/${header.id}/submit`, {
+        submission_date: new Date().toISOString().split('T')[0],
+      })
       return header
     },
     onSuccess: (header) => {
@@ -190,6 +270,13 @@ export function PdoSupplementaryFormPage() {
                         {items?.map((item) => (
                           <option key={item.id} value={item.id}>{item.code} — {item.name}</option>
                         ))}
+                        {/* Keep a currently-selected but now-inactive item visible so the dropdown doesn't render blank */}
+                        {detailValues[idx]?.expense_item_id &&
+                          !items?.some((item) => item.id === detailValues[idx].expense_item_id) && (
+                            <option value={detailValues[idx].expense_item_id}>
+                              {detailValues[idx].description} (nonaktif)
+                            </option>
+                        )}
                       </select>
                     </div>
                     <div>
@@ -201,7 +288,16 @@ export function PdoSupplementaryFormPage() {
                   <div className="grid grid-cols-2 desk:grid-cols-4 gap-3 mb-3">
                     <div>
                       <label className="label">Volume</label>
-                      <input type="number" {...register(`details.${idx}.quantity`)} className="input-base" step="0.01" />
+                      <input
+                        type="number"
+                        {...register(`details.${idx}.quantity`)}
+                        className="input-base"
+                        step="0.01"
+                        onChange={(e) => {
+                          register(`details.${idx}.quantity`).onChange(e)
+                          recalcAmount(idx, parseFloat(e.target.value), Number(detailValues[idx]?.rate))
+                        }}
+                      />
                     </div>
                     <div>
                       <label className="label">Satuan</label>
@@ -209,7 +305,15 @@ export function PdoSupplementaryFormPage() {
                     </div>
                     <div>
                       <label className="label">Harga Satuan</label>
-                      <input type="number" {...register(`details.${idx}.rate`)} className="input-base" />
+                      <input
+                        type="number"
+                        {...register(`details.${idx}.rate`)}
+                        className="input-base"
+                        onChange={(e) => {
+                          register(`details.${idx}.rate`).onChange(e)
+                          recalcAmount(idx, Number(detailValues[idx]?.quantity), parseFloat(e.target.value))
+                        }}
+                      />
                     </div>
                     <div>
                       <label className="label">Jumlah (Rp)</label>

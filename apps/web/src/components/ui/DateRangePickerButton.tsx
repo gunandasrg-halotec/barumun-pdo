@@ -7,6 +7,7 @@ interface Props {
   min: string
   max: string
   onChange: (start: string, end: string) => void
+  label?: string
 }
 
 function formatDisplayDate(dateStr: string): string {
@@ -16,7 +17,7 @@ function formatDisplayDate(dateStr: string): string {
   return `${parseInt(d)} ${months[parseInt(m) - 1]}`
 }
 
-export function DateRangePickerButton({ startDate, endDate, min, max, onChange }: Props) {
+export function DateRangePickerButton({ startDate, endDate, min, max, onChange, label = 'Filter Tanggal Realisasi' }: Props) {
   const [open, setOpen]           = useState(false)
   const [draftStart, setDraftStart] = useState(startDate)
   const [draftEnd,   setDraftEnd]   = useState(endDate)
@@ -83,7 +84,7 @@ export function DateRangePickerButton({ startDate, endDate, min, max, onChange }
         <Calendar className="w-4 h-4 shrink-0" />
         {hasFilter
           ? <span>{formatDisplayDate(startDate) || '…'} — {formatDisplayDate(endDate) || '…'}</span>
-          : <span>Filter Tanggal Realisasi</span>
+          : <span>{label}</span>
         }
         {hasFilter && (
           <X className="w-3.5 h-3.5 ml-0.5 shrink-0" onClick={handleReset} />

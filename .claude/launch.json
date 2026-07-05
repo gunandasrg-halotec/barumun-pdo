@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "PDO Web",
+      "runtimeExecutable": "docker",
+      "runtimeArgs": ["compose", "up", "web", "--no-recreate"],
+      "port": 5173
+    }
+  ]
+}
