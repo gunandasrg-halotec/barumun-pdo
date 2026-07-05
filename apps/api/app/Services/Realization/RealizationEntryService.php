@@ -82,25 +82,11 @@ class RealizationEntryService
                 continue;
             }
 
-            if ($group === RealizationEntry::SETTLEMENT_KEBUN) {
-                $bucket = (int) $detail->transferEntries
-                    ->where('transfer_destination', 'rek_kebun')
-                    ->sum('amount');
-            } else {
-                $bucket = (int) $detail->transferEntries
-                    ->whereIn('transfer_destination', ['pribadi', 'vendor'])
-                    ->sum('amount');
-            }
+            // Saldo = sisa anggaran yang belum direalisasi (bukan sisa transfer).
+            // Realisasi boleh melebihi transfer selama tidak melebihi anggaran (BR-REAL-003).
+            $totalRealized = (int) $detail->realizationEntries->sum('amount');
+            $saldo         = $detail->amount - $totalRealized;
 
-            if ($bucket <= 0) {
-                continue;
-            }
-
-            $realizedGroup = (int) $detail->realizationEntries
-                ->where('settlement_group', $group)
-                ->sum('amount');
-
-            $saldo = $bucket - $realizedGroup;
             if ($saldo <= 0) {
                 continue;
             }
@@ -109,28 +95,13 @@ class RealizationEntryService
                 'pdo_detail_id'  => $detail->id,
                 'expense_item'   => $detail->expenseItem?->only(['id', 'code', 'name']),
                 'description'    => $detail->description,
-                'bucket'         => $bucket,
-                'realized_group' => $realizedGroup,
+                'bucket'         => $detail->amount,
+                'realized_group' => $totalRealized,
                 'saldo'          => $saldo,
             ];
         }
 
         return $result;
-    }
-
-    /**
-     * BR-REAL-005: total dana yang ditransfer ke kantong tertentu untuk sebuah
-     * detail. Kantong 'kebun' = transfer ke rek_kebun. Kantong 'pribadi_vendor'
-     * = transfer ke pribadi + vendor. transferEntries() sudah ter-scope
-     * committed (global scope pada TransferEntry).
-     */
-    private function bucketForGroup(PdoDetail $detail, string $group): int
-    {
-        if ($group === RealizationEntry::SETTLEMENT_KEBUN) {
-            return (int) $detail->transferEntries()->where('transfer_destination', 'rek_kebun')->sum('amount');
-        }
-
-        return (int) $detail->transferEntries()->whereIn('transfer_destination', ['pribadi', 'vendor'])->sum('amount');
     }
 
     /**
@@ -191,34 +162,7 @@ class RealizationEntryService
             // Lock detail row to prevent race condition on cumulative validation
             $detail = PdoDetail::lockForUpdate()->findOrFail($detail->id);
 
-            // BR-REAL-005: item harus punya transfer ke kantong role aktor
-            $bucket = $this->bucketForGroup($detail, $group);
-            if ($bucket <= 0) {
-                abort(response()->json([
-                    'success' => false,
-                    'error'   => [
-                        'code'    => 'NO_BUCKET_FOR_ROLE',
-                        'message' => 'Item ini tidak ditransfer ke kantong yang bisa Anda realisasi.',
-                    ],
-                ], 403));
-            }
-
-            $realizedGroup = (int) $detail->realizationEntries()->where('settlement_group', $group)->sum('amount');
-            $newGroupTotal = $realizedGroup + $data['amount'];
-
-            // BR-REAL-002: realisasi kelompok ini tidak boleh melebihi kantong kelompok ini
-            if ($newGroupTotal > $bucket) {
-                $sisa = $bucket - $realizedGroup;
-                abort(response()->json([
-                    'success' => false,
-                    'error'   => [
-                        'code'    => 'REALIZATION_EXCEEDS_TRANSFER',
-                        'message' => "Total realisasi kantong ini ({$newGroupTotal}) melebihi transfer yang diterima kantong ini ({$bucket}). Sisa: {$sisa}.",
-                    ],
-                ], 422));
-            }
-
-            // BR-REAL-003: total realisasi SEMUA kantong tidak boleh melebihi amount yang disetujui
+            // BR-REAL-003: total realisasi tidak boleh melebihi anggaran yang disetujui
             $totalRealizedAll = (int) $detail->realizationEntries()->sum('amount');
             $newTotalAll      = $totalRealizedAll + $data['amount'];
             if ($newTotalAll > $detail->amount) {
@@ -307,23 +251,8 @@ class RealizationEntryService
             // Lock detail row to prevent race condition on cumulative validation
             $detail = PdoDetail::lockForUpdate()->findOrFail($detail->id);
 
-            // BR-REAL-002 & BR-REAL-003: validasi ulang jika amount berubah
+            // BR-REAL-003: validasi ulang jika amount berubah
             if (isset($data['amount'])) {
-                $bucket        = $this->bucketForGroup($detail, $entry->settlement_group);
-                $realizedGroup = (int) $detail->realizationEntries()
-                    ->where('settlement_group', $entry->settlement_group)
-                    ->where('id', '!=', $entry->id)
-                    ->sum('amount');
-                $newGroupTotal = $realizedGroup + $data['amount'];
-
-                if ($newGroupTotal > $bucket) {
-                    $sisa = $bucket - $realizedGroup;
-                    abort(response()->json([
-                        'success' => false,
-                        'error'   => ['code' => 'REALIZATION_EXCEEDS_TRANSFER', 'message' => "Total realisasi kantong ini ({$newGroupTotal}) melebihi transfer kantong ini ({$bucket}). Sisa: {$sisa}."],
-                    ], 422));
-                }
-
                 $totalRealizedAll = (int) $detail->realizationEntries()->where('id', '!=', $entry->id)->sum('amount');
                 $newTotalAll      = $totalRealizedAll + $data['amount'];
                 if ($newTotalAll > $detail->amount) {
