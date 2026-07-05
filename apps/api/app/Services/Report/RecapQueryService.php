@@ -15,6 +15,37 @@ class RecapQueryService
         $startDate  = $filters['start_date']  ?? null;
         $endDate    = $filters['end_date']    ?? null;
 
+        // ── Kantong split (PDO-level) ─────────────────────────────────────────
+        $kantong = DB::selectOne('
+            SELECT
+                COALESCE(SUM(CASE WHEN te.transfer_destination = \'rek_kebun\' THEN te.amount ELSE 0 END), 0)          AS transfer_kebun,
+                COALESCE(SUM(CASE WHEN te.transfer_destination IN (\'pribadi\', \'vendor\') THEN te.amount ELSE 0 END), 0) AS transfer_pribadi
+            FROM transfer_entries te
+            JOIN pdo_details pd ON pd.id = te.pdo_detail_id
+            JOIN pdo_headers ph ON ph.id = pd.pdo_header_id
+            WHERE ph.period_year = :year AND ph.period_month = :month AND ph.plantation_unit_id = :unit_id
+        ', ['year' => $year, 'month' => $month, 'unit_id' => $unitId]);
+
+        $realisasi = DB::selectOne('
+            SELECT
+                COALESCE(SUM(CASE WHEN re.funding_source IN (\'kas_kebun\', \'rekening_kebun\') THEN re.amount ELSE 0 END), 0) AS realisasi_kebun,
+                COALESCE(SUM(CASE WHEN re.funding_source = \'rekening_utama\' THEN re.amount ELSE 0 END), 0)                    AS realisasi_pribadi
+            FROM realization_entries re
+            JOIN pdo_details pd ON pd.id = re.pdo_detail_id
+            JOIN pdo_headers ph ON ph.id = pd.pdo_header_id
+            WHERE ph.period_year = :year AND ph.period_month = :month AND ph.plantation_unit_id = :unit_id
+                AND (CAST(:start_date AS date) IS NULL OR re.transaction_date >= CAST(:start_date2 AS date))
+                AND (CAST(:end_date   AS date) IS NULL OR re.transaction_date <= CAST(:end_date2   AS date))
+        ', [
+            'year'       => $year,
+            'month'      => $month,
+            'unit_id'    => $unitId,
+            'start_date'  => $startDate,
+            'start_date2' => $startDate,
+            'end_date'    => $endDate,
+            'end_date2'   => $endDate,
+        ]);
+
         $rows = DB::select('
             SELECT
                 ec.id            AS category_id,
@@ -67,10 +98,15 @@ class RecapQueryService
             'end_date2'    => $endDate,
         ]);
 
-        return $this->buildHierarchy($rows);
+        $transferKebun   = (int) ($kantong->transfer_kebun   ?? 0);
+        $transferPribadi = (int) ($kantong->transfer_pribadi ?? 0);
+        $realisasiKebun  = (int) ($realisasi->realisasi_kebun  ?? 0);
+        $realisasiPribadi= (int) ($realisasi->realisasi_pribadi ?? 0);
+
+        return $this->buildHierarchy($rows, $transferKebun, $transferPribadi, $realisasiKebun, $realisasiPribadi);
     }
 
-    private function buildHierarchy(array $rows): array
+    private function buildHierarchy(array $rows, int $transferKebun, int $transferPribadi, int $realisasiKebun, int $realisasiPribadi): array
     {
         $categories  = [];
         $catIndex    = [];
@@ -157,11 +193,17 @@ class RecapQueryService
         }
 
         return [
-            'grand_total_amount'       => $grandTotalAmount,
-            'grand_total_transfer'     => $grandTotalTransfer,
-            'grand_total_realization'  => $grandTotalRealization,
-            'grand_total_saldo'        => $grandTotalTransfer - $grandTotalRealization,
-            'categories'               => $categories,
+            'grand_total_amount'            => $grandTotalAmount,
+            'grand_total_transfer'          => $grandTotalTransfer,
+            'grand_total_realization'       => $grandTotalRealization,
+            'grand_total_saldo'             => $grandTotalTransfer - $grandTotalRealization,
+            'transfer_kebun'                => $transferKebun,
+            'transfer_pribadi'              => $transferPribadi,
+            'realisasi_kebun'               => $realisasiKebun,
+            'realisasi_pribadi'             => $realisasiPribadi,
+            'saldo_kebun'                   => $transferKebun - $realisasiKebun,
+            'saldo_pribadi'                 => $transferPribadi - $realisasiPribadi,
+            'categories'                    => $categories,
         ];
     }
 }

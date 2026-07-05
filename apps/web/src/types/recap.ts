@@ -39,6 +39,12 @@ export interface RecapResponse {
   grand_total_transfer: number
   grand_total_realization: number
   grand_total_saldo: number
+  transfer_kebun: number
+  transfer_pribadi: number
+  realisasi_kebun: number
+  realisasi_pribadi: number
+  saldo_kebun: number
+  saldo_pribadi: number
   categories: RecapCategory[]
 }
 

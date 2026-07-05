@@ -393,20 +393,52 @@ export function RekapitulasiPage() {
       ) : (
         <div className="card p-0 overflow-hidden">
           {/* Summary KPI */}
-          <div className="grid grid-cols-4 border-b border-line">
-            {[
-              { label: 'Total Pengajuan',   value: recap.grand_total_amount },
-              { label: 'Total Transfer',    value: recap.grand_total_transfer },
-              { label: 'Total Realisasi',   value: recap.grand_total_realization },
-              { label: 'Saldo',             value: recap.grand_total_saldo },
-            ].map((k) => (
-              <div key={k.label} className="p-4 text-center border-r border-line last:border-r-0">
-                <div className="text-[10px] font-[850] text-muted uppercase tracking-wider mb-1">{k.label}</div>
-                <div className={`text-[17px] font-[950] ${k.value < 0 ? 'text-red-600' : 'text-ink'}`}>
-                  {new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', maximumFractionDigits: 0 }).format(k.value)}
+          <div className="border-b border-line">
+            {/* Row 1: Total Pengajuan + Total Dana Di Transfer */}
+            <div className="grid grid-cols-2 border-b border-line">
+              {[
+                { label: 'Total Pengajuan',        value: recap.grand_total_amount },
+                { label: 'Total Dana Di Transfer',  value: recap.grand_total_transfer },
+              ].map((k) => (
+                <div key={k.label} className="p-4 text-center border-r border-line last:border-r-0">
+                  <div className="text-[10px] font-[850] text-muted uppercase tracking-wider mb-1">{k.label}</div>
+                  <div className="text-[17px] font-[950] text-ink">
+                    {new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', maximumFractionDigits: 0 }).format(k.value)}
+                  </div>
                 </div>
-              </div>
-            ))}
+              ))}
+            </div>
+            {/* Row 2: Kas Kebun (3 cols) + Pribadi/Vendor (3 cols) */}
+            <div className="grid grid-cols-6">
+              {/* Kas Kebun */}
+              {[
+                { label: 'Transfer',   value: recap.transfer_kebun,   group: 'Kas Kebun' },
+                { label: 'Realisasi',  value: recap.realisasi_kebun,  group: 'Kas Kebun' },
+                { label: 'Saldo',      value: recap.saldo_kebun,      group: 'Kas Kebun' },
+              ].map((k, i) => (
+                <div key={`kebun-${i}`} className="p-3 text-center border-r border-line border-t-2 border-t-[#1D9E75]">
+                  <div className="text-[9px] font-[700] text-[#0F6E56] uppercase tracking-wider mb-0.5">{k.group}</div>
+                  <div className="text-[10px] font-[850] text-muted uppercase tracking-wider mb-1">{k.label}</div>
+                  <div className={`text-[14px] font-[950] ${k.value < 0 ? 'text-red-600' : 'text-[#0F6E56]'}`}>
+                    {new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', maximumFractionDigits: 0 }).format(k.value)}
+                  </div>
+                </div>
+              ))}
+              {/* Pribadi / Vendor */}
+              {[
+                { label: 'Transfer',   value: recap.transfer_pribadi,   group: 'Pribadi / Vendor' },
+                { label: 'Realisasi',  value: recap.realisasi_pribadi,  group: 'Pribadi / Vendor' },
+                { label: 'Saldo',      value: recap.saldo_pribadi,      group: 'Pribadi / Vendor' },
+              ].map((k, i) => (
+                <div key={`pribadi-${i}`} className="p-3 text-center border-r border-line last:border-r-0 border-t-2 border-t-[#185FA5]">
+                  <div className="text-[9px] font-[700] text-[#185FA5] uppercase tracking-wider mb-0.5">{k.group}</div>
+                  <div className="text-[10px] font-[850] text-muted uppercase tracking-wider mb-1">{k.label}</div>
+                  <div className={`text-[14px] font-[950] ${k.value < 0 ? 'text-red-600' : 'text-[#185FA5]'}`}>
+                    {new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', maximumFractionDigits: 0 }).format(k.value)}
+                  </div>
+                </div>
+              ))}
+            </div>
           </div>
 
           {/* Hierarchical table */}
@@ -434,14 +466,14 @@ export function RekapitulasiPage() {
             {remainingKantong !== null && (
               <div className={`rounded-lg px-4 py-3 border ${remainingKantong <= 0 ? 'bg-red-50 border-red-300' : 'bg-amber-50 border-amber-300'}`}>
                 <p className={`text-xs font-bold uppercase tracking-wider mb-0.5 ${remainingKantong <= 0 ? 'text-red-500' : 'text-amber-600'}`}>
-                  Sisa Kantong
+                  Sisa Dana
                 </p>
                 <p className={`text-2xl font-black ${remainingKantong <= 0 ? 'text-red-700' : 'text-amber-800'}`}>
                   {fmt(remainingKantong)}
                 </p>
                 {totalKantong !== null && (
                   <p className={`text-xs mt-0.5 ${remainingKantong <= 0 ? 'text-red-500' : 'text-amber-600'}`}>
-                    dari total kantong {fmt(totalKantong)}
+                    dari total dana {fmt(totalKantong)}
                   </p>
                 )}
                 {remainingKantong <= 0 && (
