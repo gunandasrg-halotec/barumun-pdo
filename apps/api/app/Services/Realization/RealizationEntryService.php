@@ -93,9 +93,22 @@ class RealizationEntryService
 
         $remainingKantong = $totalKantong - $totalRealizedGroup;
 
+        $destinations = $group === RealizationEntry::SETTLEMENT_KEBUN
+            ? ['rek_kebun']
+            : ['pribadi', 'vendor'];
+
         $result = [];
         foreach ($details as $detail) {
             if ($detail->expenseItem?->is_deduction) {
+                continue;
+            }
+
+            // Item hanya tersedia untuk actor jika ada transfer ke kantong actor
+            // (transfer_destination per item menentukan kantong mana yang mendanai item ini).
+            $hasTransferToActorKantong = $detail->transferEntries->contains(
+                fn ($t) => in_array($t->transfer_destination, $destinations, true)
+            );
+            if (! $hasTransferToActorKantong) {
                 continue;
             }
 
@@ -189,7 +202,7 @@ class RealizationEntryService
             ], 403));
         }
 
-        return DB::transaction(function () use ($detail, $data, $actor, $group) {
+        return DB::transaction(function () use ($detail, $data, $actor, $group, $pdo) {
             // Lock detail row to prevent race condition on cumulative validation
             $detail = PdoDetail::lockForUpdate()->findOrFail($detail->id);
 
