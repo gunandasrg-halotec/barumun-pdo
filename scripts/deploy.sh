@@ -34,8 +34,8 @@ echo -e "${YELLOW}[4/4] Verifying...${NC}"
 sleep 10
 $COMPOSE ps
 
-web_code=$(curl -fsS -o /dev/null -w '%{http_code}' http://127.0.0.1:8080/ || echo 000)
-api_code=$(curl -fsS -o /dev/null -w '%{http_code}' -X POST http://127.0.0.1:8000/api/v1/auth/login \
+web_code=$(curl -sS -o /dev/null -w '%{http_code}' http://127.0.0.1:8080/ || echo 000)
+api_code=$(curl -sS -o /dev/null -w '%{http_code}' -X POST http://127.0.0.1:8000/api/v1/auth/login \
             -H 'Content-Type: application/json' -d '{}' || echo 000)
 echo "web=$web_code api=$api_code (api 422 = healthy validation response)"
 
