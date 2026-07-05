@@ -52,6 +52,12 @@ interface RealizationAvailableItem {
   saldo:          number
 }
 
+interface RealizationAvailableResponse {
+  items:             RealizationAvailableItem[]
+  remaining_kantong: number
+  total_kantong:     number
+}
+
 const FUNDING_LABEL: Record<string, string> = {
   kas_kebun: 'Kas Kebun', rekening_kebun: 'Rekening Kebun', rekening_utama: 'Rekening Utama',
 }
@@ -141,38 +147,41 @@ export function RekapitulasiPage() {
   const activePdo = pdoList?.[0]
 
   // ── Available items for active PDO ───────────────────────────────────────
-  const { data: availableItems } = useQuery({
+  const { data: availableData } = useQuery({
     queryKey: ['realizations-available', activePdo?.id],
     queryFn: async () => {
-      const res = await api.get<ApiResponse<RealizationAvailableItem[]>>(
+      const res = await api.get<ApiResponse<RealizationAvailableResponse>>(
         `/pdo/${activePdo!.id}/realizations/available`,
       )
       return res.data.data
     },
     enabled: !!activePdo?.id && inputOpen,
   })
+  const availableItems     = availableData?.items ?? []
+  const remainingKantong   = availableData?.remaining_kantong ?? null
+  const totalKantong       = availableData?.total_kantong ?? null
 
   // ── Input Realisasi form ─────────────────────────────────────────────────
   const { register, handleSubmit, watch, reset, setValue, formState: { errors } } = useForm<RealizationForm>({
     resolver: zodResolver(realizationSchema),
     defaultValues: {
       transaction_date: new Date().toISOString().split('T')[0],
-      payment_method:   isPribadiVendorRole(user) ? 'transfer' : 'tunai',
-      funding_source:   isPribadiVendorRole(user) ? 'rekening_utama' : 'kas_kebun',
+      payment_method:   isPribadiVendorRole(user ?? undefined) ? 'transfer' : 'tunai',
+      funding_source:   isPribadiVendorRole(user ?? undefined) ? 'rekening_utama' : 'kas_kebun',
     },
   })
 
   const selectedPaymentMethod = watch('payment_method')
 
   useEffect(() => {
-    if (isPribadiVendorRole(user)) {
+    if (isPribadiVendorRole(user ?? undefined)) {
       setValue('funding_source', 'rekening_utama')
       return
     }
     setValue('funding_source', selectedPaymentMethod === 'transfer' ? 'rekening_kebun' : 'kas_kebun')
   }, [user, selectedPaymentMethod, setValue])
 
-  const availablePaymentMethods = isPribadiVendorRole(user) ? ['transfer'] : ['tunai', 'transfer']
+  const availablePaymentMethods = isPribadiVendorRole(user ?? undefined) ? ['transfer'] : ['tunai', 'transfer']
 
   const saveRealization = useMutation({
     mutationFn: (data: RealizationForm) =>
@@ -421,18 +430,38 @@ export function RekapitulasiPage() {
               PDO: <span className="font-bold">{activePdo.pdo_number}</span>
             </div>
 
+            {/* Sisa kantong — prominent, shown as soon as data is loaded */}
+            {remainingKantong !== null && (
+              <div className={`rounded-lg px-4 py-3 border ${remainingKantong <= 0 ? 'bg-red-50 border-red-300' : 'bg-amber-50 border-amber-300'}`}>
+                <p className={`text-xs font-bold uppercase tracking-wider mb-0.5 ${remainingKantong <= 0 ? 'text-red-500' : 'text-amber-600'}`}>
+                  Sisa Kantong
+                </p>
+                <p className={`text-2xl font-black ${remainingKantong <= 0 ? 'text-red-700' : 'text-amber-800'}`}>
+                  {fmt(remainingKantong)}
+                </p>
+                {totalKantong !== null && (
+                  <p className={`text-xs mt-0.5 ${remainingKantong <= 0 ? 'text-red-500' : 'text-amber-600'}`}>
+                    dari total kantong {fmt(totalKantong)}
+                  </p>
+                )}
+                {remainingKantong <= 0 && (
+                  <p className="text-xs font-bold text-red-600 mt-1">Kantong habis — tidak bisa mencatat realisasi baru.</p>
+                )}
+              </div>
+            )}
+
             <div>
               <label className="label">Item Biaya</label>
               <select {...register('pdo_detail_id')} className="input-base">
                 <option value="">Pilih item...</option>
-                {availableItems?.map((d) => (
+                {availableItems.map((d) => (
                   <option key={d.pdo_detail_id} value={d.pdo_detail_id}>
                     {d.expense_item?.name ?? d.description} — Saldo: {fmt(d.saldo)}
                   </option>
                 ))}
               </select>
               {errors.pdo_detail_id && <p className="field-error">{errors.pdo_detail_id.message}</p>}
-              {availableItems?.length === 0 && (
+              {availableItems.length === 0 && (
                 <p className="text-xs text-muted mt-1">Tidak ada item yang bisa Anda realisasi untuk PDO ini.</p>
               )}
             </div>

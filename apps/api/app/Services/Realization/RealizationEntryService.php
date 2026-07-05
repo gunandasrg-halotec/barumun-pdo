@@ -6,6 +6,7 @@ use App\Models\AuditLog;
 use App\Models\PdoDetail;
 use App\Models\PdoHeader;
 use App\Models\RealizationEntry;
+use App\Models\TransferEntry;
 use App\Models\User;
 use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Support\Facades\DB;
@@ -60,21 +61,37 @@ class RealizationEntryService
     }
 
     /**
-     * BR-REAL-005: daftar item yang boleh direalisasi oleh actor, beserta
-     * saldo kantong (bucket - realisasi kelompok tsb). Item potongan
-     * dan item yang bucket-nya 0 untuk kelompok actor tidak disertakan.
+     * Daftar item yang boleh direalisasi oleh actor + sisa kantong PDO-level.
+     *
+     * Saldo per item = anggaran − total_realized (bisa negatif jika over-budget).
+     * Tampilkan semua item non-deduction; item dengan saldo ≤ 0 tetap ditampilkan
+     * agar user bisa melihat status over-budget, tapi tidak bisa dipilih (saldo ≤ 0).
+     *
+     * remaining_kantong = total transfer kantong actor − total realisasi kantong actor (PDO-level).
+     * Ini adalah hard ceiling: realisasi baru tidak boleh melebihi remaining_kantong.
+     *
      * GET /pdo/{pdo}/realizations/available
      */
     public function availableItemsForActor(PdoHeader $pdo, User $actor): array
     {
         $group = $actor->realizationSettlementGroup();
         if (! $group) {
-            return [];
+            return ['items' => [], 'remaining_kantong' => 0];
         }
 
         $details = $pdo->details()
             ->with(['expenseItem', 'transferEntries', 'realizationEntries'])
             ->get();
+
+        // Hitung kantong PDO-level untuk group ini
+        $totalKantong = $this->totalKantongForGroup($pdo, $group);
+
+        // Total realisasi seluruh item untuk group ini (PDO-level)
+        $totalRealizedGroup = (int) RealizationEntry::whereHas('pdoDetail', fn ($q) => $q->where('pdo_header_id', $pdo->id))
+            ->where('settlement_group', $group)
+            ->sum('amount');
+
+        $remainingKantong = $totalKantong - $totalRealizedGroup;
 
         $result = [];
         foreach ($details as $detail) {
@@ -82,14 +99,9 @@ class RealizationEntryService
                 continue;
             }
 
-            // Saldo = sisa anggaran yang belum direalisasi (bukan sisa transfer).
-            // Realisasi boleh melebihi transfer selama tidak melebihi anggaran (BR-REAL-003).
+            // Saldo per item: anggaran − total_realized untuk item ini (bisa negatif)
             $totalRealized = (int) $detail->realizationEntries->sum('amount');
             $saldo         = $detail->amount - $totalRealized;
-
-            if ($saldo <= 0) {
-                continue;
-            }
 
             $result[] = [
                 'pdo_detail_id'  => $detail->id,
@@ -101,7 +113,26 @@ class RealizationEntryService
             ];
         }
 
-        return $result;
+        return [
+            'items'             => $result,
+            'remaining_kantong' => $remainingKantong,
+            'total_kantong'     => $totalKantong,
+        ];
+    }
+
+    /**
+     * Total transfer ke kantong milik group ini untuk seluruh PDO.
+     * Kebun = rek_kebun; pribadi_vendor = pribadi + vendor.
+     */
+    private function totalKantongForGroup(PdoHeader $pdo, string $group): int
+    {
+        $destinations = $group === RealizationEntry::SETTLEMENT_KEBUN
+            ? ['rek_kebun']
+            : ['pribadi', 'vendor'];
+
+        return (int) TransferEntry::whereHas('pdoDetail', fn ($q) => $q->where('pdo_header_id', $pdo->id))
+            ->whereIn('transfer_destination', $destinations)
+            ->sum('amount');
     }
 
     /**
@@ -162,15 +193,21 @@ class RealizationEntryService
             // Lock detail row to prevent race condition on cumulative validation
             $detail = PdoDetail::lockForUpdate()->findOrFail($detail->id);
 
-            // BR-REAL-003: total realisasi tidak boleh melebihi anggaran yang disetujui
-            $totalRealizedAll = (int) $detail->realizationEntries()->sum('amount');
-            $newTotalAll      = $totalRealizedAll + $data['amount'];
-            if ($newTotalAll > $detail->amount) {
+            // BR-REAL-002: total realisasi kantong actor (PDO-level) tidak boleh melebihi
+            // total transfer ke kantong tersebut (saldo kas kebun / saldo pribadi-vendor).
+            $totalKantong       = $this->totalKantongForGroup($pdo, $group);
+            $totalRealizedGroup = (int) RealizationEntry::whereHas('pdoDetail', fn ($q) => $q->where('pdo_header_id', $pdo->id))
+                ->where('settlement_group', $group)
+                ->sum('amount');
+            $newGroupTotal = $totalRealizedGroup + $data['amount'];
+
+            if ($newGroupTotal > $totalKantong) {
+                $sisa = $totalKantong - $totalRealizedGroup;
                 abort(response()->json([
                     'success' => false,
                     'error'   => [
-                        'code'    => 'REALIZATION_EXCEEDS_BUDGET',
-                        'message' => "Total realisasi ({$newTotalAll}) melebihi jumlah yang disetujui ({$detail->amount}).",
+                        'code'    => 'REALIZATION_EXCEEDS_KANTONG',
+                        'message' => "Total realisasi kantong ini (Rp " . number_format($newGroupTotal, 0, ',', '.') . ") melebihi saldo kantong (Rp " . number_format($totalKantong, 0, ',', '.') . "). Sisa: Rp " . number_format($sisa, 0, ',', '.') . ".",
                     ],
                 ], 422));
             }

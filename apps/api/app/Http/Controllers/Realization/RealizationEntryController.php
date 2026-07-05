@@ -74,8 +74,8 @@ class RealizationEntryController extends Controller
     /** GET /pdo/{pdo}/realizations/available — item yang boleh direalisasi actor + saldo kantong */
     public function availableByPdo(Request $request, PdoHeader $pdo): JsonResponse
     {
-        $items = $this->service->availableItemsForActor($pdo, $request->user());
+        $result = $this->service->availableItemsForActor($pdo, $request->user());
 
-        return response()->json(['success' => true, 'data' => $items]);
+        return response()->json(['success' => true, 'data' => $result]);
     }
 }
