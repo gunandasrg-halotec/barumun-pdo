@@ -14,6 +14,7 @@ use App\Models\User;
 use App\Services\MasterData\MasterDataService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Http;
 use Tests\TestCase;
 
 class MasterDataServiceTest extends TestCase
@@ -255,7 +256,7 @@ class MasterDataServiceTest extends TestCase
         $this->assertEquals(ExpenseItem::MODE_AUTO_EXTERNAL, $item->mode_input);
     }
 
-    public function test_legacy_base_payroll_external_role_is_migrated_on_auto_external_update_without_mapping_payload(): void
+    public function test_base_payroll_external_role_is_kept_on_auto_external_update_without_mapping_payload(): void
     {
         $category = ExpenseCategory::factory()->create(['company_id' => $this->companyId]);
         $sub      = ExpenseSubcategory::factory()->create(['category_id' => $category->id]);
@@ -276,8 +277,8 @@ class MasterDataServiceTest extends TestCase
 
         $item->refresh();
 
-        $this->assertSame(ExpenseItem::PAYROLL_ROLE_BHL, $item->external_component_key);
-        $this->assertNull($item->external_role);
+        $this->assertNull($item->external_component_key);
+        $this->assertSame(ExpenseItem::PAYROLL_ROLE_BHL, $item->external_role);
     }
 
     public function test_auto_external_reversion_clears_draft_external_snapshot_but_keeps_values(): void
@@ -358,6 +359,8 @@ class MasterDataServiceTest extends TestCase
             'external_payload' => ['status' => 'ok'],
         ]);
 
+        $this->fakePayrollRoles();
+
         $this->service->updateItem($item, [
             'mode_input' => ExpenseItem::MODE_AUTO_EXTERNAL,
             'external_source_system' => ExpenseItem::EXTERNAL_SOURCE_PAYROLL,
@@ -392,6 +395,23 @@ class MasterDataServiceTest extends TestCase
             'entity_type' => 'expense_categories',
             'action'      => 'INSERT',
             'actor_user_id'    => $this->adminUser->id,
+        ]);
+    }
+
+    private function fakePayrollRoles(): void
+    {
+        config()->set('services.payroll_internal_api.base_url', 'http://payroll.test');
+        config()->set('services.payroll_internal_api.token', 'test-payroll-token');
+
+        Http::fake([
+            'http://payroll.test/internal/payroll-cost-component-options*' => Http::response([
+                'data' => [
+                    'options' => [
+                        ['component_key' => ExpenseItem::PAYROLL_ROLE_PEMANEN, 'label' => 'Pemanen'],
+                        ['component_key' => ExpenseItem::PAYROLL_ROLE_BHL, 'label' => 'BHL'],
+                    ],
+                ],
+            ], 200),
         ]);
     }
 

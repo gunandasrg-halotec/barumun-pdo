@@ -17,6 +17,7 @@ class PdoDetail extends Model
         'source_system',
         'component',
         'component_keys',
+        'role',
         'block_keys',
     ];
 
@@ -178,6 +179,7 @@ class PdoDetail extends Model
             'source_system' => $item->external_source_system,
             'component' => $item->external_component,
             'component_keys' => $this->resolveCanonicalExternalComponentKeys($item),
+            'role' => ExpenseItem::supportsPayrollRole($item->external_component) ? $this->normalizeExternalComponentKey($item->external_role) : null,
             'block_keys' => $item->resolveExternalBlockKeysForPlantationUnit($this->currentPdoHeader()?->plantation_unit_id),
         ];
     }
@@ -198,10 +200,6 @@ class PdoDetail extends Model
             return [$item->external_component_key];
         }
 
-        if (ExpenseItem::supportsPayrollRole($item->external_component) && filled($item->external_role)) {
-            return [$item->external_role];
-        }
-
         return null;
     }
 
@@ -215,8 +213,8 @@ class PdoDetail extends Model
             'component_keys' => $this->normalizeStringList(
                 $payload['component_keys']
                     ?? (filled($payload['component_key'] ?? null) ? [$payload['component_key']] : null)
-                    ?? (filled($payload['role'] ?? null) ? [$payload['role']] : null)
             ),
+            'role' => $this->normalizeExternalComponentKey($payload['role'] ?? null),
             'block_keys' => $this->normalizeStringList($payload['block_keys'] ?? null),
         ];
     }
@@ -261,6 +259,17 @@ class PdoDetail extends Model
         }
 
         return $normalized === [] ? null : $normalized;
+    }
+
+    private function normalizeExternalComponentKey(mixed $value): ?string
+    {
+        if (! is_string($value)) {
+            return null;
+        }
+
+        $trimmed = trim($value);
+
+        return $trimmed === '' ? null : $trimmed;
     }
 
     private function currentExpenseItem(): ?ExpenseItem

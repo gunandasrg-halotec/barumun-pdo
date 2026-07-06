@@ -35,6 +35,7 @@ const schema = z.object({
     'additional_wage_type_total',
   ]).nullable().optional(),
   external_component_keys:      z.array(z.string()).nullable().optional(),
+  external_role:                z.string().nullable().optional(),
   external_block_keys:          z.array(z.string()).nullable().optional(),
   external_block_scopes:        z.array(z.object({
     plantation_unit_id: z.string().uuid('Kebun wajib dipilih'),
@@ -123,6 +124,7 @@ export function ItemFormPage() {
       external_source_system: null,
       external_component: null,
       external_component_keys: null,
+      external_role: null,
       external_block_keys: null,
       external_block_scopes: null,
       split_transfer: false,
@@ -139,13 +141,18 @@ export function ItemFormPage() {
   const modeInput      = useWatch({ control, name: 'mode_input' })
   const extComponent   = useWatch({ control, name: 'external_component' })
   const selectedComponentKeys = useWatch({ control, name: 'external_component_keys' })
+  const selectedExternalRole = useWatch({ control, name: 'external_role' })
   const blockScopes    = useWatch({ control, name: 'external_block_scopes' })
   const routineUnitIds = useWatch({ control, name: 'routine_plantation_unit_ids' })
   const splitUnitIds   = useWatch({ control, name: 'split_transfer_plantation_unit_ids' })
   const isAutoExternal = modeInput === 'auto_external'
   const componentNeedsOptions = extComponent ? payrollComponentsWithOptions.has(extComponent as PayrollComponentWithOptions) : false
-  const externalComponentOptionsQuery = usePayrollComponentOptions(extComponent && isAutoExternal ? extComponent : null)
+  const externalComponentOptionsQuery = usePayrollComponentOptions(
+    extComponent && isAutoExternal && componentNeedsOptions ? extComponent : null,
+  )
+  const externalRoleOptionsQuery = usePayrollComponentOptions(extComponent && isAutoExternal ? extComponent : null, { filter: 'roles' })
   const componentOptions = externalComponentOptionsQuery.data?.options ?? []
+  const roleOptions = externalRoleOptionsQuery.data?.options ?? []
   const optionsLoaded = componentNeedsOptions
     ? componentOptions.length > 0 || externalComponentOptionsQuery.isSuccess
     : true
@@ -191,6 +198,7 @@ export function ItemFormPage() {
 
     if (previousComponent.current !== extComponent) {
       setValue('external_component_keys', null)
+      setValue('external_role', null)
       setValue('external_block_keys', null)
       setValue('external_block_scopes', null)
     }
@@ -201,6 +209,9 @@ export function ItemFormPage() {
   const availableComponentKeys = useMemo(() => new Set(
     componentOptions.map((option) => option.component_key),
   ), [componentOptions])
+  const availableRoles = useMemo(() => new Set(
+    roleOptions.map((option) => option.component_key),
+  ), [roleOptions])
 
   useEffect(() => {
     if (!componentNeedsOptions || !optionsLoaded) return
@@ -210,6 +221,14 @@ export function ItemFormPage() {
       setValue('external_component_keys', nextKeys.length > 0 ? nextKeys : null)
     }
   }, [componentNeedsOptions, optionsLoaded, availableComponentKeys, getValues, setValue])
+
+  useEffect(() => {
+    if (!isAutoExternal || !extComponent || !externalRoleOptionsQuery.isSuccess) return
+    const currentRole = getValues('external_role')
+    if (currentRole && !availableRoles.has(currentRole)) {
+      setValue('external_role', null)
+    }
+  }, [isAutoExternal, extComponent, externalRoleOptionsQuery.isSuccess, availableRoles, getValues, setValue])
 
   useEffect(() => {
     if (existing) {
@@ -225,17 +244,16 @@ export function ItemFormPage() {
         split_transfer_plantation_unit_ids?: string[] | null
         routine_plantation_unit_ids?: string[] | null
       }
-      const legacyRole = ext.external_component === 'base_payroll_total' && !ext.external_component_key ? ext.external_role : null
-      const normalizedExternalRole = legacyRole ? legacyRole : null
       const normalizedComponentKeys = ext.external_component_keys && ext.external_component_keys.length > 0
         ? ext.external_component_keys
-        : (ext.external_component_key ? [ext.external_component_key] : (normalizedExternalRole ? [normalizedExternalRole] : null))
+        : (ext.external_component_key ? [ext.external_component_key] : null)
       reset({
         ...existing,
         notes: existing.notes ?? '',
         external_source_system: ext.external_source_system === 'payroll' ? 'payroll' : null,
         external_component: isPayrollComponent(ext.external_component) ? ext.external_component : null,
         external_component_keys: normalizedComponentKeys,
+        external_role: ext.external_role ?? null,
         external_block_keys: ext.external_block_keys ?? null,
         external_block_scopes: ext.external_block_scopes ?? null,
         split_transfer:                     ext.split_transfer ?? false,
@@ -254,6 +272,7 @@ export function ItemFormPage() {
     setValue('external_source_system', null)
     setValue('external_component', null)
     setValue('external_component_keys', null)
+    setValue('external_role', null)
     setValue('external_block_keys', null)
     setValue('external_block_scopes', null)
   }, [isAutoExternal, setValue])
@@ -265,6 +284,18 @@ export function ItemFormPage() {
     })),
     [componentOptions],
   )
+  const roleSelectOptions = useMemo<SelectOption[]>(
+    () => roleOptions.map((option) => ({
+      value: option.component_key,
+      label: option.label,
+    })),
+    [roleOptions],
+  )
+  const selectedRoleOption = useMemo<SelectOption | null>(() => {
+    if (!selectedExternalRole) return null
+    return roleSelectOptions.find((option) => option.value === selectedExternalRole)
+      ?? { value: selectedExternalRole, label: selectedExternalRole }
+  }, [roleSelectOptions, selectedExternalRole])
   const selectedComponentKeyOptions = useMemo<SelectOption[]>(
     () => (selectedComponentKeys ?? []).map((key) => (
       componentKeyOptions.find((option) => option.value === key)
@@ -345,6 +376,7 @@ export function ItemFormPage() {
           external_source_system: undefined,
           external_component: undefined,
           external_component_keys: undefined,
+          external_role: undefined,
           external_block_keys: undefined,
           external_block_scopes: undefined,
         }
@@ -354,6 +386,7 @@ export function ItemFormPage() {
           external_component_keys: payrollComponentsWithOptions.has(data.external_component as PayrollComponentWithOptions)
             ? data.external_component_keys ?? null
             : null,
+          external_role: data.external_role ?? null,
           external_block_keys: null,
           external_block_scopes: data.external_component === 'maintenance_total'
             ? data.external_block_scopes ?? null
@@ -384,6 +417,7 @@ export function ItemFormPage() {
           'external_source_system',
           'external_component',
           'external_component_keys',
+          'external_role',
           'external_block_keys',
           'external_block_scopes',
           'split_transfer',
@@ -414,6 +448,9 @@ export function ItemFormPage() {
   ))
   const componentOptionsErrorMessage = componentNeedsOptions && externalComponentOptionsQuery.isError
     ? `Gagal memuat opsi Payroll: ${getApiErrorMessage(externalComponentOptionsQuery.error)}`
+    : ''
+  const roleOptionsErrorMessage = externalRoleOptionsQuery.isError
+    ? `Gagal memuat role Payroll: ${getApiErrorMessage(externalRoleOptionsQuery.error)}`
     : ''
 
   return (
@@ -533,6 +570,42 @@ export function ItemFormPage() {
                   <p className="field-error">{componentOptionsErrorMessage}</p>
                 )}
                 {errors.external_component_keys && <p className="field-error">{errors.external_component_keys.message}</p>}
+              </div>
+            )}
+
+            {extComponent && (
+              <div>
+                <div className="flex items-center justify-between gap-3">
+                  <label className="label">Role Payroll</label>
+                  <button type="button" className="text-xs text-muted hover:text-ink" onClick={() => setValue('external_role', null)}>
+                    Semua Role
+                  </button>
+                </div>
+                <div className="mt-2 rounded-card border border-line bg-white">
+                  {externalRoleOptionsQuery.isLoading ? (
+                    <p className="px-3 py-2 text-sm text-muted">Memuat role payroll...</p>
+                  ) : (
+                    <div className="p-3">
+                      <AsyncSelect
+                        inputId="role-payroll"
+                        aria-label="Role Payroll"
+                        cacheOptions
+                        defaultOptions={roleSelectOptions}
+                        value={selectedRoleOption}
+                        loadOptions={async (inputValue) => {
+                          const query = inputValue.trim().toLowerCase()
+                          return roleSelectOptions.filter((option) => option.label.toLowerCase().includes(query))
+                        }}
+                        onChange={(nextValue) => setValue('external_role', (nextValue as SelectOption | null)?.value ?? null)}
+                        placeholder="Pilih role payroll..."
+                        classNamePrefix="react-select"
+                        isDisabled={roleSelectOptions.length === 0}
+                      />
+                    </div>
+                  )}
+                </div>
+                {roleOptionsErrorMessage && <p className="field-error">{roleOptionsErrorMessage}</p>}
+                {errors.external_role && <p className="field-error">{errors.external_role.message}</p>}
               </div>
             )}
 

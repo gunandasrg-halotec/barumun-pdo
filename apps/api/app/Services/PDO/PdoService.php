@@ -508,6 +508,9 @@ class PdoService
         $componentKeys = ExpenseItem::supportsExternalOption($item->external_component)
             ? ($this->normalizeStringList($detail->external_component_keys) ?? $this->resolveCanonicalExternalComponentKeysFromItem($item))
             : null;
+        $role = ExpenseItem::supportsPayrollRole($item->external_component)
+            ? $this->normalizeExternalComponentKey($item->external_role)
+            : null;
         $blockKeys = ExpenseItem::supportsMaintenanceBlockSelectors($item->external_component)
             ? $this->normalizeStringList($detail->external_block_keys)
             : null;
@@ -520,15 +523,16 @@ class PdoService
             estateExternalId: $pdo->plantationUnit->payroll_estate_external_id,
             component: $item->external_component,
             componentKeys: $componentKeys,
+            role: $role,
             blockKeys: $blockKeys,
         );
 
         if ($response->successful()) {
-            return DB::transaction(function () use ($actor, $detail, $item, $pdo, $response, $componentKeys, $blockKeys) {
+            return DB::transaction(function () use ($actor, $detail, $item, $pdo, $response, $componentKeys, $role, $blockKeys) {
                 $old = $detail->toArray();
                 $payload = array_merge($response->json(), $detail->currentExternalMappingFingerprint());
                 $payload['component_key'] = $componentKeys !== null && count($componentKeys) === 1 ? $componentKeys[0] : null;
-                $payload['role'] = null;
+                $payload['role'] = $role;
                 $usesSelectorSets = ($componentKeys !== null && count($componentKeys) > 1)
                     || ($blockKeys !== null && count($blockKeys) > 0);
 
@@ -682,11 +686,18 @@ class PdoService
             return [$item->external_component_key];
         }
 
-        if (ExpenseItem::supportsPayrollRole($item->external_component) && filled($item->external_role)) {
-            return [$item->external_role];
+        return null;
+    }
+
+    private function normalizeExternalComponentKey(mixed $value): ?string
+    {
+        if (! is_string($value)) {
+            return null;
         }
 
-        return null;
+        $trimmed = trim($value);
+
+        return $trimmed === '' ? null : $trimmed;
     }
 
     private function requestPayrollCost(
@@ -695,6 +706,7 @@ class PdoService
         string $estateExternalId,
         string $component,
         ?array $componentKeys,
+        ?string $role,
         ?array $blockKeys,
     ): Response {
         $baseUrl = rtrim((string) config('services.payroll_internal_api.base_url', ''), '/');
@@ -708,6 +720,7 @@ class PdoService
                 'component' => $component,
                 'component_key' => $componentKeys !== null && count($componentKeys) === 1 ? $componentKeys[0] : null,
                 'component_keys' => $componentKeys,
+                'role' => $role,
                 'block_keys' => $blockKeys,
             ]);
 
@@ -731,6 +744,7 @@ class PdoService
                     'estate_external_id' => $estateExternalId,
                     'component' => $component,
                     'component_keys' => $componentKeys,
+                    'role' => $role,
                     'block_keys' => $blockKeys,
                 ], static fn (mixed $value): bool => $value !== null && $value !== '' && $value !== []));
         } catch (ConnectionException) {
@@ -741,6 +755,7 @@ class PdoService
                 'component' => $component,
                 'component_key' => $componentKeys !== null && count($componentKeys) === 1 ? $componentKeys[0] : null,
                 'component_keys' => $componentKeys,
+                'role' => $role,
                 'block_keys' => $blockKeys,
             ]);
 
@@ -783,6 +798,7 @@ class PdoService
             'external_component_key' => $item?->external_component_key,
             'external_component_key_canonical' => (($keys = $this->resolveCanonicalExternalComponentKeysFromItem($item)) !== null && count($keys) === 1) ? $keys[0] : null,
             'external_component_keys' => $this->normalizeStringList($item?->external_component_keys),
+            'external_role' => $item?->external_role,
             'external_block_keys' => $item?->resolveExternalBlockKeysForPlantationUnit($pdo->plantation_unit_id),
         ], $extra);
     }

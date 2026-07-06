@@ -134,6 +134,7 @@ describe('ItemFormPage Payroll component options', () => {
 
   const mockGet = (responses: {
     componentOptions?: Record<string, PayrollOption[]>
+    roleOptions?: Record<string, PayrollOption[]>
     blockOptions?: Record<string, PayrollOption[]>
     expenseItem?: Record<string, unknown> | null
     optionsError?: Record<string, Error>
@@ -161,7 +162,7 @@ describe('ItemFormPage Payroll component options', () => {
     if (url === '/payroll-cost-component-options') {
       const component = config?.params?.component
       const filter = (config?.params as { filter?: string } | undefined)?.filter
-      if (responses.optionsError && component && responses.optionsError[component]) {
+      if (filter !== 'roles' && responses.optionsError && component && responses.optionsError[component]) {
         return Promise.reject(responses.optionsError[component])
       }
 
@@ -172,7 +173,9 @@ describe('ItemFormPage Payroll component options', () => {
             component,
             options: filter === 'blocks'
               ? responses.blockOptions?.[component ?? ''] ?? []
-              : responses.componentOptions?.[component ?? ''] ?? [],
+              : (filter === 'roles'
+                ? responses.roleOptions?.[component ?? ''] ?? []
+                : responses.componentOptions?.[component ?? ''] ?? []),
           },
         },
       })
@@ -264,6 +267,10 @@ describe('ItemFormPage Payroll component options', () => {
 
       if (url === '/payroll-cost-component-options') {
         const component = config?.params?.component
+        const filter = (config?.params as { filter?: string } | undefined)?.filter
+        if (filter === 'roles') {
+          return Promise.resolve({ data: { success: true, data: { component, options: [] } } })
+        }
         if (component === 'base_payroll_total') {
           return new Promise((resolve) => { resolveOptions = resolve })
         }
@@ -312,6 +319,70 @@ describe('ItemFormPage Payroll component options', () => {
     expect(await screen.findByText(/Gagal memuat opsi Payroll:/i)).toBeInTheDocument()
   })
 
+  it('tetap bisa submit saat opsi role payroll gagal dan role kosong', async () => {
+    const user = userEvent.setup()
+    const post = vi.spyOn(api, 'post').mockResolvedValue({ data: { success: true, data: {} } })
+    const subcategoryId = '11111111-1111-4111-8111-111111111111'
+
+    vi.spyOn(api, 'get').mockImplementation((url: string, config?: { params?: { component?: string; filter?: string } }) => {
+      if (url === '/expense-subcategories') {
+        return Promise.resolve({
+          data: {
+            success: true,
+            data: testSubcategories.map((subcategory) => ({ ...subcategory, id: subcategoryId })),
+          },
+        })
+      }
+
+      if (url === '/plantation-units') {
+        return Promise.resolve({ data: { success: true, data: [] } })
+      }
+
+      if (url === '/payroll-cost-component-options') {
+        const component = config?.params?.component
+        const filter = config?.params?.filter
+
+        if (filter === 'roles') {
+          return Promise.reject(new Error('Payroll roles unreachable'))
+        }
+
+        return Promise.resolve({
+          data: {
+            success: true,
+            data: {
+              component,
+              options: [
+                { component_key: 'pemanen', label: 'Pemanen' },
+              ],
+            },
+          },
+        })
+      }
+
+      return Promise.resolve({ data: { success: true, data: [] } })
+    })
+
+    renderItemForm('/master/item/buat')
+
+    await screen.findByRole('option', { name: /SUB-1/i })
+    await user.selectOptions(screen.getByRole('combobox', { name: /Sub-Kategori Induk/i }), [subcategoryId])
+    await user.type(screen.getByPlaceholderText('A1.001'), 'EXT-ROLE-EMPTY')
+    await user.type(screen.getByPlaceholderText('Pupuk Urea'), 'Gaji semua role')
+    await user.selectOptions(screen.getByRole('combobox', { name: /Mode Input/i }), ['auto_external'])
+    await user.selectOptions(screen.getByRole('combobox', { name: /Component Payroll/i }), ['base_payroll_total'])
+
+    const submit = await screen.findByRole('button', { name: /Simpan/i })
+    await waitFor(() => expect(submit).not.toBeDisabled())
+    expect(await screen.findByText(/Gagal memuat role Payroll:/i)).toBeInTheDocument()
+
+    await user.click(submit)
+
+    await waitFor(() => expect(post).toHaveBeenCalledWith('/expense-items', expect.objectContaining({
+      external_component: 'base_payroll_total',
+      external_role: null,
+    })))
+  })
+
   it('menghapus key lama yang tidak valid dari opsi Payroll pada edit', async () => {
     mockGet({
       componentOptions: {
@@ -339,9 +410,9 @@ describe('ItemFormPage Payroll component options', () => {
     expect(bhl).toHaveAttribute('aria-pressed', 'false')
   })
 
-  it('mengisi component key dari legacy external role saat edit base payroll lama', async () => {
+  it('mengisi role payroll dari external role saat edit', async () => {
     mockGet({
-      componentOptions: {
+      roleOptions: {
         base_payroll_total: [
           { component_key: 'pemanen', label: 'Pemanen' },
           { component_key: 'bhl', label: 'BHL' },

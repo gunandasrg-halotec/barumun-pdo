@@ -18,7 +18,7 @@ class PayrollCostComponentOptionsController extends Controller
     {
         $validated = validator($request->query(), [
             'component' => ['required', 'string'],
-            'filter' => ['nullable', 'string', Rule::in(['blocks'])],
+            'filter' => ['nullable', 'string', Rule::in(['blocks', 'roles'])],
             'estate_external_id' => ['nullable', 'string', 'max:255'],
             'q' => ['nullable', 'string', 'max:255'],
             'limit' => ['nullable', 'integer', 'min:1', 'max:100'],
@@ -34,7 +34,13 @@ class PayrollCostComponentOptionsController extends Controller
         $search = $validated['q'] ?? null;
         $limit = $validated['limit'] ?? null;
 
-        if (! in_array($component, ExpenseItem::optionedPayrollComponents(), true)) {
+        if ($filter === 'roles') {
+            $allowedComponents = ExpenseItem::payrollComponents();
+        } else {
+            $allowedComponents = ExpenseItem::optionedPayrollComponents();
+        }
+
+        if (! in_array($component, $allowedComponents, true)) {
             return response()->json([
                 'success' => false,
                 'error' => [

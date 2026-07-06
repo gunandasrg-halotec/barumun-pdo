@@ -128,7 +128,7 @@ class ExpenseItem extends Model
 
     public static function supportsPayrollRole(?string $component): bool
     {
-        return $component === self::PAYROLL_COMPONENT_BASE_PAYROLL_TOTAL;
+        return is_string($component) && in_array($component, self::PAYROLL_COMPONENT_OPTIONS, true);
     }
 
     public static function optionedPayrollComponents(): array

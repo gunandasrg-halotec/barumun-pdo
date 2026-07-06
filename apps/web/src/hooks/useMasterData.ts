@@ -11,7 +11,7 @@ type PayrollComponentOption = {
 }
 
 export type PayrollComponentOptionsQuery = {
-  filter?: 'blocks'
+  filter?: 'blocks' | 'roles'
   estateExternalId?: string | null
   q?: string
   limit?: number

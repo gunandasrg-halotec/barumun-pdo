@@ -70,6 +70,10 @@ class PdoApprovalService
             abort(response()->json(['success' => false, 'error' => ['code' => 'PDO_EMPTY', 'message' => 'PDO tidak bisa disubmit karena tidak ada item dengan jumlah > 0.']], 422));
         }
 
+        if ($activeAutoExternalDetails->contains(fn ($detail) => $detail->needs_pull)) {
+            abort(response()->json(['success' => false, 'error' => ['code' => 'AUTO_EXTERNAL_NEEDS_PULL', 'message' => 'Data payroll belum diambil atau sudah tidak sesuai mapping.']], 422));
+        }
+
         // [D] Semua baris wajib memiliki deskripsi tidak kosong
         $missingDesc = $details
             ->filter(fn ($detail) => $detail->description === null || $detail->description === '')

@@ -143,6 +143,40 @@ class PayrollCostComponentOptionsTest extends TestCase
         });
     }
 
+    public function test_role_options_are_forwarded_for_any_payroll_component(): void
+    {
+        $admin = $this->adminUser();
+        $this->setPayrollApiConfig('http://payroll.test', 'test-payroll-token');
+
+        Http::fake([
+            'http://payroll.test/internal/payroll-cost-component-options*' => Http::response([
+                'data' => [
+                    'options' => [
+                        ['component_key' => 'pemanen', 'label' => 'Pemanen'],
+                        ['component_key' => 'bhl', 'label' => 'BHL'],
+                    ],
+                ],
+            ], 200),
+        ]);
+
+        Sanctum::actingAs($admin);
+
+        $response = $this->getJson('/api/v1/payroll-cost-component-options?component='
+            .ExpenseItem::PAYROLL_COMPONENT_HARVEST_TBS_TOTAL
+            .'&filter=roles');
+
+        $response->assertOk()
+            ->assertJsonPath('success', true)
+            ->assertJsonPath('data.component', ExpenseItem::PAYROLL_COMPONENT_HARVEST_TBS_TOTAL)
+            ->assertJsonPath('data.options.0.component_key', 'pemanen');
+
+        Http::assertSent(function ($request): bool {
+            return str_starts_with($request->url(), 'http://payroll.test/internal/payroll-cost-component-options')
+                && $request['component'] === ExpenseItem::PAYROLL_COMPONENT_HARVEST_TBS_TOTAL
+                && $request['filter'] === 'roles';
+        });
+    }
+
     private function adminUser(): User
     {
         $company = Company::factory()->create();

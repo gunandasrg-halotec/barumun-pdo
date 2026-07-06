@@ -188,7 +188,7 @@ class PdoExternalCostPullTest extends TestCase
         });
     }
 
-    public function test_pull_base_payroll_with_selected_component_key_does_not_send_legacy_role_param(): void
+    public function test_pull_base_payroll_with_selected_component_key_and_role_sends_both_params(): void
     {
         $this->setPayrollApiConfig('http://payroll.test', 'test-payroll-token');
 
@@ -215,12 +215,12 @@ class PdoExternalCostPullTest extends TestCase
         $this->postJson("/api/v1/pdo/{$pdo->id}/details/{$detail->id}/pull-external-cost")->assertOk()
             ->assertJsonPath('data.external_component_key', 'bhl')
             ->assertJsonPath('data.external_payload.component_key', 'bhl')
-            ->assertJsonPath('data.external_payload.role', null);
+            ->assertJsonPath('data.external_payload.role', ExpenseItem::PAYROLL_ROLE_PEMANEN);
 
         $detail->refresh();
         $this->assertSame('bhl', $detail->external_component_key);
         $this->assertSame('bhl', $detail->external_payload['component_key']);
-        $this->assertNull($detail->external_payload['role'] ?? null);
+        $this->assertSame(ExpenseItem::PAYROLL_ROLE_PEMANEN, $detail->external_payload['role']);
 
         Http::assertSent(function ($request): bool {
             return str_starts_with($request->url(), 'http://payroll.test/internal/payroll-costs')
@@ -231,11 +231,11 @@ class PdoExternalCostPullTest extends TestCase
                 && $request['component'] === ExpenseItem::PAYROLL_COMPONENT_BASE_PAYROLL_TOTAL
                 && $request['component_keys'] === ['bhl']
                 && ! isset($request['component_key'])
-                && ! isset($request['role']);
+                && $request['role'] === ExpenseItem::PAYROLL_ROLE_PEMANEN;
         });
     }
 
-    public function test_pull_base_payroll_with_legacy_role_maps_to_component_key_request_param(): void
+    public function test_pull_base_payroll_with_role_sends_role_request_param(): void
     {
         $this->setPayrollApiConfig('http://payroll.test', 'test-payroll-token');
 
@@ -265,15 +265,15 @@ class PdoExternalCostPullTest extends TestCase
 
         $this->postJson("/api/v1/pdo/{$pdo->id}/details/{$detail->id}/pull-external-cost")
             ->assertOk()
-            ->assertJsonPath('data.external_component_key', ExpenseItem::PAYROLL_ROLE_PEMANEN)
-            ->assertJsonPath('data.external_payload.component_key', ExpenseItem::PAYROLL_ROLE_PEMANEN)
-            ->assertJsonPath('data.external_payload.role', null);
+            ->assertJsonPath('data.external_component_key', null)
+            ->assertJsonPath('data.external_payload.component_key', null)
+            ->assertJsonPath('data.external_payload.role', ExpenseItem::PAYROLL_ROLE_PEMANEN);
 
         $detail->refresh();
 
-        $this->assertSame(ExpenseItem::PAYROLL_ROLE_PEMANEN, $detail->external_component_key);
-        $this->assertSame(ExpenseItem::PAYROLL_ROLE_PEMANEN, $detail->external_payload['component_key']);
-        $this->assertNull($detail->external_payload['role'] ?? null);
+        $this->assertNull($detail->external_component_key);
+        $this->assertNull($detail->external_payload['component_key']);
+        $this->assertSame(ExpenseItem::PAYROLL_ROLE_PEMANEN, $detail->external_payload['role']);
 
         Http::assertSent(function ($request): bool {
             return str_starts_with($request->url(), 'http://payroll.test/internal/payroll-costs')
@@ -281,9 +281,9 @@ class PdoExternalCostPullTest extends TestCase
                 && $request['month'] === 6
                 && $request['estate_external_id'] === 'EST-001'
                 && $request['component'] === ExpenseItem::PAYROLL_COMPONENT_BASE_PAYROLL_TOTAL
-                && $request['component_keys'] === [ExpenseItem::PAYROLL_ROLE_PEMANEN]
+                && ! isset($request['component_keys'])
                 && ! isset($request['component_key'])
-                && ! isset($request['role']);
+                && $request['role'] === ExpenseItem::PAYROLL_ROLE_PEMANEN;
         });
     }
 
@@ -320,7 +320,7 @@ class PdoExternalCostPullTest extends TestCase
         $this->assertNull($detail->external_payload['role'] ?? null);
     }
 
-    public function test_pull_maintenance_component_passes_component_key_without_role(): void
+    public function test_pull_maintenance_component_passes_component_key_and_role(): void
     {
         $this->setPayrollApiConfig('http://payroll.test', 'test-payroll-token');
 
@@ -355,14 +355,14 @@ class PdoExternalCostPullTest extends TestCase
             ->assertJsonPath('data.external_component', ExpenseItem::PAYROLL_COMPONENT_MAINTENANCE_TOTAL)
             ->assertJsonPath('data.external_component_key', 'pekerjaan-001')
             ->assertJsonPath('data.external_payload.component_key', 'pekerjaan-001')
-            ->assertJsonPath('data.external_payload.role', null);
+            ->assertJsonPath('data.external_payload.role', ExpenseItem::PAYROLL_ROLE_PEMANEN);
 
         Http::assertSent(function ($request): bool {
             return str_starts_with($request->url(), 'http://payroll.test/internal/payroll-costs')
                 && $request['component'] === ExpenseItem::PAYROLL_COMPONENT_MAINTENANCE_TOTAL
                 && $request['component_keys'] === ['pekerjaan-001']
                 && ! isset($request['component_key'])
-                && ! isset($request['role']);
+                && $request['role'] === ExpenseItem::PAYROLL_ROLE_PEMANEN;
         });
     }
 
@@ -490,7 +490,7 @@ class PdoExternalCostPullTest extends TestCase
         $this->assertSame(['BLK-001', 'BLK-002'], $detail->external_block_keys);
     }
 
-    public function test_pull_non_option_component_does_not_send_component_key_or_role(): void
+    public function test_pull_non_option_component_does_not_send_component_key_but_sends_role(): void
     {
         $this->setPayrollApiConfig('http://payroll.test', 'test-payroll-token');
 
@@ -527,7 +527,7 @@ class PdoExternalCostPullTest extends TestCase
             return str_starts_with($request->url(), 'http://payroll.test/internal/payroll-costs')
                 && $request['component'] === ExpenseItem::PAYROLL_COMPONENT_HARVEST_TBS_TOTAL
                 && ! isset($request['component_key'])
-                && ! isset($request['role']);
+                && $request['role'] === ExpenseItem::PAYROLL_ROLE_PEMANEN;
         });
     }
 
@@ -1063,7 +1063,7 @@ class PdoExternalCostPullTest extends TestCase
 
     private function autoExternalDetail(
         PdoHeader $pdo,
-        ?string $externalRole = ExpenseItem::PAYROLL_ROLE_PEMANEN,
+        ?string $externalRole = null,
         ?string $externalComponentKey = null,
         ?string $externalComponent = ExpenseItem::PAYROLL_COMPONENT_BASE_PAYROLL_TOTAL,
     ): PdoDetail {

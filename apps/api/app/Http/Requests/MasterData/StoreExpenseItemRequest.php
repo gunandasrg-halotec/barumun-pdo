@@ -37,7 +37,7 @@ class StoreExpenseItemRequest extends FormRequest
             'external_block_scopes.*.plantation_unit_id' => ['required_with:external_block_scopes', 'uuid', 'exists:plantation_units,id'],
             'external_block_scopes.*.block_keys' => ['required_with:external_block_scopes', 'array'],
             'external_block_scopes.*.block_keys.*' => ['nullable', 'string', 'max:100'],
-            'external_role'                      => ['nullable', Rule::in(ExpenseItem::payrollRoles())],
+            'external_role'                      => ['nullable', 'string', 'max:100'],
             'split_transfer'                    => ['sometimes', 'boolean'],
             'split_transfer_plantation_unit_ids' => ['nullable', 'array'],
             'split_transfer_plantation_unit_ids.*' => ['uuid', 'exists:plantation_units,id'],
@@ -87,7 +87,7 @@ class StoreExpenseItemRequest extends FormRequest
             }
 
             if ($this->filled('external_role') && ! ExpenseItem::supportsPayrollRole($this->input('external_component'))) {
-                $validator->errors()->add('external_role', 'external_role hanya boleh diisi untuk component base_payroll_total.');
+                $validator->errors()->add('external_role', 'external_role hanya boleh diisi untuk component payroll.');
             }
         });
     }
