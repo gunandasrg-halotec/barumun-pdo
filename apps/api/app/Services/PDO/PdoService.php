@@ -399,6 +399,8 @@ class PdoService
             'external_source_system' => $item->mode_input === ExpenseItem::MODE_AUTO_EXTERNAL ? $item->external_source_system : null,
             'external_component' => $item->mode_input === ExpenseItem::MODE_AUTO_EXTERNAL ? $item->external_component : null,
             'external_component_key' => $item->mode_input === ExpenseItem::MODE_AUTO_EXTERNAL ? $item->external_component_key : null,
+            'external_component_keys' => $item->mode_input === ExpenseItem::MODE_AUTO_EXTERNAL ? $this->resolveCanonicalExternalComponentKeysFromItem($item) : null,
+            'external_block_keys' => $item->mode_input === ExpenseItem::MODE_AUTO_EXTERNAL ? $item->resolveExternalBlockKeysForPlantationUnit($pdo->plantation_unit_id) : null,
             'notes'          => $data['notes'] ?? null,
             'display_order'  => $data['display_order'] ?? $this->nextDisplayOrder($pdo),
         ]);
@@ -504,10 +506,10 @@ class PdoService
         }
 
         $componentKeys = ExpenseItem::supportsExternalOption($item->external_component)
-            ? $this->resolveCanonicalExternalComponentKeysFromItem($item)
+            ? ($this->normalizeStringList($detail->external_component_keys) ?? $this->resolveCanonicalExternalComponentKeysFromItem($item))
             : null;
         $blockKeys = ExpenseItem::supportsMaintenanceBlockSelectors($item->external_component)
-            ? $this->normalizeStringList($item->external_block_keys)
+            ? $this->normalizeStringList($detail->external_block_keys)
             : null;
 
         $payrollPeriod = Carbon::create($pdo->period_year, $pdo->period_month, 1)->subMonth();
@@ -639,7 +641,7 @@ class PdoService
                 'external_component' => $item->mode_input === ExpenseItem::MODE_AUTO_EXTERNAL ? $item->external_component : null,
                 'external_component_key' => $item->mode_input === ExpenseItem::MODE_AUTO_EXTERNAL ? $item->external_component_key : null,
                 'external_component_keys' => $item->mode_input === ExpenseItem::MODE_AUTO_EXTERNAL ? $this->resolveCanonicalExternalComponentKeysFromItem($item) : null,
-                'external_block_keys' => $item->mode_input === ExpenseItem::MODE_AUTO_EXTERNAL ? $this->normalizeStringList($item->external_block_keys) : null,
+                'external_block_keys' => $item->mode_input === ExpenseItem::MODE_AUTO_EXTERNAL ? $item->resolveExternalBlockKeysForPlantationUnit($pdo->plantation_unit_id) : null,
                 'display_order'  => $order + 1,
             ]);
         }
@@ -781,7 +783,7 @@ class PdoService
             'external_component_key' => $item?->external_component_key,
             'external_component_key_canonical' => (($keys = $this->resolveCanonicalExternalComponentKeysFromItem($item)) !== null && count($keys) === 1) ? $keys[0] : null,
             'external_component_keys' => $this->normalizeStringList($item?->external_component_keys),
-            'external_block_keys' => $this->normalizeStringList($item?->external_block_keys),
+            'external_block_keys' => $item?->resolveExternalBlockKeysForPlantationUnit($pdo->plantation_unit_id),
         ], $extra);
     }
 

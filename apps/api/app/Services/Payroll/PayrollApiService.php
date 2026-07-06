@@ -19,12 +19,20 @@ class PayrollApiService
     /**
      * @return array<int,array{component_key:string,label:string}>
      */
-    public function fetchComponentOptions(string $component, ?string $filter = null, ?string $estateExternalId = null): array
+    public function fetchComponentOptions(
+        string $component,
+        ?string $filter = null,
+        ?string $estateExternalId = null,
+        ?string $search = null,
+        ?int $limit = null,
+    ): array
     {
         $response = $this->request('/internal/payroll-cost-component-options', array_filter([
             'component' => $component,
             'filter' => $filter,
             'estate_external_id' => $estateExternalId,
+            'q' => $search,
+            'limit' => $limit,
         ], static fn (mixed $value): bool => $value !== null && $value !== ''));
 
         $payload = $response->json();

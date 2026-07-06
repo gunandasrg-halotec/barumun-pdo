@@ -172,24 +172,39 @@ class ExpenseItemMappingTest extends TestCase
             ->assertJsonPath('data.external_component_key', null);
     }
 
-    public function test_maintenance_mapping_can_store_component_key_sets_and_block_sets_for_single_scoped_unit(): void
+    public function test_maintenance_mapping_can_store_component_key_sets_and_block_scopes_for_multiple_units(): void
     {
         $admin = $this->adminUser();
         $subcategory = $this->expenseSubcategory($admin->company_id);
-        $unit = PlantationUnit::factory()->create([
+        $unitA = PlantationUnit::factory()->create([
             'company_id' => $admin->company_id,
             'payroll_estate_external_id' => 'EST-001',
+        ]);
+        $unitB = PlantationUnit::factory()->create([
+            'company_id' => $admin->company_id,
+            'payroll_estate_external_id' => 'EST-002',
         ]);
 
         $this->setPayrollApiConfig('http://payroll.test', 'test-payroll-token');
         Http::fake([
             'http://payroll.test/internal/payroll-cost-component-options*' => function ($request) {
-                if ($request['filter'] ?? null) {
+                if (($request['filter'] ?? null) && $request['estate_external_id'] === 'EST-001') {
                     return Http::response([
                         'data' => [
                             'options' => [
                                 ['component_key' => 'BLK-001', 'label' => 'Alpha'],
                                 ['component_key' => 'BLK-002', 'label' => 'Bravo'],
+                            ],
+                        ],
+                    ], 200);
+                }
+
+                if (($request['filter'] ?? null) && $request['estate_external_id'] === 'EST-002') {
+                    return Http::response([
+                        'data' => [
+                            'options' => [
+                                ['component_key' => 'BLK-101', 'label' => 'Charlie'],
+                                ['component_key' => 'BLK-102', 'label' => 'Delta'],
                             ],
                         ],
                     ], 200);
@@ -216,8 +231,16 @@ class ExpenseItemMappingTest extends TestCase
             'external_source_system' => ExpenseItem::EXTERNAL_SOURCE_PAYROLL,
             'external_component' => ExpenseItem::PAYROLL_COMPONENT_MAINTENANCE_TOTAL,
             'external_component_keys' => ['PT-002', 'PT-001', 'PT-002'],
-            'external_block_keys' => ['BLK-002', 'BLK-001', 'BLK-002'],
-            'routine_plantation_unit_ids' => [$unit->id],
+            'external_block_scopes' => [
+                [
+                    'plantation_unit_id' => $unitA->id,
+                    'block_keys' => ['BLK-002', 'BLK-001', 'BLK-002'],
+                ],
+                [
+                    'plantation_unit_id' => $unitB->id,
+                    'block_keys' => ['BLK-102', 'BLK-101', 'BLK-102'],
+                ],
+            ],
         ]);
 
         $response->assertStatus(201)
@@ -225,14 +248,22 @@ class ExpenseItemMappingTest extends TestCase
             ->assertJsonPath('data.external_component_key', null)
             ->assertJsonPath('data.external_component_keys.0', 'PT-002')
             ->assertJsonPath('data.external_component_keys.1', 'PT-001')
-            ->assertJsonPath('data.external_block_keys.0', 'BLK-002')
-            ->assertJsonPath('data.external_block_keys.1', 'BLK-001');
+            ->assertJsonPath('data.external_block_scopes.0.plantation_unit_id', $unitA->id)
+            ->assertJsonPath('data.external_block_scopes.0.block_keys.0', 'BLK-002')
+            ->assertJsonPath('data.external_block_scopes.0.block_keys.1', 'BLK-001')
+            ->assertJsonPath('data.external_block_scopes.1.plantation_unit_id', $unitB->id)
+            ->assertJsonPath('data.external_block_scopes.1.block_keys.0', 'BLK-102')
+            ->assertJsonPath('data.external_block_scopes.1.block_keys.1', 'BLK-101');
     }
 
-    public function test_maintenance_block_selectors_require_exactly_one_scoped_unit(): void
+    public function test_maintenance_block_scope_requires_at_least_one_block_when_unit_selected(): void
     {
         $admin = $this->adminUser();
         $subcategory = $this->expenseSubcategory($admin->company_id);
+        $unit = PlantationUnit::factory()->create([
+            'company_id' => $admin->company_id,
+            'payroll_estate_external_id' => 'EST-001',
+        ]);
 
         Sanctum::actingAs($admin);
 
@@ -243,12 +274,16 @@ class ExpenseItemMappingTest extends TestCase
             'mode_input' => ExpenseItem::MODE_AUTO_EXTERNAL,
             'external_source_system' => ExpenseItem::EXTERNAL_SOURCE_PAYROLL,
             'external_component' => ExpenseItem::PAYROLL_COMPONENT_MAINTENANCE_TOTAL,
-            'external_block_keys' => ['BLK-001'],
-            'routine_plantation_unit_ids' => null,
+            'external_block_scopes' => [
+                [
+                    'plantation_unit_id' => $unit->id,
+                    'block_keys' => [],
+                ],
+            ],
         ]);
 
         $response->assertStatus(422)
-            ->assertJsonValidationErrors(['external_block_keys']);
+            ->assertJsonValidationErrors(['external_block_scopes.0.block_keys']);
     }
 
     public function test_invalid_external_role_is_rejected(): void

@@ -1,3 +1,4 @@
+import { useEffect, useState } from 'react'
 import { render, screen, waitFor } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import userEvent from '@testing-library/user-event'
@@ -7,6 +8,71 @@ import { ItemFormPage } from './ItemFormPage'
 import { api } from '@/lib/api'
 
 type PayrollOption = { component_key: string; label: string }
+type SelectOption = { value: string; label: string }
+
+vi.mock('react-select/async', () => ({
+  default: ({
+    'aria-label': ariaLabel,
+    defaultOptions,
+    isMulti,
+    loadOptions,
+    onChange,
+    value,
+    placeholder,
+  }: {
+    'aria-label'?: string
+    defaultOptions?: boolean | SelectOption[]
+    isMulti?: boolean
+    loadOptions?: (inputValue: string) => Promise<SelectOption[]>
+    onChange?: (value: SelectOption[] | SelectOption | null) => void
+    value?: SelectOption[] | SelectOption | null
+    placeholder?: string
+  }) => {
+    const [options, setOptions] = useState<SelectOption[]>(Array.isArray(defaultOptions) ? defaultOptions : [])
+
+    useEffect(() => {
+      if (defaultOptions === true && loadOptions) {
+        loadOptions('').then(setOptions)
+      }
+    }, [defaultOptions, loadOptions])
+
+    const currentValue = Array.isArray(value) ? value : (value ? [value] : [])
+
+    return (
+      <div>
+        <input
+          aria-label={ariaLabel ?? placeholder ?? 'async-select'}
+          onChange={async (event) => {
+            const nextOptions = await loadOptions?.(event.target.value)
+            setOptions(nextOptions ?? [])
+          }}
+        />
+        <div>
+          {options.map((option) => (
+            <button
+              key={option.value}
+              type="button"
+              onClick={() => {
+                if (!onChange) return
+                if (!isMulti) {
+                  onChange(option)
+                  return
+                }
+
+                const exists = currentValue.some((selected) => selected.value === option.value)
+                onChange(exists
+                  ? currentValue.filter((selected) => selected.value !== option.value)
+                  : [...currentValue, option])
+              }}
+            >
+              {option.label}
+            </button>
+          ))}
+        </div>
+      </div>
+    )
+  },
+}))
 
 const baseItemPayload = {
   id: 'item-1',
@@ -319,7 +385,7 @@ describe('ItemFormPage Payroll component options', () => {
     expect(await screen.findByLabelText('Pemanen')).not.toBeChecked()
   })
 
-  it('menampilkan block selector maintenance saat scope tepat satu kebun', async () => {
+  it('menampilkan block mapping maintenance independen dari item rutin', async () => {
     const user = userEvent.setup()
     mockGet({
       componentOptions: {
@@ -332,12 +398,17 @@ describe('ItemFormPage Payroll component options', () => {
 
     renderItemForm('/master/item/buat')
 
-    expect(await screen.findByText('Item Rutin Berlaku Untuk:')).toBeInTheDocument()
-    await user.click(screen.getByRole('checkbox', { name: /KP — Kebun Pusat/i }))
     await user.selectOptions(screen.getByRole('combobox', { name: /Mode Input/i }), ['auto_external'])
     await user.selectOptions(screen.getByRole('combobox', { name: /Component Payroll/i }), ['maintenance_total'])
 
-    expect(await screen.findByText('Block Kebun')).toBeInTheDocument()
-    expect(await screen.findByLabelText('Alpha')).toBeInTheDocument()
+    expect(await screen.findByText('Block Mapping Kebun')).toBeInTheDocument()
+
+    await user.type(screen.getByLabelText('Kebun Block Mapping'), 'KP')
+    await user.click(screen.getByRole('button', { name: 'KP — Kebun Pusat' }))
+
+    expect(await screen.findByLabelText('Block KP')).toBeInTheDocument()
+
+    await user.type(screen.getByLabelText('Block KP'), 'Alpha')
+    expect(await screen.findByRole('button', { name: 'Alpha' })).toBeInTheDocument()
   })
 })

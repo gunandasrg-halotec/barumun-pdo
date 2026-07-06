@@ -178,7 +178,7 @@ class PdoDetail extends Model
             'source_system' => $item->external_source_system,
             'component' => $item->external_component,
             'component_keys' => $this->resolveCanonicalExternalComponentKeys($item),
-            'block_keys' => $this->normalizeStringList($item->external_block_keys),
+            'block_keys' => $item->resolveExternalBlockKeysForPlantationUnit($this->currentPdoHeader()?->plantation_unit_id),
         ];
     }
 

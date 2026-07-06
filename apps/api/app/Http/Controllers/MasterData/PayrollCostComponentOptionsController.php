@@ -20,6 +20,8 @@ class PayrollCostComponentOptionsController extends Controller
             'component' => ['required', 'string'],
             'filter' => ['nullable', 'string', Rule::in(['blocks'])],
             'estate_external_id' => ['nullable', 'string', 'max:255'],
+            'q' => ['nullable', 'string', 'max:255'],
+            'limit' => ['nullable', 'integer', 'min:1', 'max:100'],
         ])->after(function ($validator) use ($request): void {
             if ($request->query('filter') === 'blocks' && ! filled($request->query('estate_external_id'))) {
                 $validator->errors()->add('estate_external_id', 'estate_external_id wajib diisi untuk filter block.');
@@ -29,6 +31,8 @@ class PayrollCostComponentOptionsController extends Controller
         $component = (string) ($validated['component'] ?? '');
         $filter = $validated['filter'] ?? null;
         $estateExternalId = $validated['estate_external_id'] ?? null;
+        $search = $validated['q'] ?? null;
+        $limit = $validated['limit'] ?? null;
 
         if (! in_array($component, ExpenseItem::optionedPayrollComponents(), true)) {
             return response()->json([
@@ -51,7 +55,7 @@ class PayrollCostComponentOptionsController extends Controller
         }
 
         try {
-            $options = $this->payrollApi->fetchComponentOptions($component, $filter, $estateExternalId);
+            $options = $this->payrollApi->fetchComponentOptions($component, $filter, $estateExternalId, $search, $limit);
         } catch (PayrollApiException $exception) {
             $status = $exception->httpStatus;
             if ($exception->errorCode === 'PAYROLL_VALIDATION_ERROR') {

@@ -7,9 +7,10 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api, getApiErrorMessage } from '@/lib/api'
 import { Button } from '@/components/ui/Button'
 import { useToastStore } from '@/store/toast.store'
-import { usePayrollComponentOptions, useSubcategories } from '@/hooks/useMasterData'
+import AsyncSelect from 'react-select/async'
+import { fetchPayrollComponentOptions, usePayrollComponentOptions, useSubcategories } from '@/hooks/useMasterData'
 import { ArrowLeft } from 'lucide-react'
-import type { ApiResponse, ExpenseItem, PlantationUnit } from '@/types'
+import type { ApiResponse, ExpenseItem, ExternalBlockScope, PlantationUnit } from '@/types'
 
 const schema = z.object({
   subcategory_id:               z.string().uuid('Pilih sub-kategori'),
@@ -35,6 +36,10 @@ const schema = z.object({
   ]).nullable().optional(),
   external_component_keys:      z.array(z.string()).nullable().optional(),
   external_block_keys:          z.array(z.string()).nullable().optional(),
+  external_block_scopes:        z.array(z.object({
+    plantation_unit_id: z.string().uuid('Kebun wajib dipilih'),
+    block_keys: z.array(z.string()),
+  })).nullable().optional(),
   split_transfer:                      z.boolean(),
   split_transfer_plantation_unit_ids:  z.array(z.string().uuid()).nullable().optional(),
   is_routine:                          z.boolean(),
@@ -57,6 +62,7 @@ const schema = z.object({
 })
 
 type Form = z.infer<typeof schema>
+type SelectOption = { value: string; label: string }
 
 const payrollComponents = [
   { value: 'harvest_tbs_total', label: 'Harvest TBS Total' },
@@ -118,6 +124,7 @@ export function ItemFormPage() {
       external_component: null,
       external_component_keys: null,
       external_block_keys: null,
+      external_block_scopes: null,
       split_transfer: false,
       split_transfer_plantation_unit_ids: null,
       is_routine: true,
@@ -132,7 +139,7 @@ export function ItemFormPage() {
   const modeInput      = useWatch({ control, name: 'mode_input' })
   const extComponent   = useWatch({ control, name: 'external_component' })
   const selectedComponentKeys = useWatch({ control, name: 'external_component_keys' })
-  const selectedBlockKeys = useWatch({ control, name: 'external_block_keys' })
+  const blockScopes    = useWatch({ control, name: 'external_block_scopes' })
   const routineUnitIds = useWatch({ control, name: 'routine_plantation_unit_ids' })
   const splitUnitIds   = useWatch({ control, name: 'split_transfer_plantation_unit_ids' })
   const isAutoExternal = modeInput === 'auto_external'
@@ -143,20 +150,29 @@ export function ItemFormPage() {
     ? componentOptions.length > 0 || externalComponentOptionsQuery.isSuccess
     : true
   const componentAllowsEmptySelection = extComponent === 'base_payroll_total' || extComponent === 'maintenance_total'
-  const scopedUnit = (routineUnitIds ?? []).length === 1
-    ? (units ?? []).find((unit) => unit.id === routineUnitIds?.[0]) ?? null
-    : null
-  const blockSelectorEnabled = extComponent === 'maintenance_total' && Boolean(scopedUnit?.payroll_estate_external_id)
-  const blockSelectorBlockedReason = extComponent === 'maintenance_total'
-    ? (!scopedUnit
-        ? 'Block selector butuh tepat satu kebun scope pada item rutin.'
-        : (!scopedUnit.payroll_estate_external_id ? 'Payroll Estate Mapping belum diatur untuk kebun scope ini.' : ''))
-    : ''
-  const externalBlockOptionsQuery = usePayrollComponentOptions(
-    blockSelectorEnabled ? 'maintenance_total' : null,
-    blockSelectorEnabled ? { filter: 'blocks', estateExternalId: scopedUnit?.payroll_estate_external_id ?? null } : undefined,
+  const blockMappingEnabled = extComponent === 'maintenance_total' && isAutoExternal
+  const blockScopeRows = blockScopes ?? []
+  const selectableBlockUnits = useMemo(
+    () => (units ?? []).filter((unit) => Boolean(unit.payroll_estate_external_id)),
+    [units],
   )
-  const blockOptions = externalBlockOptionsQuery.data?.options ?? []
+  const blockUnitOptions = useMemo<SelectOption[]>(
+    () => selectableBlockUnits.map((unit) => ({ value: unit.id, label: `${unit.code} — ${unit.name}` })),
+    [selectableBlockUnits],
+  )
+  const selectedBlockUnitOptions = useMemo<SelectOption[]>(
+    () => blockScopeRows
+      .map((scope) => {
+        const unit = selectableBlockUnits.find((candidate) => candidate.id === scope.plantation_unit_id)
+        return unit ? { value: unit.id, label: `${unit.code} — ${unit.name}` } : null
+      })
+      .filter((option): option is SelectOption => option !== null),
+    [blockScopeRows, selectableBlockUnits],
+  )
+  const unitsWithoutPayrollMapping = useMemo(
+    () => (units ?? []).filter((unit) => !unit.payroll_estate_external_id),
+    [units],
+  )
 
   const componentWatchInitialized = useRef(false)
   const previousComponent = useRef<string | null>(null)
@@ -176,6 +192,7 @@ export function ItemFormPage() {
     if (previousComponent.current !== extComponent) {
       setValue('external_component_keys', null)
       setValue('external_block_keys', null)
+      setValue('external_block_scopes', null)
     }
 
     previousComponent.current = extComponent ?? null
@@ -184,9 +201,6 @@ export function ItemFormPage() {
   const availableComponentKeys = useMemo(() => new Set(
     componentOptions.map((option) => option.component_key),
   ), [componentOptions])
-  const availableBlockKeys = useMemo(() => new Set(
-    blockOptions.map((option) => option.component_key),
-  ), [blockOptions])
 
   useEffect(() => {
     if (!componentNeedsOptions || !optionsLoaded) return
@@ -198,21 +212,6 @@ export function ItemFormPage() {
   }, [componentNeedsOptions, optionsLoaded, availableComponentKeys, getValues, setValue])
 
   useEffect(() => {
-    if (!blockSelectorEnabled) {
-      setValue('external_block_keys', null)
-      return
-    }
-
-    if (!externalBlockOptionsQuery.isSuccess) return
-
-    const currentKeys = getValues('external_block_keys') ?? []
-    const nextKeys = currentKeys.filter((key) => availableBlockKeys.has(key))
-    if (nextKeys.length !== currentKeys.length) {
-      setValue('external_block_keys', nextKeys.length > 0 ? nextKeys : null)
-    }
-  }, [blockSelectorEnabled, externalBlockOptionsQuery.isSuccess, availableBlockKeys, getValues, setValue])
-
-  useEffect(() => {
     if (existing) {
       const ext = existing as unknown as {
         external_source_system?: string | null
@@ -220,6 +219,7 @@ export function ItemFormPage() {
         external_component_key?: string | null
         external_component_keys?: string[] | null
         external_block_keys?: string[] | null
+        external_block_scopes?: ExternalBlockScope[] | null
         external_role?: string | null
         split_transfer?: boolean
         split_transfer_plantation_unit_ids?: string[] | null
@@ -236,6 +236,7 @@ export function ItemFormPage() {
         external_component: isPayrollComponent(ext.external_component) ? ext.external_component : null,
         external_component_keys: normalizedComponentKeys,
         external_block_keys: ext.external_block_keys ?? null,
+        external_block_scopes: ext.external_block_scopes ?? null,
         split_transfer:                     ext.split_transfer ?? false,
         split_transfer_plantation_unit_ids: ext.split_transfer_plantation_unit_ids ?? null,
         routine_plantation_unit_ids:        ext.routine_plantation_unit_ids ?? null,
@@ -253,6 +254,7 @@ export function ItemFormPage() {
     setValue('external_component', null)
     setValue('external_component_keys', null)
     setValue('external_block_keys', null)
+    setValue('external_block_scopes', null)
   }, [isAutoExternal, setValue])
 
   const toggleExternalKey = (key: string) => {
@@ -261,14 +263,6 @@ export function ItemFormPage() {
       ? current.filter((value) => value !== key)
       : [...current, key]
     setValue('external_component_keys', next.length > 0 ? next : null)
-  }
-
-  const toggleExternalBlockKey = (key: string) => {
-    const current = selectedBlockKeys ?? []
-    const next = current.includes(key)
-      ? current.filter((value) => value !== key)
-      : [...current, key]
-    setValue('external_block_keys', next.length > 0 ? next : null)
   }
 
   const toggleSplitUnit = (id: string) => {
@@ -287,6 +281,44 @@ export function ItemFormPage() {
     setValue('routine_plantation_unit_ids', next.length > 0 ? next : null)
   }
 
+  const syncSelectedBlockUnits = (options: readonly SelectOption[]) => {
+    const currentScopes = getValues('external_block_scopes') ?? []
+    const nextScopes = options.map((option) => (
+      currentScopes.find((scope) => scope.plantation_unit_id === option.value)
+      ?? { plantation_unit_id: option.value, block_keys: [] }
+    ))
+    setValue('external_block_scopes', nextScopes.length > 0 ? nextScopes : null)
+  }
+
+  const setBlockScopeKeys = (plantationUnitId: string, keys: string[]) => {
+    const currentScopes = getValues('external_block_scopes') ?? []
+    const nextScopes = currentScopes.map((scope) => (
+      scope.plantation_unit_id === plantationUnitId
+        ? { ...scope, block_keys: keys }
+        : scope
+    ))
+    setValue('external_block_scopes', nextScopes.length > 0 ? nextScopes : null)
+  }
+
+  const loadBlockUnitOptions = async (inputValue: string) => {
+    const query = inputValue.trim().toLowerCase()
+    return blockUnitOptions.filter((option) => option.label.toLowerCase().includes(query))
+  }
+
+  const loadBlockOptions = async (unit: PlantationUnit, inputValue: string) => {
+    const response = await fetchPayrollComponentOptions('maintenance_total', {
+      filter: 'blocks',
+      estateExternalId: unit.payroll_estate_external_id ?? null,
+      q: inputValue.trim() || undefined,
+      limit: 50,
+    })
+
+    return response.options.map((option) => ({
+      value: option.component_key,
+      label: option.label,
+    }))
+  }
+
   const save = useMutation({
     mutationFn: (data: Form) => {
       const payload: Form = data.mode_input === 'manual'
@@ -296,6 +328,7 @@ export function ItemFormPage() {
           external_component: undefined,
           external_component_keys: undefined,
           external_block_keys: undefined,
+          external_block_scopes: undefined,
         }
         : {
           ...data,
@@ -303,8 +336,9 @@ export function ItemFormPage() {
           external_component_keys: payrollComponentsWithOptions.has(data.external_component as PayrollComponentWithOptions)
             ? data.external_component_keys ?? null
             : null,
-          external_block_keys: data.external_component === 'maintenance_total' && blockSelectorEnabled
-            ? data.external_block_keys ?? null
+          external_block_keys: null,
+          external_block_scopes: data.external_component === 'maintenance_total'
+            ? data.external_block_scopes ?? null
             : null,
         }
 
@@ -333,6 +367,7 @@ export function ItemFormPage() {
           'external_component',
           'external_component_keys',
           'external_block_keys',
+          'external_block_scopes',
           'split_transfer',
           'is_routine',
           'is_active',
@@ -340,7 +375,9 @@ export function ItemFormPage() {
         ])
         let handled = false
         for (const { field, message } of details) {
-          const normalizedField = field === 'external_component_key' ? 'external_component_keys' : field
+          const normalizedField = field === 'external_component_key'
+            ? 'external_component_keys'
+            : (field.startsWith('external_block_scopes.') ? 'external_block_scopes' : field)
           if (validFields.has(normalizedField)) {
             setError(normalizedField as keyof Form, { message })
             handled = true
@@ -479,41 +516,62 @@ export function ItemFormPage() {
               </div>
             )}
 
-            {extComponent === 'maintenance_total' && (
+            {blockMappingEnabled && (
               <div>
-                <div className="flex items-center justify-between gap-3">
-                  <label className="label">Block Kebun</label>
-                  {blockSelectorEnabled && (
-                    <button type="button" className="text-xs text-muted hover:text-ink" onClick={() => setValue('external_block_keys', null)}>
-                      Semua Blok
-                    </button>
+                <label className="label">Block Mapping Kebun</label>
+                <div className="mt-2 rounded-card border border-line bg-white p-3">
+                  <AsyncSelect
+                    inputId="block-mapping-units"
+                    aria-label="Kebun Block Mapping"
+                    isMulti
+                    cacheOptions
+                    defaultOptions={blockUnitOptions}
+                    value={selectedBlockUnitOptions}
+                    loadOptions={loadBlockUnitOptions}
+                    onChange={(nextValue) => syncSelectedBlockUnits([...(nextValue ?? [])] as SelectOption[])}
+                    placeholder="Pilih kebun yang ingin dibatasi bloknya..."
+                    classNamePrefix="react-select"
+                    isDisabled={blockUnitOptions.length === 0}
+                  />
+                  {unitsWithoutPayrollMapping.length > 0 && (
+                    <p className="mt-2 text-xs text-muted">
+                      {`${unitsWithoutPayrollMapping.length} kebun belum punya Payroll Estate Mapping, jadi tidak muncul di selector ini.`}
+                    </p>
                   )}
                 </div>
-                {blockSelectorEnabled ? (
-                  <div className="mt-2 rounded-card border border-line bg-white">
-                    {externalBlockOptionsQuery.isLoading ? (
-                      <p className="px-3 py-2 text-sm text-muted">Memuat opsi blok payroll...</p>
-                    ) : (
-                      <div className="flex flex-col">
-                        {blockOptions.map((option) => (
-                          <label key={option.component_key} className="flex items-center gap-2 px-3 py-2 text-sm border-b last:border-b-0 border-line cursor-pointer">
-                            <input
-                              type="checkbox"
-                              checked={(selectedBlockKeys ?? []).includes(option.component_key)}
-                              onChange={() => toggleExternalBlockKey(option.component_key)}
-                              className="checkbox"
-                            />
-                            <span>{option.label}</span>
-                          </label>
-                        ))}
+
+                <div className="mt-3 flex flex-col gap-3">
+                  {blockScopeRows.map((scope) => {
+                    const unit = selectableBlockUnits.find((candidate) => candidate.id === scope.plantation_unit_id)
+                    if (!unit) return null
+
+                    return (
+                      <div key={scope.plantation_unit_id} className="rounded-card border border-line bg-white p-3">
+                        <p className="text-sm font-[800] text-ink">{`${unit.code} — ${unit.name}`}</p>
+                        <p className="mt-1 text-xs text-muted">Pilih blok payroll untuk kebun ini.</p>
+                        <div className="mt-3">
+                          <AsyncSelect
+                            inputId={`block-scope-${unit.id}`}
+                            aria-label={`Block ${unit.code}`}
+                            isMulti
+                            cacheOptions
+                            defaultOptions
+                            value={(scope.block_keys ?? []).map((key) => ({ value: key, label: key }))}
+                            loadOptions={(inputValue) => loadBlockOptions(unit, inputValue)}
+                            onChange={(nextValue) => setBlockScopeKeys(
+                              unit.id,
+                              ([...(nextValue ?? [])] as SelectOption[]).map((option) => option.value),
+                            )}
+                            placeholder="Cari block payroll..."
+                            classNamePrefix="react-select"
+                          />
+                        </div>
                       </div>
-                    )}
-                  </div>
-                ) : (
-                  <p className="text-sm text-muted">{blockSelectorBlockedReason}</p>
-                )}
-                {externalBlockOptionsQuery.isError && <p className="field-error">{`Gagal memuat opsi blok Payroll: ${getApiErrorMessage(externalBlockOptionsQuery.error)}`}</p>}
-                {errors.external_block_keys && <p className="field-error">{errors.external_block_keys.message}</p>}
+                    )
+                  })}
+                </div>
+
+                {errors.external_block_scopes && <p className="field-error">{errors.external_block_scopes.message}</p>}
               </div>
             )}
           </div>

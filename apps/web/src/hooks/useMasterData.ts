@@ -10,9 +10,32 @@ type PayrollComponentOption = {
   label: string
 }
 
+export type PayrollComponentOptionsQuery = {
+  filter?: 'blocks'
+  estateExternalId?: string | null
+  q?: string
+  limit?: number
+}
+
 type PayrollComponentOptionsResponse = {
   component: string
   options: PayrollComponentOption[]
+}
+
+export async function fetchPayrollComponentOptions(
+  component: string,
+  options?: PayrollComponentOptionsQuery,
+) {
+  const res = await api.get<ApiResponse<PayrollComponentOptionsResponse>>('/payroll-cost-component-options', {
+    params: {
+      component,
+      filter: options?.filter,
+      estate_external_id: options?.estateExternalId ?? undefined,
+      q: options?.q ?? undefined,
+      limit: options?.limit ?? undefined,
+    },
+  })
+  return res.data.data
 }
 
 // ─── Categories ──────────────────────────────────────────────────────────────
@@ -130,20 +153,11 @@ export function useCreateItem() {
 
 export function usePayrollComponentOptions(
   component?: string | null,
-  options?: { filter?: 'blocks'; estateExternalId?: string | null },
+  options?: PayrollComponentOptionsQuery,
 ) {
   return useQuery({
     queryKey: ['payroll-component-options', component, options?.filter ?? null, options?.estateExternalId ?? null],
-    queryFn: async () => {
-      const res = await api.get<ApiResponse<PayrollComponentOptionsResponse>>('/payroll-cost-component-options', {
-        params: {
-          component,
-          filter: options?.filter,
-          estate_external_id: options?.estateExternalId ?? undefined,
-        },
-      })
-      return res.data.data
-    },
+    queryFn: async () => fetchPayrollComponentOptions(component!, options),
     enabled: Boolean(component) && (options?.filter !== 'blocks' || Boolean(options?.estateExternalId)),
     staleTime: 5 * 60 * 1000,
   })

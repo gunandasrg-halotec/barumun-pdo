@@ -268,6 +268,7 @@ class MasterDataService
             $data['external_component_key'] = null;
             $data['external_component_keys'] = null;
             $data['external_block_keys'] = null;
+            $data['external_block_scopes'] = null;
             $data['external_role'] = null;
         }
 
@@ -303,6 +304,7 @@ class MasterDataService
             $data['external_component_key'] = null;
             $data['external_component_keys'] = null;
             $data['external_block_keys'] = null;
+            $data['external_block_scopes'] = null;
             $data['external_role'] = null;
         }
 
@@ -351,11 +353,6 @@ class MasterDataService
 
     private function syncDraftDetailExternalOwnership(ExpenseItem $originalItem, string $oldModeInput, ExpenseItem $freshItem): void
     {
-        $draftDetails = \DB::table('pdo_details')
-            ->join('pdo_headers', 'pdo_headers.id', '=', 'pdo_details.pdo_header_id')
-            ->where('pdo_details.expense_item_id', $originalItem->id)
-            ->where('pdo_headers.status', PdoHeader::STATUS_DRAFT);
-
         if ($oldModeInput === $freshItem->mode_input) {
             if ($oldModeInput !== ExpenseItem::MODE_AUTO_EXTERNAL) {
                 return;
@@ -364,42 +361,29 @@ class MasterDataService
             $mappingChanged = $originalItem->external_source_system !== $freshItem->external_source_system
                 || $originalItem->external_component !== $freshItem->external_component
                 || $this->externalComponentKeysSnapshotValue($originalItem) !== $this->externalComponentKeysSnapshotValue($freshItem)
+                || $this->normalizeExternalBlockScopes($originalItem->external_block_scopes) !== $this->normalizeExternalBlockScopes($freshItem->external_block_scopes)
                 || $this->externalBlockKeysSnapshotValue($originalItem) !== $this->externalBlockKeysSnapshotValue($freshItem);
 
             if (! $mappingChanged) {
                 return;
             }
 
-            $draftDetails->update([
-                'external_source_system' => $freshItem->external_source_system,
-                'external_component' => $freshItem->external_component,
-                'external_component_key' => $this->externalComponentKeySnapshotValue($freshItem),
-                'external_component_keys' => $this->externalComponentKeysSnapshotValue($freshItem),
-                'external_block_keys' => $this->externalBlockKeysSnapshotValue($freshItem),
-                'external_amount_pulled_at' => null,
-                'external_payload' => null,
-                'updated_at' => now(),
-            ]);
+            $this->syncDraftDetailExternalSnapshots($originalItem->id, $freshItem);
 
             return;
         }
 
         if ($freshItem->mode_input === ExpenseItem::MODE_AUTO_EXTERNAL) {
-            $draftDetails->update([
-                'external_source_system' => $freshItem->external_source_system,
-                'external_component' => $freshItem->external_component,
-                'external_component_key' => $this->externalComponentKeySnapshotValue($freshItem),
-                'external_component_keys' => $this->externalComponentKeysSnapshotValue($freshItem),
-                'external_block_keys' => $this->externalBlockKeysSnapshotValue($freshItem),
-                'external_amount_pulled_at' => null,
-                'external_payload' => null,
-                'updated_at' => now(),
-            ]);
+            $this->syncDraftDetailExternalSnapshots($originalItem->id, $freshItem);
 
             return;
         }
 
-        $draftDetails->update([
+        \DB::table('pdo_details')
+            ->join('pdo_headers', 'pdo_headers.id', '=', 'pdo_details.pdo_header_id')
+            ->where('pdo_details.expense_item_id', $originalItem->id)
+            ->where('pdo_headers.status', PdoHeader::STATUS_DRAFT)
+            ->update([
             'external_source_system' => null,
             'external_component' => null,
             'external_component_key' => null,
@@ -408,7 +392,7 @@ class MasterDataService
             'external_amount_pulled_at' => null,
             'external_payload' => null,
             'updated_at' => now(),
-        ]);
+            ]);
     }
 
     public function deleteItem(ExpenseItem $item, User $actor): void
@@ -469,6 +453,7 @@ class MasterDataService
             || array_key_exists('external_component_key', $data)
             || array_key_exists('external_component_keys', $data)
             || array_key_exists('external_block_keys', $data)
+            || array_key_exists('external_block_scopes', $data)
             || array_key_exists('external_role', $data);
 
         if (! $hasMappingPayload && $currentItem && $currentItem->mode_input === ExpenseItem::MODE_AUTO_EXTERNAL) {
@@ -505,6 +490,7 @@ class MasterDataService
             $data['external_component_key'] = null;
             $data['external_component_keys'] = null;
             $data['external_block_keys'] = null;
+            $data['external_block_scopes'] = null;
             $data['external_role'] = null;
 
             return;
@@ -512,6 +498,7 @@ class MasterDataService
 
         $componentKeys = $this->resolveRequestedExternalComponentKeys($data, $currentItem, $component);
         $blockKeys = $this->resolveRequestedExternalBlockKeys($data, $currentItem, $component);
+        $blockScopes = $this->resolveRequestedExternalBlockScopes($data, $currentItem, $component);
         $componentKeysFromLegacyRole = $legacyRole !== null
             && $componentKeys === [$legacyRole]
             && ExpenseItem::supportsPayrollRole($component)
@@ -536,22 +523,31 @@ class MasterDataService
 
         if (! ExpenseItem::supportsMaintenanceBlockSelectors($component)) {
             $blockKeys = null;
-        } elseif ($blockKeys !== null) {
-            $unit = $this->resolveSingleScopedPlantationUnit($data, $currentItem);
+            $blockScopes = null;
+        } elseif ($blockScopes !== null) {
+            foreach ($blockScopes as $index => $scope) {
+                $unit = PlantationUnit::find($scope['plantation_unit_id']);
 
-            if (! $unit instanceof PlantationUnit || ! filled($unit->payroll_estate_external_id)) {
-                throw ValidationException::withMessages([
-                    'external_block_keys' => ['external_block_keys hanya boleh diisi untuk item dengan tepat satu kebun scope yang punya Payroll Estate Mapping.'],
-                ]);
-            }
+                if (! $unit instanceof PlantationUnit || ! filled($unit->payroll_estate_external_id)) {
+                    throw ValidationException::withMessages([
+                        "external_block_scopes.{$index}.plantation_unit_id" => ['Kebun harus punya Payroll Estate Mapping untuk block selector maintenance.'],
+                    ]);
+                }
 
-            $validBlockKeys = $this->resolvePayrollComponentKeys($component, 'blocks', $unit->payroll_estate_external_id, 'external_block_keys');
-            $invalidBlockKeys = array_values(array_diff($blockKeys, $validBlockKeys));
+                if (($scope['block_keys'] ?? []) === []) {
+                    throw ValidationException::withMessages([
+                        "external_block_scopes.{$index}.block_keys" => ['Pilih minimal satu block untuk kebun yang dipetakan.'],
+                    ]);
+                }
 
-            if ($invalidBlockKeys !== []) {
-                throw ValidationException::withMessages([
-                    'external_block_keys' => ['external_block_keys tidak ditemukan pada Payroll.'],
-                ]);
+                $validBlockKeys = $this->resolvePayrollComponentKeys($component, 'blocks', $unit->payroll_estate_external_id, "external_block_scopes.{$index}.block_keys");
+                $invalidBlockKeys = array_values(array_diff($scope['block_keys'], $validBlockKeys));
+
+                if ($invalidBlockKeys !== []) {
+                    throw ValidationException::withMessages([
+                        "external_block_scopes.{$index}.block_keys" => ["Block tidak ditemukan pada Payroll untuk kebun {$unit->code}."],
+                    ]);
+                }
             }
         }
 
@@ -562,6 +558,7 @@ class MasterDataService
         $data['external_role'] = null;
         $data['external_component_keys'] = $componentKeys;
         $data['external_block_keys'] = $blockKeys;
+        $data['external_block_scopes'] = $blockScopes;
         $data['external_component_key'] = $componentKeys !== null && count($componentKeys) === 1
             ? $componentKeys[0]
             : null;
@@ -618,6 +615,34 @@ class MasterDataService
 
         if ($currentItem && $currentItem->external_component === $component) {
             return $this->normalizeStringList($currentItem->external_block_keys);
+        }
+
+        return null;
+    }
+
+    /** @return array<int,array{plantation_unit_id:string,block_keys:array<int,string>}>|null */
+    private function resolveRequestedExternalBlockScopes(array $data, ?ExpenseItem $currentItem, string $component): ?array
+    {
+        if (! ExpenseItem::supportsMaintenanceBlockSelectors($component)) {
+            return null;
+        }
+
+        if (array_key_exists('external_block_scopes', $data)) {
+            return $this->normalizeExternalBlockScopes($data['external_block_scopes']);
+        }
+
+        if ($currentItem && $currentItem->external_component === $component) {
+            return $this->normalizeExternalBlockScopes($currentItem->external_block_scopes);
+        }
+
+        $legacyBlockKeys = $this->resolveRequestedExternalBlockKeys($data, $currentItem, $component);
+        $legacyUnit = $this->resolveSingleScopedPlantationUnit($data, $currentItem);
+
+        if ($legacyBlockKeys !== null && $legacyUnit instanceof PlantationUnit) {
+            return [[
+                'plantation_unit_id' => $legacyUnit->id,
+                'block_keys' => $legacyBlockKeys,
+            ]];
         }
 
         return null;
@@ -695,6 +720,34 @@ class MasterDataService
         return $normalized === [] ? null : $normalized;
     }
 
+    /** @return array<int,array{plantation_unit_id:string,block_keys:array<int,string>}>|null */
+    private function normalizeExternalBlockScopes(mixed $value): ?array
+    {
+        if (! is_array($value)) {
+            return null;
+        }
+
+        $scopes = [];
+
+        foreach ($value as $scope) {
+            if (! is_array($scope)) {
+                continue;
+            }
+
+            $unitId = $this->normalizeExternalComponentKey($scope['plantation_unit_id'] ?? null);
+            if ($unitId === null) {
+                continue;
+            }
+
+            $scopes[$unitId] = [
+                'plantation_unit_id' => $unitId,
+                'block_keys' => $this->normalizeStringList($scope['block_keys'] ?? null) ?? [],
+            ];
+        }
+
+        return $scopes === [] ? null : array_values($scopes);
+    }
+
     private function externalComponentKeySnapshotValue(ExpenseItem $item): ?string
     {
         $keys = $this->externalComponentKeysSnapshotValue($item);
@@ -730,6 +783,27 @@ class MasterDataService
     private function externalBlockKeysSnapshotValue(ExpenseItem $item): ?array
     {
         return $this->normalizeStringList($item->external_block_keys);
+    }
+
+    private function syncDraftDetailExternalSnapshots(string $expenseItemId, ExpenseItem $freshItem): void
+    {
+        $details = \App\Models\PdoDetail::with('pdoHeader')
+            ->withoutGlobalScopes()
+            ->where('expense_item_id', $expenseItemId)
+            ->whereHas('pdoHeader', fn ($query) => $query->where('status', PdoHeader::STATUS_DRAFT))
+            ->get();
+
+        foreach ($details as $detail) {
+            $detail->update([
+                'external_source_system' => $freshItem->external_source_system,
+                'external_component' => $freshItem->external_component,
+                'external_component_key' => $this->externalComponentKeySnapshotValue($freshItem),
+                'external_component_keys' => $this->externalComponentKeysSnapshotValue($freshItem),
+                'external_block_keys' => $freshItem->resolveExternalBlockKeysForPlantationUnit($detail->pdoHeader?->plantation_unit_id),
+                'external_amount_pulled_at' => null,
+                'external_payload' => null,
+            ]);
+        }
     }
 
     /** BR-MASTER-003 */

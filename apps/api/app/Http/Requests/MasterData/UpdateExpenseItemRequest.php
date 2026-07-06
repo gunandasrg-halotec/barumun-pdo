@@ -36,6 +36,10 @@ class UpdateExpenseItemRequest extends FormRequest
             'external_component_keys.*'          => ['nullable', 'string', 'max:100'],
             'external_block_keys'                => ['nullable', 'array'],
             'external_block_keys.*'              => ['nullable', 'string', 'max:100'],
+            'external_block_scopes'              => ['nullable', 'array'],
+            'external_block_scopes.*.plantation_unit_id' => ['required_with:external_block_scopes', 'uuid', 'exists:plantation_units,id'],
+            'external_block_scopes.*.block_keys' => ['required_with:external_block_scopes', 'array'],
+            'external_block_scopes.*.block_keys.*' => ['nullable', 'string', 'max:100'],
             'external_role'                      => ['nullable', Rule::in(ExpenseItem::payrollRoles())],
             'split_transfer'                    => ['sometimes', 'boolean'],
             'split_transfer_plantation_unit_ids' => ['nullable', 'array'],
@@ -56,7 +60,7 @@ class UpdateExpenseItemRequest extends FormRequest
             $resolved      = is_string($item) ? \App\Models\ExpenseItem::find($item) : $item;
             $currentMode   = $resolved?->mode_input ?? ExpenseItem::MODE_MANUAL;
             $requestMode   = $this->input('mode_input', $currentMode);
-            $hasMappingField = $this->has('external_source_system') || $this->has('external_component') || $this->has('external_component_key') || $this->has('external_component_keys') || $this->has('external_block_keys') || $this->has('external_role');
+            $hasMappingField = $this->has('external_source_system') || $this->has('external_component') || $this->has('external_component_key') || $this->has('external_component_keys') || $this->has('external_block_keys') || $this->has('external_block_scopes') || $this->has('external_role');
             $isAutoExternal = $requestMode === ExpenseItem::MODE_AUTO_EXTERNAL;
             $isAdmin        = $this->user()?->hasRole(Role::ADMIN) ?? false;
             $component = $this->input('external_component', $resolved?->external_component);

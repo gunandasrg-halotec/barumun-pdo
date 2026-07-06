@@ -61,6 +61,11 @@ export interface ExpenseSubcategory {
 export type ModeInput = 'manual' | 'auto_external'
 export type PayrollRole = 'pemanen' | 'bhl' | 'supir' | 'pegawai'
 
+export interface ExternalBlockScope {
+  plantation_unit_id: string
+  block_keys: string[]
+}
+
 export interface ExpenseItem {
   id: string
   subcategory_id: string
@@ -76,6 +81,7 @@ export interface ExpenseItem {
   external_component_key?: string | null
   external_component_keys?: string[] | null
   external_block_keys?: string[] | null
+  external_block_scopes?: ExternalBlockScope[] | null
   external_role?: PayrollRole | null
   is_routine: boolean
   is_active: boolean

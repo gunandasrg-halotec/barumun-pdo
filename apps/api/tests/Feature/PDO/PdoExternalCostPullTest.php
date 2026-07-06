@@ -372,6 +372,10 @@ class PdoExternalCostPullTest extends TestCase
 
         $kerani = $this->keraniUser();
         $pdo = $this->draftPdo($kerani);
+        $unitB = PlantationUnit::factory()->create([
+            'company_id' => $kerani->company_id,
+            'payroll_estate_external_id' => 'EST-002',
+        ]);
         $detail = $this->autoExternalDetail(
             $pdo,
             externalRole: null,
@@ -379,6 +383,19 @@ class PdoExternalCostPullTest extends TestCase
             externalComponent: ExpenseItem::PAYROLL_COMPONENT_MAINTENANCE_TOTAL,
         );
         $detail->expenseItem()->update([
+            'external_component_keys' => ['PT-002', 'PT-001'],
+            'external_block_scopes' => [
+                [
+                    'plantation_unit_id' => $pdo->plantation_unit_id,
+                    'block_keys' => ['BLK-002', 'BLK-001'],
+                ],
+                [
+                    'plantation_unit_id' => $unitB->id,
+                    'block_keys' => ['BLK-101'],
+                ],
+            ],
+        ]);
+        $detail->update([
             'external_component_keys' => ['PT-002', 'PT-001'],
             'external_block_keys' => ['BLK-002', 'BLK-001'],
         ]);
@@ -421,6 +438,56 @@ class PdoExternalCostPullTest extends TestCase
                 && $request['block_keys'] === ['BLK-002', 'BLK-001']
                 && ! isset($request['component_key']);
         });
+    }
+
+    public function test_create_pdo_snapshots_only_relevant_maintenance_block_scope_for_unit(): void
+    {
+        $kerani = $this->keraniUser();
+        $unitA = $kerani->plantationUnit;
+        $unitB = PlantationUnit::factory()->create([
+            'company_id' => $kerani->company_id,
+            'payroll_estate_external_id' => 'EST-002',
+        ]);
+        $subcategory = ExpenseSubcategory::factory()->create([
+            'category_id' => ExpenseCategory::factory()->create(['company_id' => $kerani->company_id])->id,
+        ]);
+
+        $item = ExpenseItem::factory()->create([
+            'subcategory_id' => $subcategory->id,
+            'mode_input' => ExpenseItem::MODE_AUTO_EXTERNAL,
+            'external_source_system' => ExpenseItem::EXTERNAL_SOURCE_PAYROLL,
+            'external_component' => ExpenseItem::PAYROLL_COMPONENT_MAINTENANCE_TOTAL,
+            'external_component_keys' => ['PT-001'],
+            'external_block_scopes' => [
+                [
+                    'plantation_unit_id' => $unitA->id,
+                    'block_keys' => ['BLK-001', 'BLK-002'],
+                ],
+                [
+                    'plantation_unit_id' => $unitB->id,
+                    'block_keys' => ['BLK-101'],
+                ],
+            ],
+            'is_routine' => true,
+            'routine_plantation_unit_ids' => [$unitA->id],
+            'is_active' => true,
+        ]);
+
+        Sanctum::actingAs($kerani);
+
+        $response = $this->postJson('/api/v1/pdo', [
+            'plantation_unit_id' => $unitA->id,
+            'period_month' => 6,
+            'period_year' => 2026,
+        ]);
+
+        $response->assertCreated();
+
+        $pdo = PdoHeader::with('details')->findOrFail($response->json('data.id'));
+        $detail = $pdo->details->firstWhere('expense_item_id', $item->id);
+
+        $this->assertNotNull($detail);
+        $this->assertSame(['BLK-001', 'BLK-002'], $detail->external_block_keys);
     }
 
     public function test_pull_non_option_component_does_not_send_component_key_or_role(): void
