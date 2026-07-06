@@ -150,6 +150,172 @@ class PdoExternalCostPullTest extends TestCase
         });
     }
 
+    public function test_kerani_can_bulk_pull_external_cost_with_partial_success_and_skips_ineligible_rows(): void
+    {
+        $this->setPayrollApiConfig('http://payroll.test', 'test-payroll-token');
+
+        $kerani = $this->keraniUser();
+        $pdo = $this->draftPdo($kerani);
+
+        $succeededDetail = $this->autoExternalDetail($pdo, externalComponentKey: 'pemanen');
+        $failedDetail = $this->autoExternalDetail($pdo, externalComponentKey: 'bhl');
+        $freshDetail = $this->autoExternalDetail($pdo, externalComponentKey: 'mandor');
+        $manualDetail = $this->manualDetail($pdo);
+
+        $freshDetail->update([
+            'amount' => 650000,
+            'quantity' => 6,
+            'unit' => 'HK',
+            'external_source_system' => ExpenseItem::EXTERNAL_SOURCE_PAYROLL,
+            'external_component' => ExpenseItem::PAYROLL_COMPONENT_BASE_PAYROLL_TOTAL,
+            'external_component_key' => 'mandor',
+            'external_component_keys' => ['mandor'],
+            'external_payload' => [
+                'status' => 'ok',
+                'amount' => 650000,
+                'unit' => 'HK',
+                'volume' => 6,
+                'component' => ExpenseItem::PAYROLL_COMPONENT_BASE_PAYROLL_TOTAL,
+                'component_key' => 'mandor',
+                'component_keys' => ['mandor'],
+                'source_system' => ExpenseItem::EXTERNAL_SOURCE_PAYROLL,
+                'role' => null,
+                'block_keys' => null,
+            ],
+            'external_amount_pulled_at' => now()->subHour(),
+        ]);
+        $pdo->update(['grand_total_amount' => 650000]);
+
+        Http::fake([
+            'http://payroll.test/internal/payroll-costs*' => function ($request) {
+                $componentKeys = $request['component_keys'] ?? [];
+
+                if ($componentKeys === ['pemanen']) {
+                    return Http::response([
+                        'status' => 'ok',
+                        'amount' => 1250000,
+                        'unit' => 'HK',
+                        'volume' => 12,
+                        'component' => ExpenseItem::PAYROLL_COMPONENT_BASE_PAYROLL_TOTAL,
+                        'component_label' => 'Gaji Pokok',
+                        'period' => '2026-06',
+                        'estate_external_id' => 'EST-001',
+                        'generated_at' => '2026-06-23T10:00:00+07:00',
+                    ], 200);
+                }
+
+                return Http::response([
+                    'error' => 'Komponen Payroll tidak valid untuk item ini.',
+                ], 422);
+            },
+        ]);
+
+        Sanctum::actingAs($kerani);
+
+        $this->postJson("/api/v1/pdo/{$pdo->id}/pull-external-costs")
+            ->assertOk()
+            ->assertJsonPath('success', true)
+            ->assertJsonPath('data.total', 2)
+            ->assertJsonPath('data.succeeded_count', 1)
+            ->assertJsonPath('data.failed_count', 1)
+            ->assertJsonPath('data.succeeded.0.detail_id', $succeededDetail->id)
+            ->assertJsonPath('data.failed.0.detail_id', $failedDetail->id)
+            ->assertJsonPath('data.failed.0.message', 'Komponen Payroll tidak valid untuk item ini.')
+            ->assertJsonPath('data.grand_total', 1900000);
+
+        Http::assertSentCount(2);
+        Http::assertSent(fn ($request): bool => ($request['component_keys'] ?? []) === ['pemanen']);
+        Http::assertSent(fn ($request): bool => ($request['component_keys'] ?? []) === ['bhl']);
+
+        $succeededDetail->refresh();
+        $failedDetail->refresh();
+        $freshDetail->refresh();
+        $manualDetail->refresh();
+        $pdo->refresh();
+
+        $this->assertSame(1250000, $succeededDetail->amount);
+        $this->assertNotNull($succeededDetail->external_amount_pulled_at);
+        $this->assertSame(0, $failedDetail->amount);
+        $this->assertNull($failedDetail->external_amount_pulled_at);
+        $this->assertSame(650000, $freshDetail->amount);
+        $this->assertSame(0, $manualDetail->amount);
+        $this->assertSame(1900000, $pdo->grand_total_amount);
+        $this->assertSame(1, AuditLog::query()
+            ->where('entity_type', 'pdo_details')
+            ->where('action', 'EXTERNAL_PULL')
+            ->where('entity_id', $succeededDetail->id)
+            ->count());
+        $this->assertSame(0, AuditLog::query()
+            ->where('entity_type', 'pdo_details')
+            ->where('action', 'EXTERNAL_PULL')
+            ->where('entity_id', $failedDetail->id)
+            ->count());
+    }
+
+    public function test_bulk_pull_returns_zero_counts_when_no_eligible_details_exist(): void
+    {
+        $this->setPayrollApiConfig('http://payroll.test', 'test-payroll-token');
+
+        $kerani = $this->keraniUser();
+        $pdo = $this->draftPdo($kerani);
+        $freshDetail = $this->autoExternalDetail($pdo, externalComponentKey: 'mandor');
+        $this->manualDetail($pdo);
+
+        $freshDetail->update([
+            'amount' => 650000,
+            'quantity' => 6,
+            'unit' => 'HK',
+            'external_source_system' => ExpenseItem::EXTERNAL_SOURCE_PAYROLL,
+            'external_component' => ExpenseItem::PAYROLL_COMPONENT_BASE_PAYROLL_TOTAL,
+            'external_component_key' => 'mandor',
+            'external_component_keys' => ['mandor'],
+            'external_payload' => [
+                'status' => 'ok',
+                'amount' => 650000,
+                'unit' => 'HK',
+                'volume' => 6,
+                'component' => ExpenseItem::PAYROLL_COMPONENT_BASE_PAYROLL_TOTAL,
+                'component_key' => 'mandor',
+                'component_keys' => ['mandor'],
+                'source_system' => ExpenseItem::EXTERNAL_SOURCE_PAYROLL,
+                'role' => null,
+                'block_keys' => null,
+            ],
+            'external_amount_pulled_at' => now()->subHour(),
+        ]);
+
+        Http::fake();
+
+        Sanctum::actingAs($kerani);
+
+        $this->postJson("/api/v1/pdo/{$pdo->id}/pull-external-costs")
+            ->assertOk()
+            ->assertJsonPath('success', true)
+            ->assertJsonPath('data.total', 0)
+            ->assertJsonPath('data.succeeded_count', 0)
+            ->assertJsonPath('data.failed_count', 0)
+            ->assertJsonPath('data.succeeded', [])
+            ->assertJsonPath('data.failed', []);
+
+        Http::assertNothingSent();
+    }
+
+    public function test_bulk_pull_rejects_non_draft_pdo(): void
+    {
+        $this->setPayrollApiConfig('http://payroll.test', 'test-payroll-token');
+
+        $kerani = $this->keraniUser();
+        $pdo = $this->draftPdo($kerani);
+        $pdo->update(['status' => PdoHeader::STATUS_SUBMITTED]);
+        $this->autoExternalDetail($pdo);
+
+        Sanctum::actingAs($kerani);
+
+        $this->postJson("/api/v1/pdo/{$pdo->id}/pull-external-costs")
+            ->assertStatus(409)
+            ->assertJsonPath('error.code', 'PDO_NOT_EDITABLE');
+    }
+
     public function test_pull_external_cost_previous_month_rolls_back_year_for_january_pdo(): void
     {
         $this->setPayrollApiConfig('http://payroll.test', 'test-payroll-token');

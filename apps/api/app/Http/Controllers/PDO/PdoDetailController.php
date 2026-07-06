@@ -54,4 +54,15 @@ class PdoDetailController extends Controller
             'message' => 'Data Payroll berhasil diambil.',
         ]);
     }
+
+    public function bulkPullExternalCost(Request $request, PdoHeader $pdo): JsonResponse
+    {
+        $result = $this->service->bulkPullExternalCost($pdo, $request->user());
+
+        return response()->json([
+            'success' => true,
+            'data' => $result,
+            'message' => 'Bulk External Cost Pull selesai.',
+        ]);
+    }
 }

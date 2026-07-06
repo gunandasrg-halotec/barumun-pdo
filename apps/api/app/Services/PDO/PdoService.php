@@ -10,6 +10,7 @@ use App\Models\PlantationUnit;
 use App\Models\User;
 use Illuminate\Http\Client\ConnectionException;
 use Illuminate\Http\Client\Response;
+use Illuminate\Http\Exceptions\HttpResponseException;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
@@ -608,6 +609,47 @@ class PdoService
         ], 503));
     }
 
+    public function bulkPullExternalCost(PdoHeader $pdo, User $actor): array
+    {
+        $this->assertDraft($pdo);
+
+        $eligibleDetails = $this->eligibleBulkExternalCostDetails($pdo);
+        $succeeded = [];
+        $failed = [];
+
+        foreach ($eligibleDetails as $detail) {
+            try {
+                $updated = $this->pullExternalCost($pdo, $detail, $actor);
+
+                $succeeded[] = [
+                    'detail_id' => $updated->id,
+                    'expense_item_id' => $updated->expense_item_id,
+                    'description' => $updated->description,
+                    'amount' => $updated->amount,
+                ];
+            } catch (ValidationException $exception) {
+                $failed[] = $this->formatBulkExternalPullFailure(
+                    $detail,
+                    $this->validationExceptionMessage($exception)
+                );
+            } catch (HttpResponseException $exception) {
+                $failed[] = $this->formatBulkExternalPullFailure(
+                    $detail,
+                    $this->httpResponseExceptionMessage($exception)
+                );
+            }
+        }
+
+        return [
+            'total' => $eligibleDetails->count(),
+            'succeeded_count' => count($succeeded),
+            'failed_count' => count($failed),
+            'succeeded' => $succeeded,
+            'failed' => $failed,
+            'grand_total' => $pdo->fresh()->grand_total_amount,
+        ];
+    }
+
     // ─────────────────────────────────────────────────────
     // PRIVATE HELPERS
     // ─────────────────────────────────────────────────────
@@ -670,6 +712,14 @@ class PdoService
     private function nextDisplayOrder(PdoHeader $pdo): int
     {
         return ($pdo->details()->max('display_order') ?? 0) + 1;
+    }
+
+    private function eligibleBulkExternalCostDetails(PdoHeader $pdo)
+    {
+        $details = $pdo->details()->with('expenseItem')->get();
+        $this->hydrateDetailsExternalState($details, $pdo);
+
+        return $details->filter(fn (PdoDetail $detail): bool => $detail->is_auto_external_active && $detail->needs_pull)->values();
     }
 
     private function assertDetailBelongsToPdo(PdoHeader $pdo, PdoDetail $detail): void
@@ -847,5 +897,44 @@ class PdoService
         }
 
         return $normalized === [] ? null : $normalized;
+    }
+
+    private function validationExceptionMessage(ValidationException $exception): string
+    {
+        foreach ($exception->errors() as $messages) {
+            if (is_array($messages) && isset($messages[0]) && is_string($messages[0])) {
+                return $messages[0];
+            }
+        }
+
+        return 'Terjadi kesalahan saat Ambil Data.';
+    }
+
+    private function httpResponseExceptionMessage(HttpResponseException $exception): string
+    {
+        $response = $exception->getResponse();
+
+        if (method_exists($response, 'getData')) {
+            $payload = $response->getData(true);
+
+            $message = data_get($payload, 'error.message')
+                ?? data_get($payload, 'message');
+
+            if (is_string($message) && $message !== '') {
+                return $message;
+            }
+        }
+
+        return 'Payroll tidak dapat dihubungi saat ini.';
+    }
+
+    private function formatBulkExternalPullFailure(PdoDetail $detail, string $message): array
+    {
+        return [
+            'detail_id' => $detail->id,
+            'expense_item_id' => $detail->expense_item_id,
+            'description' => $detail->description,
+            'message' => $message,
+        ];
     }
 }
