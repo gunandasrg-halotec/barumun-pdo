@@ -115,6 +115,8 @@ export function ItemFormPage() {
       return res.data.data
     },
     enabled: isEdit,
+    staleTime: 0,
+    refetchOnMount: 'always',
   })
 
   const { register, handleSubmit, reset, setError, control, getValues, setValue, formState: { errors } } = useForm<Form>({
@@ -400,6 +402,9 @@ export function ItemFormPage() {
     onSuccess: () => {
       toast(isEdit ? 'Item berhasil diperbarui' : 'Item berhasil dibuat')
       qc.invalidateQueries({ queryKey: ['items'] })
+      if (id) {
+        qc.invalidateQueries({ queryKey: ['item', id] })
+      }
       navigate('/master')
     },
     onError: (err: unknown) => {

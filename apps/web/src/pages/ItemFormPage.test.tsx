@@ -5,7 +5,9 @@ import userEvent from '@testing-library/user-event'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { ItemFormPage } from './ItemFormPage'
+import { MasterDataPage } from './MasterDataPage'
 import { api } from '@/lib/api'
+import { useAuthStore } from '@/store/auth.store'
 
 type PayrollOption = { component_key: string; label: string }
 type SelectOption = { value: string; label: string }
@@ -137,6 +139,20 @@ function renderItemForm(initialEntries: string) {
 describe('ItemFormPage Payroll component options', () => {
   beforeEach(() => {
     vi.restoreAllMocks()
+    useAuthStore.setState({
+      user: {
+        id: 'admin-1',
+        full_name: 'Admin',
+        email: 'admin@example.test',
+        whatsapp_number: '',
+        is_active: true,
+        role: { id: 'role-1', code: 'ADMIN', name: 'Admin' },
+        plantation_unit: null,
+        company_id: 'company-1',
+      },
+      token: 'token',
+      expiresAt: Date.now() + 60_000,
+    })
   })
 
   const mockGet = (responses: {
@@ -144,6 +160,7 @@ describe('ItemFormPage Payroll component options', () => {
     roleOptions?: Record<string, PayrollOption[]>
     blockOptions?: Record<string, PayrollOption[]>
     expenseItem?: Record<string, unknown> | null
+    expenseItems?: Record<string, unknown>[]
     optionsError?: Record<string, Error>
   } = {}) => vi.spyOn(api, 'get').mockImplementation((url: string, config?: { params?: { component?: string } }) => {
     if (url === '/expense-subcategories') {
@@ -186,6 +203,10 @@ describe('ItemFormPage Payroll component options', () => {
           },
         },
       })
+    }
+
+    if (url === '/expense-items') {
+      return Promise.resolve({ data: { success: true, data: responses.expenseItems ?? [] } })
     }
 
     if (url.startsWith('/expense-items/')) {
@@ -470,6 +491,160 @@ describe('ItemFormPage Payroll component options', () => {
     await waitFor(() => expect((screen.getByRole('combobox', { name: /Mode Input/i }) as HTMLSelectElement).value).toBe('auto_external'))
     await waitFor(() => expect(screen.getByRole('combobox', { name: /Component Payroll/i })).toHaveValue('base_payroll_total'))
     await waitFor(() => expect(screen.getByRole('button', { name: 'Pemanen' })).toHaveAttribute('aria-pressed', 'true'))
+  })
+
+  it('mengisi default item biaya saat klik edit dari master data tanpa refresh', async () => {
+    const user = userEvent.setup()
+    const expenseItem = {
+      ...baseItemPayload,
+      id: 'clicked-item-id',
+      subcategory_id: 'subcat-1',
+      code: 'DEF-001',
+      name: 'Default dari master',
+      default_account_number: '6-1001',
+      default_unit: 'kg',
+      default_rate: 12500,
+      mode_input: 'auto_external',
+      external_source_system: 'payroll',
+      external_component: 'base_payroll_total',
+      external_component_keys: ['pemanen'],
+      external_role: 'bhl',
+      is_routine: false,
+      is_active: true,
+      is_deduction: true,
+    }
+
+    mockGet({
+      componentOptions: {
+        base_payroll_total: [
+          { component_key: 'pemanen', label: 'Pemanen' },
+        ],
+      },
+      roleOptions: {
+        base_payroll_total: [
+          { component_key: 'bhl', label: 'BHL' },
+        ],
+      },
+      expenseItem,
+      expenseItems: [expenseItem],
+    })
+
+    render(
+      <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+        <MemoryRouter initialEntries={['/master']}>
+          <Routes>
+            <Route path="/master" element={<MasterDataPage />} />
+            <Route path="/master/item/:id/edit" element={<ItemFormPage />} />
+          </Routes>
+        </MemoryRouter>
+      </QueryClientProvider>,
+    )
+
+    await user.click(await screen.findByRole('button', { name: 'Item Biaya' }))
+    await user.click(await screen.findByRole('button', { name: 'Edit' }))
+
+    await waitFor(() => expect(screen.getByPlaceholderText('A1.001')).toHaveValue('DEF-001'))
+    expect(screen.getByPlaceholderText('Pupuk Urea')).toHaveValue('Default dari master')
+    expect(screen.getByPlaceholderText('6-1001')).toHaveValue('6-1001')
+    expect(screen.getByPlaceholderText('kg')).toHaveValue('kg')
+    expect(screen.getByPlaceholderText('0')).toHaveValue(12500)
+    expect(screen.getByRole('combobox', { name: /Mode Input/i })).toHaveValue('auto_external')
+    expect(screen.getByRole('combobox', { name: /Component Payroll/i })).toHaveValue('base_payroll_total')
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Pemanen' })).toHaveAttribute('aria-pressed', 'true'))
+    await waitFor(() => expect(screen.getByRole('button', { name: 'BHL' })).toHaveAttribute('aria-pressed', 'true'))
+  })
+
+  it('mengisi default item biaya saat pindah dari tambah ke edit tanpa refresh', async () => {
+    const user = userEvent.setup()
+    const expenseItem = {
+      ...baseItemPayload,
+      id: 'route-reuse-item-id',
+      subcategory_id: 'subcat-1',
+      code: 'EDIT-001',
+      name: 'Edit route reuse',
+      default_account_number: '6-2002',
+      default_unit: 'ltr',
+      default_rate: 7700,
+      is_routine: false,
+      is_active: false,
+      is_deduction: true,
+    }
+
+    mockGet({
+      expenseItem,
+      expenseItems: [expenseItem],
+    })
+
+    render(
+      <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+        <MemoryRouter initialEntries={['/master/item/buat']}>
+          <Routes>
+            <Route path="/master/item/buat" element={<ItemFormPage />} />
+            <Route path="/master" element={<MasterDataPage />} />
+            <Route path="/master/item/:id/edit" element={<ItemFormPage />} />
+          </Routes>
+        </MemoryRouter>
+      </QueryClientProvider>,
+    )
+
+    await user.type(screen.getByPlaceholderText('A1.001'), 'DRAFT')
+    await user.click(screen.getByRole('button', { name: 'Batal' }))
+    await user.click(await screen.findByRole('button', { name: 'Item Biaya' }))
+    await user.click(await screen.findByRole('button', { name: 'Edit' }))
+
+    await waitFor(() => expect(screen.getByPlaceholderText('A1.001')).toHaveValue('EDIT-001'))
+    expect(screen.getByPlaceholderText('Pupuk Urea')).toHaveValue('Edit route reuse')
+    expect(screen.getByPlaceholderText('6-1001')).toHaveValue('6-2002')
+    expect(screen.getByPlaceholderText('kg')).toHaveValue('ltr')
+    expect(screen.getByPlaceholderText('0')).toHaveValue(7700)
+  })
+
+  it('refetch detail item biaya saat cache edit masih stale dari klik sebelumnya', async () => {
+    const freshItem = {
+      ...baseItemPayload,
+      id: 'stale-cache-item-id',
+      subcategory_id: 'subcat-1',
+      code: 'FRESH-001',
+      name: 'Fresh detail',
+      default_account_number: '6-3003',
+      default_unit: 'ha',
+      default_rate: 9900,
+    }
+    const staleItem = {
+      ...freshItem,
+      code: '',
+      name: '',
+      default_account_number: null,
+      default_unit: null,
+      default_rate: null,
+    }
+    const get = mockGet({ expenseItem: freshItem })
+    const client = new QueryClient({
+      defaultOptions: {
+        queries: {
+          retry: false,
+          staleTime: 30_000,
+        },
+      },
+    })
+    client.setQueryData(['item', 'stale-cache-item-id'], staleItem)
+
+    render(
+      <QueryClientProvider client={client}>
+        <MemoryRouter initialEntries={['/master/item/stale-cache-item-id/edit']}>
+          <Routes>
+            <Route path="/master/item/:id/edit" element={<ItemFormPage />} />
+          </Routes>
+        </MemoryRouter>
+      </QueryClientProvider>,
+    )
+
+    await waitFor(() => expect(get).toHaveBeenCalledWith('/expense-items/stale-cache-item-id'))
+    await waitFor(() => expect(screen.getByPlaceholderText('A1.001')).toHaveValue('FRESH-001'))
+    expect(screen.getByPlaceholderText('Pupuk Urea')).toHaveValue('Fresh detail')
+    expect(screen.getByPlaceholderText('6-1001')).toHaveValue('6-3003')
+    expect(screen.getByPlaceholderText('kg')).toHaveValue('ha')
+    expect(screen.getByPlaceholderText('0')).toHaveValue(9900)
   })
 
   it('menghapus component key saat component berubah ke non-option', async () => {
