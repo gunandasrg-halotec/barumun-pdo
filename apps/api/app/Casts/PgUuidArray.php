@@ -4,6 +4,7 @@ namespace App\Casts;
 
 use Illuminate\Contracts\Database\Eloquent\CastsAttributes;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Support\Facades\DB;
 
 /**
  * Cast untuk kolom UUID[] di PostgreSQL.
@@ -15,6 +16,12 @@ class PgUuidArray implements CastsAttributes
     public function get(Model $model, string $key, mixed $value, array $attributes): ?array
     {
         if ($value === null) return null;
+
+        if (DB::getDriverName() === 'sqlite') {
+            $decoded = json_decode($value, true);
+
+            return is_array($decoded) ? $decoded : null;
+        }
 
         // PostgreSQL returns: {"uuid1","uuid2"} or {uuid1,uuid2}
         $value = trim($value, '{}');
@@ -30,6 +37,10 @@ class PgUuidArray implements CastsAttributes
     {
         if ($value === null) return null;
         if (!is_array($value) || empty($value)) return null;
+
+        if (DB::getDriverName() === 'sqlite') {
+            return json_encode(array_values($value));
+        }
 
         // Format PostgreSQL array literal: {uuid1,uuid2}
         return '{' . implode(',', $value) . '}';

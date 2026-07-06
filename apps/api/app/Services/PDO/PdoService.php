@@ -626,8 +626,13 @@ class PdoService
             ->whereNull('deleted_at')
             ->where(function ($q) use ($unitId) {
                 // NULL = berlaku untuk semua kebun; atau unit ada di dalam array
-                $q->whereNull('routine_plantation_unit_ids')
-                  ->orWhereRaw("routine_plantation_unit_ids @> ARRAY[?]::uuid[]", [$unitId]);
+                $q->whereNull('routine_plantation_unit_ids');
+
+                if (DB::getDriverName() === 'sqlite') {
+                    $q->orWhereJsonContains('routine_plantation_unit_ids', $unitId);
+                } else {
+                    $q->orWhereRaw("routine_plantation_unit_ids @> ARRAY[?]::uuid[]", [$unitId]);
+                }
             })
             ->orderBy('code')
             ->get();

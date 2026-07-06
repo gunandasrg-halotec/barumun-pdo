@@ -2,8 +2,8 @@
 
 use Illuminate\Database\Migrations\Migration;
 use Illuminate\Database\Schema\Blueprint;
-use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Schema;
 
 return new class extends Migration
 {
@@ -13,7 +13,14 @@ return new class extends Migration
             $table->boolean('split_transfer')->default(false)->after('mode_input');
         });
 
-        // PostgreSQL array type tidak didukung Blueprint, pakai raw SQL
+        if (DB::getDriverName() === 'sqlite') {
+            Schema::table('expense_items', function (Blueprint $table) {
+                $table->json('routine_plantation_unit_ids')->nullable();
+            });
+
+            return;
+        }
+
         DB::statement('ALTER TABLE expense_items ADD COLUMN routine_plantation_unit_ids UUID[] DEFAULT NULL');
     }
 
@@ -22,6 +29,15 @@ return new class extends Migration
         Schema::table('expense_items', function (Blueprint $table) {
             $table->dropColumn('split_transfer');
         });
+
+        if (DB::getDriverName() === 'sqlite') {
+            Schema::table('expense_items', function (Blueprint $table) {
+                $table->dropColumn('routine_plantation_unit_ids');
+            });
+
+            return;
+        }
+
         DB::statement('ALTER TABLE expense_items DROP COLUMN IF EXISTS routine_plantation_unit_ids');
     }
 };

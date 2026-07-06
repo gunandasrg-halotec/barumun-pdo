@@ -22,6 +22,7 @@ class RealizationEntryFactory extends Factory
             'proof_number' => 'REAL-' . $this->faker->numerify('######'),
             'funding_source'   => RealizationEntry::FUNDING_KAS_KEBUN,
             'explanation'      => null,
+            'settlement_group' => RealizationEntry::SETTLEMENT_KEBUN,
         ];
     }
 }

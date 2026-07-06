@@ -1,12 +1,24 @@
 <?php
 
 use Illuminate\Database\Migrations\Migration;
+use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Schema;
 
 return new class extends Migration
 {
     public function up(): void
     {
+        if (DB::getDriverName() === 'sqlite') {
+            Schema::table('transfer_entries', function (Blueprint $table) {
+                $table->string('status')->default('committed');
+                $table->timestamp('committed_at')->nullable();
+                $table->foreignUuid('committed_by')->nullable()->constrained('users');
+            });
+
+            return;
+        }
+
         DB::statement(<<<'SQL'
             DO $$
             BEGIN
@@ -28,6 +40,15 @@ return new class extends Migration
 
     public function down(): void
     {
+        if (DB::getDriverName() === 'sqlite') {
+            Schema::table('transfer_entries', function (Blueprint $table) {
+                $table->dropForeign(['committed_by']);
+                $table->dropColumn(['status', 'committed_at', 'committed_by']);
+            });
+
+            return;
+        }
+
         DB::statement('DROP INDEX IF EXISTS transfer_entries_status_idx');
         DB::statement('ALTER TABLE transfer_entries DROP COLUMN IF EXISTS committed_by');
         DB::statement('ALTER TABLE transfer_entries DROP COLUMN IF EXISTS committed_at');

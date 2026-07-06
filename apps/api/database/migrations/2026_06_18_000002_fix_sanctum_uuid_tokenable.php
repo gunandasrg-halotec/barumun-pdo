@@ -9,6 +9,7 @@ return new class extends Migration
     public function up(): void
     {
         Schema::table('personal_access_tokens', function (Blueprint $table) {
+            $table->dropIndex(['tokenable_type', 'tokenable_id']);
             $table->dropColumn('tokenable_id');
         });
 
