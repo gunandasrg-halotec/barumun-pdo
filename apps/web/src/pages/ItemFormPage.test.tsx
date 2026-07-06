@@ -11,7 +11,7 @@ type PayrollOption = { component_key: string; label: string }
 type SelectOption = { value: string; label: string }
 
 vi.mock('react-select/async', () => ({
-  default: ({
+  default: function AsyncSelectMock({
     'aria-label': ariaLabel,
     defaultOptions,
     isMulti,
@@ -27,7 +27,7 @@ vi.mock('react-select/async', () => ({
     onChange?: (value: SelectOption[] | SelectOption | null) => void
     value?: SelectOption[] | SelectOption | null
     placeholder?: string
-  }) => {
+  }) {
     const [options, setOptions] = useState<SelectOption[]>(Array.isArray(defaultOptions) ? defaultOptions : [])
 
     useEffect(() => {
@@ -48,10 +48,14 @@ vi.mock('react-select/async', () => ({
           }}
         />
         <div>
-          {options.map((option) => (
+          {options.map((option) => {
+            const exists = currentValue.some((selected) => selected.value === option.value)
+
+            return (
             <button
               key={option.value}
               type="button"
+              aria-pressed={exists ? 'true' : 'false'}
               onClick={() => {
                 if (!onChange) return
                 if (!isMulti) {
@@ -59,7 +63,6 @@ vi.mock('react-select/async', () => ({
                   return
                 }
 
-                const exists = currentValue.some((selected) => selected.value === option.value)
                 onChange(exists
                   ? currentValue.filter((selected) => selected.value !== option.value)
                   : [...currentValue, option])
@@ -67,7 +70,8 @@ vi.mock('react-select/async', () => ({
             >
               {option.label}
             </button>
-          ))}
+            )
+          })}
         </div>
       </div>
     )
@@ -183,7 +187,7 @@ describe('ItemFormPage Payroll component options', () => {
     return Promise.resolve({ data: { success: true, data: [] } })
   })
 
-  it('memuat option payroll sebagai checkbox list', async () => {
+  it('memuat option payroll via react select', async () => {
     const user = userEvent.setup()
     const get = mockGet({
       componentOptions: {
@@ -200,8 +204,9 @@ describe('ItemFormPage Payroll component options', () => {
     await user.selectOptions(screen.getByRole('combobox', { name: /Component Payroll/i }), ['base_payroll_total'])
 
     expect(await screen.findByText('Component Keys')).toBeInTheDocument()
-    expect(screen.getByLabelText('Pemanen')).toBeInTheDocument()
-    expect(screen.getByLabelText('BHL')).toBeInTheDocument()
+    expect(screen.getByLabelText('Component Keys Payroll')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Pemanen' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'BHL' })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Semua' })).toBeInTheDocument()
 
     expect(get).toHaveBeenCalledWith('/payroll-cost-component-options', expect.objectContaining({
@@ -224,7 +229,7 @@ describe('ItemFormPage Payroll component options', () => {
     await user.selectOptions(screen.getByRole('combobox', { name: /Mode Input/i }), ['auto_external'])
     await user.selectOptions(screen.getByRole('combobox', { name: /Component Payroll/i }), ['additional_wage_type_total'])
 
-    expect(await screen.findByLabelText('Bonus Pemanen')).toBeInTheDocument()
+    expect(await screen.findByRole('button', { name: 'Bonus Pemanen' })).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'Semua' })).not.toBeInTheDocument()
   })
 
@@ -328,10 +333,10 @@ describe('ItemFormPage Payroll component options', () => {
     renderItemForm('/master/item/existing-id/edit')
 
     await waitFor(() => expect(screen.getByRole('combobox', { name: /Component Payroll/i })).toHaveValue('base_payroll_total'))
-    const pemanen = await screen.findByLabelText('Pemanen')
-    const bhl = screen.getByLabelText('BHL')
-    expect(pemanen).not.toBeChecked()
-    expect(bhl).not.toBeChecked()
+    const pemanen = await screen.findByRole('button', { name: 'Pemanen' })
+    const bhl = screen.getByRole('button', { name: 'BHL' })
+    expect(pemanen).toHaveAttribute('aria-pressed', 'false')
+    expect(bhl).toHaveAttribute('aria-pressed', 'false')
   })
 
   it('mengisi component key dari legacy external role saat edit base payroll lama', async () => {
@@ -357,7 +362,7 @@ describe('ItemFormPage Payroll component options', () => {
 
     await waitFor(() => expect((screen.getByRole('combobox', { name: /Mode Input/i }) as HTMLSelectElement).value).toBe('auto_external'))
     await waitFor(() => expect(screen.getByRole('combobox', { name: /Component Payroll/i })).toHaveValue('base_payroll_total'))
-    await waitFor(() => expect(screen.getByLabelText('Pemanen')).toBeChecked())
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Pemanen' })).toHaveAttribute('aria-pressed', 'true'))
   })
 
   it('menghapus component key saat component berubah ke non-option', async () => {
@@ -375,14 +380,14 @@ describe('ItemFormPage Payroll component options', () => {
 
     await user.selectOptions(screen.getByRole('combobox', { name: /Mode Input/i }), ['auto_external'])
     await user.selectOptions(screen.getByRole('combobox', { name: /Component Payroll/i }), ['base_payroll_total'])
-    await user.click(await screen.findByLabelText('Pemanen'))
-    expect(screen.getByLabelText('Pemanen')).toBeChecked()
+    await user.click(await screen.findByRole('button', { name: 'Pemanen' }))
+    expect(screen.getByRole('button', { name: 'Pemanen' })).toHaveAttribute('aria-pressed', 'true')
 
     await user.selectOptions(screen.getByRole('combobox', { name: /Component Payroll/i }), ['harvest_tbs_total'])
     expect(screen.queryByText('Component Keys')).not.toBeInTheDocument()
 
     await user.selectOptions(screen.getByRole('combobox', { name: /Component Payroll/i }), ['base_payroll_total'])
-    expect(await screen.findByLabelText('Pemanen')).not.toBeChecked()
+    expect(await screen.findByRole('button', { name: 'Pemanen' })).toHaveAttribute('aria-pressed', 'false')
   })
 
   it('menampilkan block mapping maintenance independen dari item rutin', async () => {

@@ -257,12 +257,29 @@ export function ItemFormPage() {
     setValue('external_block_scopes', null)
   }, [isAutoExternal, setValue])
 
-  const toggleExternalKey = (key: string) => {
-    const current = selectedComponentKeys ?? []
-    const next = current.includes(key)
-      ? current.filter((value) => value !== key)
-      : [...current, key]
-    setValue('external_component_keys', next.length > 0 ? next : null)
+  const componentKeyOptions = useMemo<SelectOption[]>(
+    () => componentOptions.map((option) => ({
+      value: option.component_key,
+      label: option.label,
+    })),
+    [componentOptions],
+  )
+  const selectedComponentKeyOptions = useMemo<SelectOption[]>(
+    () => (selectedComponentKeys ?? []).map((key) => (
+      componentKeyOptions.find((option) => option.value === key)
+      ?? { value: key, label: key }
+    )),
+    [componentKeyOptions, selectedComponentKeys],
+  )
+
+  const syncSelectedComponentKeys = (options: readonly SelectOption[]) => {
+    const nextKeys = options.map((option) => option.value)
+    setValue('external_component_keys', nextKeys.length > 0 ? nextKeys : null)
+  }
+
+  const loadComponentKeyOptions = async (inputValue: string) => {
+    const query = inputValue.trim().toLowerCase()
+    return componentKeyOptions.filter((option) => option.label.toLowerCase().includes(query))
   }
 
   const toggleSplitUnit = (id: string) => {
@@ -494,18 +511,20 @@ export function ItemFormPage() {
                   {!optionsLoaded ? (
                     <p className="px-3 py-2 text-sm text-muted">Memuat opsi payroll...</p>
                   ) : (
-                    <div className="flex flex-col">
-                      {componentOptions.map((option) => (
-                        <label key={option.component_key} className="flex items-center gap-2 px-3 py-2 text-sm border-b last:border-b-0 border-line cursor-pointer">
-                          <input
-                            type="checkbox"
-                            checked={(selectedComponentKeys ?? []).includes(option.component_key)}
-                            onChange={() => toggleExternalKey(option.component_key)}
-                            className="checkbox"
-                          />
-                          <span>{option.label}</span>
-                        </label>
-                      ))}
+                    <div className="p-3">
+                      <AsyncSelect
+                        inputId="component-keys-payroll"
+                        aria-label="Component Keys Payroll"
+                        isMulti
+                        cacheOptions
+                        defaultOptions={componentKeyOptions}
+                        value={selectedComponentKeyOptions}
+                        loadOptions={loadComponentKeyOptions}
+                        onChange={(nextValue) => syncSelectedComponentKeys([...(nextValue ?? [])] as SelectOption[])}
+                        placeholder="Pilih component key payroll..."
+                        classNamePrefix="react-select"
+                        isDisabled={componentKeyOptions.length === 0}
+                      />
                     </div>
                   )}
                 </div>
