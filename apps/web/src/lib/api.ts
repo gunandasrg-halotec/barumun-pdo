@@ -1,5 +1,6 @@
-import axios, { AxiosError } from 'axios'
+import axios, { AxiosError, type InternalAxiosRequestConfig } from 'axios'
 import { useAuthStore } from '@/store/auth.store'
+import { refreshAccessToken } from './tokenRefresh'
 import type { ApiError } from '@/types'
 
 export const api = axios.create({
@@ -14,10 +15,25 @@ api.interceptors.request.use((config) => {
   return config
 })
 
-// Response interceptor — handle 401 (redirect ke login)
+type RetryableConfig = InternalAxiosRequestConfig & { _retry?: boolean }
+
+// Response interceptor — pada 401, coba refresh token sekali (fallback untuk
+// kasus timer proaktif meleset, mis. laptop sleep) sebelum redirect ke login.
 api.interceptors.response.use(
   (res) => res,
-  (error: AxiosError<ApiError>) => {
+  async (error: AxiosError<ApiError>) => {
+    const originalRequest = error.config as RetryableConfig | undefined
+    const isAuthRoute = originalRequest?.url?.includes('/auth/login')
+
+    if (error.response?.status === 401 && originalRequest && !originalRequest._retry && !isAuthRoute) {
+      originalRequest._retry = true
+      const newToken = await refreshAccessToken()
+      if (newToken) {
+        originalRequest.headers.set('Authorization', `Bearer ${newToken}`)
+        return api(originalRequest)
+      }
+    }
+
     if (error.response?.status === 401) {
       window.location.href = '/login'
     }

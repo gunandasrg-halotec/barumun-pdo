@@ -3,6 +3,7 @@ import { Search, LogOut } from 'lucide-react'
 import { useAuthStore } from '@/store/auth.store'
 import { useNavigate } from 'react-router-dom'
 import { api } from '@/lib/api'
+import { clearTokenRefreshTimer } from '@/lib/tokenRefresh'
 import { getInitials } from '@/lib/format'
 import { ROLE_LABELS } from '@/lib/auth'
 import type { RoleCode } from '@/types'
@@ -20,6 +21,7 @@ export function Topbar({ onSearch }: TopbarProps) {
     try {
       await api.post('/auth/logout')
     } finally {
+      clearTokenRefreshTimer()
       logout()
       navigate('/login')
     }

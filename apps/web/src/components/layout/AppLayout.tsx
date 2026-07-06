@@ -1,11 +1,18 @@
+import { useEffect } from 'react'
 import { Outlet, Navigate } from 'react-router-dom'
 import { Sidebar } from './Sidebar'
 import { Topbar } from './Topbar'
 import { ToastContainer } from '@/components/ui/Toast'
 import { useAuthStore } from '@/store/auth.store'
+import { resumeTokenRefreshFromStoredSession } from '@/lib/tokenRefresh'
 
 export function AppLayout() {
   const user = useAuthStore((s) => s.user)
+
+  // Lanjutkan jadwal refresh token dari sesi tersimpan (mis. setelah reload halaman).
+  useEffect(() => {
+    resumeTokenRefreshFromStoredSession()
+  }, [])
 
   if (!user) return <Navigate to="/login" replace />
 

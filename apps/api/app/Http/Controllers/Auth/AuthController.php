@@ -11,6 +11,7 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\RateLimiter;
 use Illuminate\Validation\ValidationException;
+use Laravel\Sanctum\PersonalAccessToken;
 
 class AuthController extends Controller
 {
@@ -140,9 +141,8 @@ class AuthController extends Controller
     {
         $request->validate(['refresh_token' => 'required|string']);
 
-        // Cari token berdasarkan hash
-        $hashedToken = hash('sha256', $request->refresh_token);
-        $token = \Laravel\Sanctum\PersonalAccessToken::where('token', $hashedToken)->first();
+        // Cari token — findToken() menangani prefix "{id}|" dari plainTextToken dengan benar
+        $token = PersonalAccessToken::findToken($request->refresh_token);
 
         if (! $token || $token->expires_at?->isPast()) {
             return response()->json([
