@@ -365,6 +365,32 @@ describe('ItemFormPage Payroll component options', () => {
     await waitFor(() => expect(screen.getByRole('button', { name: 'Pemanen' })).toHaveAttribute('aria-pressed', 'true'))
   })
 
+  it('mengisi component key saat edit jika selector set kosong tapi legacy component key ada', async () => {
+    mockGet({
+      componentOptions: {
+        base_payroll_total: [
+          { component_key: 'pemanen', label: 'Pemanen' },
+          { component_key: 'bhl', label: 'BHL' },
+        ],
+      },
+      expenseItem: {
+        ...baseItemPayload,
+        id: 'legacy-component-key-id',
+        mode_input: 'auto_external',
+        external_source_system: 'payroll',
+        external_component: 'base_payroll_total',
+        external_component_key: 'pemanen',
+        external_component_keys: [],
+      },
+    })
+
+    renderItemForm('/master/item/legacy-component-key-id/edit')
+
+    await waitFor(() => expect((screen.getByRole('combobox', { name: /Mode Input/i }) as HTMLSelectElement).value).toBe('auto_external'))
+    await waitFor(() => expect(screen.getByRole('combobox', { name: /Component Payroll/i })).toHaveValue('base_payroll_total'))
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Pemanen' })).toHaveAttribute('aria-pressed', 'true'))
+  })
+
   it('menghapus component key saat component berubah ke non-option', async () => {
     const user = userEvent.setup()
     mockGet({

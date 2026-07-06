@@ -227,8 +227,9 @@ export function ItemFormPage() {
       }
       const legacyRole = ext.external_component === 'base_payroll_total' && !ext.external_component_key ? ext.external_role : null
       const normalizedExternalRole = legacyRole ? legacyRole : null
-      const normalizedComponentKeys = ext.external_component_keys
-        ?? (ext.external_component_key ? [ext.external_component_key] : (normalizedExternalRole ? [normalizedExternalRole] : null))
+      const normalizedComponentKeys = ext.external_component_keys && ext.external_component_keys.length > 0
+        ? ext.external_component_keys
+        : (ext.external_component_key ? [ext.external_component_key] : (normalizedExternalRole ? [normalizedExternalRole] : null))
       reset({
         ...existing,
         notes: existing.notes ?? '',
