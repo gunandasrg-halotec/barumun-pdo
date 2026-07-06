@@ -1,10 +1,11 @@
 import { useEffect, useMemo, useRef } from 'react'
-import { useNavigate, useParams } from 'react-router-dom'
+import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { useForm, useWatch } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api, getApiErrorMessage } from '@/lib/api'
+import { resolveMasterDataReturnTo } from '@/lib/masterDataState'
 import { Button } from '@/components/ui/Button'
 import { useToastStore } from '@/store/toast.store'
 import AsyncSelect from 'react-select/async'
@@ -94,9 +95,11 @@ function isPayrollComponent(value: unknown): value is PayrollComponent {
 export function ItemFormPage() {
   const { id }   = useParams<{ id: string }>()
   const navigate = useNavigate()
+  const [searchParams] = useSearchParams()
   const toast    = useToastStore((s) => s.push)
   const qc       = useQueryClient()
   const isEdit   = !!id
+  const returnTo = resolveMasterDataReturnTo(searchParams.get('returnTo'))
 
   const { data: subcategories } = useSubcategories({ is_active: true })
 
@@ -405,7 +408,7 @@ export function ItemFormPage() {
       if (id) {
         qc.invalidateQueries({ queryKey: ['item', id] })
       }
-      navigate('/master')
+      navigate(returnTo)
     },
     onError: (err: unknown) => {
       type ApiErr = { response?: { data?: { error?: { details?: { field: string; message: string }[] } } } }
@@ -461,7 +464,7 @@ export function ItemFormPage() {
   return (
     <div className="form-container-narrow">
       <div className="flex items-center gap-3 mb-6">
-        <Button variant="secondary" size="sm" onClick={() => navigate('/master')}>
+        <Button variant="secondary" size="sm" onClick={() => navigate(returnTo)}>
           <ArrowLeft className="w-4 h-4" />
         </Button>
         <h2 className="text-[28px] font-[950] text-ink">
@@ -775,7 +778,7 @@ export function ItemFormPage() {
 
         <div className="flex gap-2 pt-2">
           <Button type="submit" loading={save.isPending} disabled={isSubmitDisabled}>Simpan</Button>
-          <Button type="button" variant="secondary" onClick={() => navigate('/master')}>Batal</Button>
+          <Button type="button" variant="secondary" onClick={() => navigate(returnTo)}>Batal</Button>
         </div>
       </form>
     </div>
