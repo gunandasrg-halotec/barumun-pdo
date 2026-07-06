@@ -61,6 +61,13 @@ const subcategories = [{
   display_order: 1,
   is_active: true,
 }, {
+  id: 'sub-1b',
+  category_id: 'cat-1',
+  code: 'SUB-B',
+  name: 'Subkategori B',
+  display_order: 2,
+  is_active: true,
+}, {
   id: 'sub-2',
   category_id: 'cat-2',
   code: 'OPS-SUB',
@@ -106,6 +113,14 @@ const items = [{
   subcategory_id: 'sub-2',
   code: 'OPS-1',
   name: 'Second Group Item',
+  mode_input: 'manual',
+  default_unit: null,
+  default_rate: null,
+}, {
+  id: 'item-cat-1b',
+  subcategory_id: 'sub-1b',
+  code: 'CAT-2',
+  name: 'First Group Item B',
   mode_input: 'manual',
   default_unit: null,
   default_rate: null,
@@ -212,7 +227,7 @@ describe('PdoFormPage bulk external pull', () => {
     expect(await screen.findByRole('button', { name: 'Semua Data Sudah Fresh' })).toBeDisabled()
   })
 
-  it('uses full-width table layout and expands only the first loaded group', async () => {
+  it('opens first category, auto-opens its subcategories, locks existing taxonomy fields', async () => {
     vi.spyOn(api, 'get').mockImplementation((url: string) => {
       if (url === '/plantation-units') {
         return Promise.resolve({ data: { success: true, data: [{ id: 'unit-1', code: 'KP', name: 'Kebun Pusat', is_active: true }] } })
@@ -240,6 +255,7 @@ describe('PdoFormPage bulk external pull', () => {
             success: true,
             data: [
               makeDetail({ id: 'detail-second', expense_item_id: 'item-cat-2', description: 'Second Group Detail', amount: 200, needs_pull: false }),
+              makeDetail({ id: 'detail-first-b', expense_item_id: 'item-cat-1b', description: 'First Group Detail B', amount: 150, needs_pull: false }),
               makeDetail({ id: 'detail-first', expense_item_id: 'item-cat-1', description: 'First Group Detail', amount: 100, needs_pull: false }),
             ],
           },
@@ -253,8 +269,72 @@ describe('PdoFormPage bulk external pull', () => {
 
     expect(await screen.findByTestId('pdo-form-page')).toHaveClass('w-full')
     expect(await screen.findByTestId('pdo-detail-table')).toHaveClass('min-w-[1200px]')
-    expect(await screen.findByDisplayValue('First Group Detail')).toBeInTheDocument()
+    const firstDetail = await screen.findByDisplayValue('First Group Detail')
+    const firstDetailB = await screen.findByDisplayValue('First Group Detail B')
+    expect(firstDetail).toBeInTheDocument()
+    expect(firstDetailB).toBeInTheDocument()
     expect(screen.queryByDisplayValue('Second Group Detail')).not.toBeInTheDocument()
+
+    const firstRow = firstDetail.closest('tr')
+    const firstRowSelects = within(firstRow as HTMLElement).getAllByRole('combobox')
+    expect(firstRowSelects[0]).toBeDisabled()
+    expect(firstRowSelects[1]).toBeDisabled()
+    expect(firstRowSelects[2]).toBeDisabled()
+  })
+
+  it('re-opens all subcategories when category group expands again', async () => {
+    const user = userEvent.setup()
+
+    vi.spyOn(api, 'get').mockImplementation((url: string) => {
+      if (url === '/plantation-units') {
+        return Promise.resolve({ data: { success: true, data: [{ id: 'unit-1', code: 'KP', name: 'Kebun Pusat', is_active: true }] } })
+      }
+
+      if (url === '/expense-items') {
+        return Promise.resolve({ data: { success: true, data: items } })
+      }
+
+      if (url === '/expense-subcategories') {
+        return Promise.resolve({ data: { success: true, data: subcategories } })
+      }
+
+      if (url === '/expense-categories') {
+        return Promise.resolve({ data: { success: true, data: categories } })
+      }
+
+      if (url === '/pdo/pdo-1') {
+        return Promise.resolve({ data: { success: true, data: { pdo: basePdo } } })
+      }
+
+      if (url === '/pdo/pdo-1/details') {
+        return Promise.resolve({
+          data: {
+            success: true,
+            data: [
+              makeDetail({ id: 'detail-second', expense_item_id: 'item-cat-2', description: 'Second Group Detail', amount: 200, needs_pull: false }),
+              makeDetail({ id: 'detail-first-b', expense_item_id: 'item-cat-1b', description: 'First Group Detail B', amount: 150, needs_pull: false }),
+              makeDetail({ id: 'detail-first', expense_item_id: 'item-cat-1', description: 'First Group Detail', amount: 100, needs_pull: false }),
+            ],
+          },
+        })
+      }
+
+      return Promise.resolve({ data: { success: true, data: [] } })
+    })
+
+    renderPdoForm('/pdo/pdo-1/edit')
+
+    expect(await screen.findByDisplayValue('First Group Detail B')).toBeInTheDocument()
+
+    await user.click(screen.getByText('SUB-B — Subkategori B', { selector: 'span' }))
+    await waitFor(() => expect(screen.queryByDisplayValue('First Group Detail B')).not.toBeInTheDocument())
+
+    await user.click(screen.getByText('CAT — Kategori', { selector: 'span' }))
+    await waitFor(() => expect(screen.queryByDisplayValue('First Group Detail')).not.toBeInTheDocument())
+
+    await user.click(screen.getByText('CAT — Kategori', { selector: 'span' }))
+    expect(await screen.findByDisplayValue('First Group Detail')).toBeInTheDocument()
+    expect(await screen.findByDisplayValue('First Group Detail B')).toBeInTheDocument()
   })
 
   it('runs bulk pull, refetches details, shows summary toast, row error, unsaved warning', async () => {

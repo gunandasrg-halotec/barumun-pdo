@@ -61,7 +61,6 @@ type CollapseOptions = {
 function buildCollapsedGroups(selections: RowSelection[], options: CollapseOptions = {}) {
   const keys = new Set<string>()
   let firstCatKey: string | undefined
-  let firstSubKey: string | undefined
   const orderedSelections = options.expandFirst
     ? [...selections].sort((a, b) => {
         const catDiff = (options.categoryOrder?.get(a.categoryId) ?? 999) - (options.categoryOrder?.get(b.categoryId) ?? 999)
@@ -79,14 +78,19 @@ function buildCollapsedGroups(selections: RowSelection[], options: CollapseOptio
 
     if (selection.subcategoryId) {
       const subKey = `sub_${selection.categoryId}_${selection.subcategoryId}`
-      if (catKey === firstCatKey && !firstSubKey) firstSubKey = subKey
       keys.add(subKey)
     }
   })
 
   if (options.expandFirst) {
     if (firstCatKey) keys.delete(firstCatKey)
-    if (firstSubKey) keys.delete(firstSubKey)
+    if (firstCatKey) {
+      for (const key of [...keys]) {
+        if (key.startsWith(`sub_${firstCatKey.replace('cat_', '')}_`)) {
+          keys.delete(key)
+        }
+      }
+    }
   }
 
   return keys
@@ -486,6 +490,25 @@ export function PdoFormPage() {
   const toggleGroup = useCallback((key: string) => {
     setCollapsedGroups((prev) => {
       const next = new Set(prev)
+
+      if (key.startsWith('cat_')) {
+        const categoryId = key.replace('cat_', '')
+        const isCollapsed = next.has(key)
+
+        if (isCollapsed) {
+          next.delete(key)
+          for (const groupKey of [...next]) {
+            if (groupKey.startsWith(`sub_${categoryId}_`)) {
+              next.delete(groupKey)
+            }
+          }
+        } else {
+          next.add(key)
+        }
+
+        return next
+      }
+
       next.has(key) ? next.delete(key) : next.add(key)
       return next
     })
@@ -539,6 +562,7 @@ export function PdoFormPage() {
     const itemId             = detailValues?.[idx]?.expense_item_id ?? ''
     const item               = items?.find((entry) => entry.id === itemId)
     const snapshot           = detailSnapshots[idx]
+    const isPersistedDetail  = !!snapshot?.id
     const isAutoExternal     = snapshot?.is_auto_external_active ?? item?.mode_input === 'auto_external'
     const isExternalReadOnly = snapshot?.is_external_read_only   ?? item?.mode_input === 'auto_external'
     const pullError          = pullErrors[idx]
@@ -561,6 +585,7 @@ export function PdoFormPage() {
             <select
               className="table-input min-w-[170px]"
               value={sel.categoryId}
+              disabled={isPersistedDetail}
               onChange={(e) => handleCategoryChange(idx, e.target.value)}
             >
               <option value="">Pilih kategori...</option>
@@ -573,7 +598,7 @@ export function PdoFormPage() {
             <select
               className="table-input min-w-[180px]"
               value={sel.subcategoryId}
-              disabled={!sel.categoryId}
+              disabled={isPersistedDetail || !sel.categoryId}
               onChange={(e) => handleSubcategoryChange(idx, e.target.value)}
             >
               <option value="">
@@ -588,7 +613,7 @@ export function PdoFormPage() {
             <select
               {...register(`details.${idx}.expense_item_id`)}
               className="table-input min-w-[210px]"
-              disabled={!sel.subcategoryId}
+              disabled={isPersistedDetail || !sel.subcategoryId}
               onChange={(e) => {
                 register(`details.${idx}.expense_item_id`).onChange(e)
                 handleItemChange(idx, e.target.value)
