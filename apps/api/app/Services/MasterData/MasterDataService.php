@@ -266,6 +266,8 @@ class MasterDataService
             $data['external_source_system'] = null;
             $data['external_component'] = null;
             $data['external_component_key'] = null;
+            $data['external_component_keys'] = null;
+            $data['external_block_keys'] = null;
             $data['external_role'] = null;
         }
 
@@ -299,6 +301,8 @@ class MasterDataService
             $data['external_source_system'] = null;
             $data['external_component'] = null;
             $data['external_component_key'] = null;
+            $data['external_component_keys'] = null;
+            $data['external_block_keys'] = null;
             $data['external_role'] = null;
         }
 
@@ -359,7 +363,8 @@ class MasterDataService
 
             $mappingChanged = $originalItem->external_source_system !== $freshItem->external_source_system
                 || $originalItem->external_component !== $freshItem->external_component
-                || $this->externalComponentKeySnapshotValue($originalItem) !== $this->externalComponentKeySnapshotValue($freshItem);
+                || $this->externalComponentKeysSnapshotValue($originalItem) !== $this->externalComponentKeysSnapshotValue($freshItem)
+                || $this->externalBlockKeysSnapshotValue($originalItem) !== $this->externalBlockKeysSnapshotValue($freshItem);
 
             if (! $mappingChanged) {
                 return;
@@ -369,6 +374,8 @@ class MasterDataService
                 'external_source_system' => $freshItem->external_source_system,
                 'external_component' => $freshItem->external_component,
                 'external_component_key' => $this->externalComponentKeySnapshotValue($freshItem),
+                'external_component_keys' => $this->externalComponentKeysSnapshotValue($freshItem),
+                'external_block_keys' => $this->externalBlockKeysSnapshotValue($freshItem),
                 'external_amount_pulled_at' => null,
                 'external_payload' => null,
                 'updated_at' => now(),
@@ -382,6 +389,8 @@ class MasterDataService
                 'external_source_system' => $freshItem->external_source_system,
                 'external_component' => $freshItem->external_component,
                 'external_component_key' => $this->externalComponentKeySnapshotValue($freshItem),
+                'external_component_keys' => $this->externalComponentKeysSnapshotValue($freshItem),
+                'external_block_keys' => $this->externalBlockKeysSnapshotValue($freshItem),
                 'external_amount_pulled_at' => null,
                 'external_payload' => null,
                 'updated_at' => now(),
@@ -394,6 +403,8 @@ class MasterDataService
             'external_source_system' => null,
             'external_component' => null,
             'external_component_key' => null,
+            'external_component_keys' => null,
+            'external_block_keys' => null,
             'external_amount_pulled_at' => null,
             'external_payload' => null,
             'updated_at' => now(),
@@ -456,18 +467,24 @@ class MasterDataService
         $hasMappingPayload = array_key_exists('external_source_system', $data)
             || array_key_exists('external_component', $data)
             || array_key_exists('external_component_key', $data)
+            || array_key_exists('external_component_keys', $data)
+            || array_key_exists('external_block_keys', $data)
             || array_key_exists('external_role', $data);
 
         if (! $hasMappingPayload && $currentItem && $currentItem->mode_input === ExpenseItem::MODE_AUTO_EXTERNAL) {
-            $legacyRole = $this->normalizeExternalComponentKey($currentItem->external_role);
+            $component = $currentItem->external_component;
+            $currentRole = $this->normalizeExternalComponentKey($currentItem->external_role);
+            $currentKeys = $this->normalizeStringList($currentItem->external_component_keys);
 
             if (
-                $currentItem->external_component === ExpenseItem::PAYROLL_COMPONENT_BASE_PAYROLL_TOTAL
+                $currentKeys === null
                 && $currentItem->external_component_key === null
-                && $legacyRole !== null
-                && $this->isValidLegacyPayrollRoleKey($legacyRole)
+                && $currentRole !== null
+                && ExpenseItem::supportsPayrollRole($component)
+                && $this->isValidLegacyPayrollRoleKey($currentRole)
             ) {
-                $data['external_component_key'] = $legacyRole;
+                $data['external_component_keys'] = [$currentRole];
+                $data['external_component_key'] = $currentRole;
                 $data['external_role'] = null;
             }
 
@@ -475,27 +492,10 @@ class MasterDataService
         }
 
         $component = $data['external_component'] ?? $currentItem?->external_component;
-        $hasExplicitComponentKey = array_key_exists('external_component_key', $data);
+        $hasExplicitComponentKey = array_key_exists('external_component_key', $data)
+            && $this->normalizeExternalComponentKey($data['external_component_key'] ?? null) !== null;
+        $legacyComponentKey = $this->normalizeExternalComponentKey($data['external_component_key'] ?? null);
         $legacyRole = $this->normalizeExternalComponentKey($data['external_role'] ?? null);
-        $data['external_role'] = null;
-        $currentRole = $this->normalizeExternalComponentKey($currentItem?->external_role);
-        $keySourceFromLegacyRole = false;
-
-        if ($hasExplicitComponentKey) {
-            $data['external_component_key'] = $this->normalizeExternalComponentKey($data['external_component_key'] ?? null);
-        } elseif ($legacyRole !== null && ExpenseItem::supportsPayrollRole($component)) {
-            $data['external_component_key'] = $legacyRole;
-            $keySourceFromLegacyRole = true;
-        } elseif ($currentItem && $currentItem->external_component === $component) {
-            $data['external_component_key'] = $this->normalizeExternalComponentKey($currentItem->external_component_key);
-
-            if ($data['external_component_key'] === null && $currentRole !== null && ExpenseItem::supportsPayrollRole($component)) {
-                $data['external_component_key'] = $currentRole;
-                $keySourceFromLegacyRole = true;
-            }
-        } else {
-            $data['external_component_key'] = null;
-        }
 
         if (! is_string($component)) {
             return;
@@ -503,32 +503,137 @@ class MasterDataService
 
         if (! ExpenseItem::supportsExternalOption($component)) {
             $data['external_component_key'] = null;
+            $data['external_component_keys'] = null;
+            $data['external_block_keys'] = null;
             $data['external_role'] = null;
 
             return;
         }
 
-        if (ExpenseItem::requiresComponentKey($component) && ! filled($data['external_component_key'])) {
+        $componentKeys = $this->resolveRequestedExternalComponentKeys($data, $currentItem, $component);
+        $blockKeys = $this->resolveRequestedExternalBlockKeys($data, $currentItem, $component);
+        $componentKeysFromLegacyRole = $legacyRole !== null
+            && $componentKeys === [$legacyRole]
+            && ExpenseItem::supportsPayrollRole($component)
+            && $this->isValidLegacyPayrollRoleKey($legacyRole);
+
+        if (ExpenseItem::requiresComponentKey($component) && $componentKeys === null) {
             throw ValidationException::withMessages([
                 'external_component_key' => ['external_component_key wajib diisi untuk component additional_wage_type_total.'],
             ]);
         }
 
-        if ($data['external_component_key'] === null || $data['external_component_key'] === '') {
-            return;
+        if ($componentKeys !== null && ! $componentKeysFromLegacyRole) {
+            $validKeys = $this->resolvePayrollComponentKeys($component);
+            $invalidComponentKeys = array_values(array_diff($componentKeys, $validKeys));
+
+            if ($invalidComponentKeys !== []) {
+                throw ValidationException::withMessages([
+                    'external_component_key' => ['external_component_key tidak ditemukan pada Payroll.'],
+                ]);
+            }
         }
 
-        if ($keySourceFromLegacyRole && ! $this->isValidLegacyPayrollRoleKey($data['external_component_key'])) {
-            $data['external_component_key'] = null;
+        if (! ExpenseItem::supportsMaintenanceBlockSelectors($component)) {
+            $blockKeys = null;
+        } elseif ($blockKeys !== null) {
+            $unit = $this->resolveSingleScopedPlantationUnit($data, $currentItem);
 
-            return;
+            if (! $unit instanceof PlantationUnit || ! filled($unit->payroll_estate_external_id)) {
+                throw ValidationException::withMessages([
+                    'external_block_keys' => ['external_block_keys hanya boleh diisi untuk item dengan tepat satu kebun scope yang punya Payroll Estate Mapping.'],
+                ]);
+            }
+
+            $validBlockKeys = $this->resolvePayrollComponentKeys($component, 'blocks', $unit->payroll_estate_external_id, 'external_block_keys');
+            $invalidBlockKeys = array_values(array_diff($blockKeys, $validBlockKeys));
+
+            if ($invalidBlockKeys !== []) {
+                throw ValidationException::withMessages([
+                    'external_block_keys' => ['external_block_keys tidak ditemukan pada Payroll.'],
+                ]);
+            }
         }
 
-        if (! $this->isValidExternalComponentKey($component, (string) $data['external_component_key'])) {
-            throw ValidationException::withMessages([
-                'external_component_key' => ['external_component_key tidak ditemukan pada Payroll.'],
-            ]);
+        if ($hasExplicitComponentKey && $legacyComponentKey !== null && $componentKeys === null) {
+            $componentKeys = [$legacyComponentKey];
         }
+
+        $data['external_role'] = null;
+        $data['external_component_keys'] = $componentKeys;
+        $data['external_block_keys'] = $blockKeys;
+        $data['external_component_key'] = $componentKeys !== null && count($componentKeys) === 1
+            ? $componentKeys[0]
+            : null;
+    }
+
+    private function resolveRequestedExternalComponentKeys(array $data, ?ExpenseItem $currentItem, string $component): ?array
+    {
+        if (array_key_exists('external_component_keys', $data)) {
+            return $this->normalizeStringList($data['external_component_keys']);
+        }
+
+        $legacyRole = $this->normalizeExternalComponentKey($data['external_role'] ?? null);
+
+        if ($legacyRole !== null && ExpenseItem::supportsPayrollRole($component) && $this->isValidLegacyPayrollRoleKey($legacyRole)) {
+            return [$legacyRole];
+        }
+
+        $legacyComponentKey = $this->normalizeExternalComponentKey($data['external_component_key'] ?? null);
+
+        if ($legacyComponentKey !== null) {
+            return [$legacyComponentKey];
+        }
+
+        if (! $currentItem || $currentItem->external_component !== $component) {
+            return null;
+        }
+
+        $currentKeys = $this->normalizeStringList($currentItem->external_component_keys);
+
+        if ($currentKeys !== null) {
+            return $currentKeys;
+        }
+
+        $currentRole = $this->normalizeExternalComponentKey($currentItem->external_role);
+
+        if ($currentRole !== null && ExpenseItem::supportsPayrollRole($component) && $this->isValidLegacyPayrollRoleKey($currentRole)) {
+            return [$currentRole];
+        }
+
+        $currentComponentKey = $this->normalizeExternalComponentKey($currentItem->external_component_key);
+
+        return $currentComponentKey !== null ? [$currentComponentKey] : null;
+    }
+
+    private function resolveRequestedExternalBlockKeys(array $data, ?ExpenseItem $currentItem, string $component): ?array
+    {
+        if (! ExpenseItem::supportsMaintenanceBlockSelectors($component)) {
+            return null;
+        }
+
+        if (array_key_exists('external_block_keys', $data)) {
+            return $this->normalizeStringList($data['external_block_keys']);
+        }
+
+        if ($currentItem && $currentItem->external_component === $component) {
+            return $this->normalizeStringList($currentItem->external_block_keys);
+        }
+
+        return null;
+    }
+
+    private function resolveSingleScopedPlantationUnit(array $data, ?ExpenseItem $currentItem): ?PlantationUnit
+    {
+        $scopedUnitIds = array_key_exists('routine_plantation_unit_ids', $data)
+            ? $this->normalizeStringList($data['routine_plantation_unit_ids'])
+            : $this->normalizeStringList($currentItem?->routine_plantation_unit_ids);
+
+        if ($scopedUnitIds === null || count($scopedUnitIds) !== 1) {
+            return null;
+        }
+
+        return PlantationUnit::find($scopedUnitIds[0]);
     }
 
     private function isValidLegacyPayrollRoleKey(string $componentKey): bool
@@ -536,18 +641,15 @@ class MasterDataService
         return in_array($componentKey, ExpenseItem::payrollRoles(), true);
     }
 
-    private function isValidExternalComponentKey(string $component, string $componentKey): bool
-    {
-        $validKeys = $this->resolvePayrollComponentKeys($component);
-
-        return in_array($componentKey, $validKeys, true);
-    }
-
     /** @return array<int,string> */
-    private function resolvePayrollComponentKeys(string $component): array
-    {
+    private function resolvePayrollComponentKeys(
+        string $component,
+        ?string $filter = null,
+        ?string $estateExternalId = null,
+        string $errorField = 'external_component_key',
+    ): array {
         try {
-            return collect($this->payrollApi->fetchComponentOptions($component))
+            return collect($this->payrollApi->fetchComponentOptions($component, $filter, $estateExternalId))
                 ->pluck('component_key')
                 ->filter(fn ($key): bool => is_string($key))
                 ->unique()
@@ -555,7 +657,7 @@ class MasterDataService
                 ->all();
         } catch (PayrollApiException $exception) {
             throw ValidationException::withMessages([
-                'external_component_key' => [$exception->getMessage()],
+                $errorField => [$exception->getMessage()],
             ]);
         }
     }
@@ -571,17 +673,63 @@ class MasterDataService
         return $trimmed === '' ? null : $trimmed;
     }
 
-    private function externalComponentKeySnapshotValue(ExpenseItem $item): ?string
+    /** @return array<int,string>|null */
+    private function normalizeStringList(mixed $values): ?array
     {
-        if (filled($item->external_component_key)) {
-            return $item->external_component_key;
+        if (! is_array($values)) {
+            return null;
         }
 
-        if (ExpenseItem::supportsPayrollRole($item->external_component) && filled($item->external_role)) {
-            return $item->external_role;
+        $normalized = [];
+
+        foreach ($values as $value) {
+            $key = $this->normalizeExternalComponentKey($value);
+
+            if ($key === null || in_array($key, $normalized, true)) {
+                continue;
+            }
+
+            $normalized[] = $key;
+        }
+
+        return $normalized === [] ? null : $normalized;
+    }
+
+    private function externalComponentKeySnapshotValue(ExpenseItem $item): ?string
+    {
+        $keys = $this->externalComponentKeysSnapshotValue($item);
+
+        if ($keys !== null && count($keys) === 1) {
+            return $keys[0];
         }
 
         return null;
+    }
+
+    /** @return array<int,string>|null */
+    private function externalComponentKeysSnapshotValue(ExpenseItem $item): ?array
+    {
+        $keys = $this->normalizeStringList($item->external_component_keys);
+
+        if ($keys !== null) {
+            return $keys;
+        }
+
+        if (filled($item->external_component_key)) {
+            return [$item->external_component_key];
+        }
+
+        if (ExpenseItem::supportsPayrollRole($item->external_component) && filled($item->external_role)) {
+            return [$item->external_role];
+        }
+
+        return null;
+    }
+
+    /** @return array<int,string>|null */
+    private function externalBlockKeysSnapshotValue(ExpenseItem $item): ?array
+    {
+        return $this->normalizeStringList($item->external_block_keys);
     }
 
     /** BR-MASTER-003 */

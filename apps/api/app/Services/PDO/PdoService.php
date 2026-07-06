@@ -503,10 +503,12 @@ class PdoService
             ]);
         }
 
-        $componentKey = ExpenseItem::supportsExternalOption($item->external_component)
-            ? $this->resolveCanonicalExternalComponentKeyFromItem($item)
+        $componentKeys = ExpenseItem::supportsExternalOption($item->external_component)
+            ? $this->resolveCanonicalExternalComponentKeysFromItem($item)
             : null;
-        $storedComponentKey = $item->external_component_key;
+        $blockKeys = ExpenseItem::supportsMaintenanceBlockSelectors($item->external_component)
+            ? $this->normalizeStringList($item->external_block_keys)
+            : null;
 
         $payrollPeriod = Carbon::create($pdo->period_year, $pdo->period_month, 1)->subMonth();
 
@@ -515,22 +517,30 @@ class PdoService
             month: $payrollPeriod->month,
             estateExternalId: $pdo->plantationUnit->payroll_estate_external_id,
             component: $item->external_component,
-            componentKey: $componentKey,
-            role: null,
+            componentKeys: $componentKeys,
+            blockKeys: $blockKeys,
         );
 
         if ($response->successful()) {
-            return DB::transaction(function () use ($actor, $detail, $item, $pdo, $response, $componentKey, $storedComponentKey) {
+            return DB::transaction(function () use ($actor, $detail, $item, $pdo, $response, $componentKeys, $blockKeys) {
                 $old = $detail->toArray();
                 $payload = array_merge($response->json(), $detail->currentExternalMappingFingerprint());
+                $payload['component_key'] = $componentKeys !== null && count($componentKeys) === 1 ? $componentKeys[0] : null;
+                $payload['role'] = null;
+                $usesSelectorSets = ($componentKeys !== null && count($componentKeys) > 1)
+                    || ($blockKeys !== null && count($blockKeys) > 0);
 
                 $detail->update([
                     'amount' => (int) data_get($payload, 'amount', 0),
-                    'quantity' => (float) data_get($payload, 'volume', 0),
-                    'unit' => data_get($payload, 'unit'),
+                    'quantity' => $usesSelectorSets ? 1.0 : (float) data_get($payload, 'volume', 0),
+                    'unit' => $usesSelectorSets ? 'lot' : data_get($payload, 'unit'),
                     'external_source_system' => $item->external_source_system,
                     'external_component' => $item->external_component,
-                    'external_component_key' => $componentKey ?? $storedComponentKey,
+                    'external_component_key' => ExpenseItem::supportsExternalOption($item->external_component)
+                        ? ($componentKeys !== null && count($componentKeys) === 1 ? $componentKeys[0] : null)
+                        : $item->external_component_key,
+                    'external_component_keys' => $componentKeys,
+                    'external_block_keys' => $blockKeys,
                     'external_amount_pulled_at' => Carbon::now(),
                     'external_payload' => $payload,
                 ]);
@@ -553,8 +563,8 @@ class PdoService
                     $item,
                     [
                         'amount' => (int) data_get($payload, 'amount', 0),
-                        'quantity' => (float) data_get($payload, 'volume', 0),
-                        'unit' => data_get($payload, 'unit'),
+                        'quantity' => $usesSelectorSets ? 1.0 : (float) data_get($payload, 'volume', 0),
+                        'unit' => $usesSelectorSets ? 'lot' : data_get($payload, 'unit'),
                         'payroll_status' => data_get($payload, 'status'),
                         'http_status' => $response->status(),
                     ]
@@ -628,6 +638,8 @@ class PdoService
                 'external_source_system' => $item->mode_input === ExpenseItem::MODE_AUTO_EXTERNAL ? $item->external_source_system : null,
                 'external_component' => $item->mode_input === ExpenseItem::MODE_AUTO_EXTERNAL ? $item->external_component : null,
                 'external_component_key' => $item->mode_input === ExpenseItem::MODE_AUTO_EXTERNAL ? $item->external_component_key : null,
+                'external_component_keys' => $item->mode_input === ExpenseItem::MODE_AUTO_EXTERNAL ? $this->resolveCanonicalExternalComponentKeysFromItem($item) : null,
+                'external_block_keys' => $item->mode_input === ExpenseItem::MODE_AUTO_EXTERNAL ? $this->normalizeStringList($item->external_block_keys) : null,
                 'display_order'  => $order + 1,
             ]);
         }
@@ -656,14 +668,20 @@ class PdoService
         }
     }
 
-    private function resolveCanonicalExternalComponentKeyFromItem(ExpenseItem $item): ?string
+    private function resolveCanonicalExternalComponentKeysFromItem(ExpenseItem $item): ?array
     {
+        $keys = $this->normalizeStringList($item->external_component_keys);
+
+        if ($keys !== null) {
+            return $keys;
+        }
+
         if (filled($item->external_component_key)) {
-            return $item->external_component_key;
+            return [$item->external_component_key];
         }
 
         if (ExpenseItem::supportsPayrollRole($item->external_component) && filled($item->external_role)) {
-            return $item->external_role;
+            return [$item->external_role];
         }
 
         return null;
@@ -674,8 +692,8 @@ class PdoService
         int $month,
         string $estateExternalId,
         string $component,
-        ?string $componentKey,
-        ?string $role,
+        ?array $componentKeys,
+        ?array $blockKeys,
     ): Response {
         $baseUrl = rtrim((string) config('services.payroll_internal_api.base_url', ''), '/');
         $token = (string) config('services.payroll_internal_api.token', '');
@@ -686,8 +704,9 @@ class PdoService
                 'month' => $month,
                 'estate_external_id' => $estateExternalId,
                 'component' => $component,
-                'component_key' => $componentKey,
-                'role' => $role,
+                'component_key' => $componentKeys !== null && count($componentKeys) === 1 ? $componentKeys[0] : null,
+                'component_keys' => $componentKeys,
+                'block_keys' => $blockKeys,
             ]);
 
             abort(response()->json([
@@ -700,7 +719,7 @@ class PdoService
         }
 
         try {
-        return Http::acceptJson()
+            return Http::acceptJson()
                 ->asJson()
                 ->withToken($token)
                 ->timeout(15)
@@ -709,17 +728,18 @@ class PdoService
                     'month' => $month,
                     'estate_external_id' => $estateExternalId,
                     'component' => $component,
-                    'component_key' => $componentKey,
-                    'role' => $role,
-                ], static fn (mixed $value): bool => $value !== null && $value !== ''));
+                    'component_keys' => $componentKeys,
+                    'block_keys' => $blockKeys,
+                ], static fn (mixed $value): bool => $value !== null && $value !== '' && $value !== []));
         } catch (ConnectionException) {
             Log::error('PDO external pull connection failed', [
                 'year' => $year,
                 'month' => $month,
                 'estate_external_id' => $estateExternalId,
                 'component' => $component,
-                'component_key' => $componentKey,
-                'role' => $role,
+                'component_key' => $componentKeys !== null && count($componentKeys) === 1 ? $componentKeys[0] : null,
+                'component_keys' => $componentKeys,
+                'block_keys' => $blockKeys,
             ]);
 
             abort(response()->json([
@@ -759,7 +779,9 @@ class PdoService
             'external_source_system' => $item?->external_source_system,
             'external_component' => $item?->external_component,
             'external_component_key' => $item?->external_component_key,
-            'external_role' => ExpenseItem::supportsPayrollRole($item?->external_component) ? $item?->external_role : null,
+            'external_component_key_canonical' => (($keys = $this->resolveCanonicalExternalComponentKeysFromItem($item)) !== null && count($keys) === 1) ? $keys[0] : null,
+            'external_component_keys' => $this->normalizeStringList($item?->external_component_keys),
+            'external_block_keys' => $this->normalizeStringList($item?->external_block_keys),
         ], $extra);
     }
 
@@ -777,5 +799,30 @@ class PdoService
         $detail->setRelation('pdoHeader', $pdo);
 
         return $detail;
+    }
+
+    private function normalizeStringList(mixed $values): ?array
+    {
+        if (! is_array($values)) {
+            return null;
+        }
+
+        $normalized = [];
+
+        foreach ($values as $value) {
+            if (! is_string($value)) {
+                continue;
+            }
+
+            $trimmed = trim($value);
+
+            if ($trimmed === '' || in_array($trimmed, $normalized, true)) {
+                continue;
+            }
+
+            $normalized[] = $trimmed;
+        }
+
+        return $normalized === [] ? null : $normalized;
     }
 }

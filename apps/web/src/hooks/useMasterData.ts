@@ -128,16 +128,23 @@ export function useCreateItem() {
   })
 }
 
-export function usePayrollComponentOptions(component?: string | null) {
+export function usePayrollComponentOptions(
+  component?: string | null,
+  options?: { filter?: 'blocks'; estateExternalId?: string | null },
+) {
   return useQuery({
-    queryKey: ['payroll-component-options', component],
+    queryKey: ['payroll-component-options', component, options?.filter ?? null, options?.estateExternalId ?? null],
     queryFn: async () => {
       const res = await api.get<ApiResponse<PayrollComponentOptionsResponse>>('/payroll-cost-component-options', {
-        params: { component },
+        params: {
+          component,
+          filter: options?.filter,
+          estate_external_id: options?.estateExternalId ?? undefined,
+        },
       })
       return res.data.data
     },
-    enabled: Boolean(component),
+    enabled: Boolean(component) && (options?.filter !== 'blocks' || Boolean(options?.estateExternalId)),
     staleTime: 5 * 60 * 1000,
   })
 }

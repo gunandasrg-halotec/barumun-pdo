@@ -229,7 +229,8 @@ class PdoExternalCostPullTest extends TestCase
                 && $request['month'] === 6
                 && $request['estate_external_id'] === 'EST-001'
                 && $request['component'] === ExpenseItem::PAYROLL_COMPONENT_BASE_PAYROLL_TOTAL
-                && $request['component_key'] === 'bhl'
+                && $request['component_keys'] === ['bhl']
+                && ! isset($request['component_key'])
                 && ! isset($request['role']);
         });
     }
@@ -280,7 +281,8 @@ class PdoExternalCostPullTest extends TestCase
                 && $request['month'] === 6
                 && $request['estate_external_id'] === 'EST-001'
                 && $request['component'] === ExpenseItem::PAYROLL_COMPONENT_BASE_PAYROLL_TOTAL
-                && $request['component_key'] === ExpenseItem::PAYROLL_ROLE_PEMANEN
+                && $request['component_keys'] === [ExpenseItem::PAYROLL_ROLE_PEMANEN]
+                && ! isset($request['component_key'])
                 && ! isset($request['role']);
         });
     }
@@ -358,8 +360,66 @@ class PdoExternalCostPullTest extends TestCase
         Http::assertSent(function ($request): bool {
             return str_starts_with($request->url(), 'http://payroll.test/internal/payroll-costs')
                 && $request['component'] === ExpenseItem::PAYROLL_COMPONENT_MAINTENANCE_TOTAL
-                && $request['component_key'] === 'pekerjaan-001'
+                && $request['component_keys'] === ['pekerjaan-001']
+                && ! isset($request['component_key'])
                 && ! isset($request['role']);
+        });
+    }
+
+    public function test_pull_maintenance_selector_sets_send_component_keys_and_block_keys_and_store_lot_snapshot(): void
+    {
+        $this->setPayrollApiConfig('http://payroll.test', 'test-payroll-token');
+
+        $kerani = $this->keraniUser();
+        $pdo = $this->draftPdo($kerani);
+        $detail = $this->autoExternalDetail(
+            $pdo,
+            externalRole: null,
+            externalComponentKey: null,
+            externalComponent: ExpenseItem::PAYROLL_COMPONENT_MAINTENANCE_TOTAL,
+        );
+        $detail->expenseItem()->update([
+            'external_component_keys' => ['PT-002', 'PT-001'],
+            'external_block_keys' => ['BLK-002', 'BLK-001'],
+        ]);
+
+        Http::fake([
+            'http://payroll.test/internal/payroll-costs*' => Http::response([
+                'status' => 'ok',
+                'amount' => 3100000,
+                'unit' => 'HK',
+                'volume' => 22,
+                'component' => ExpenseItem::PAYROLL_COMPONENT_MAINTENANCE_TOTAL,
+                'component_label' => 'Alat Berat, Zebra Work',
+                'block_label' => 'Bravo, Alpha',
+                'period' => '2026-06',
+                'estate_external_id' => 'EST-001',
+                'generated_at' => '2026-06-23T12:30:00+07:00',
+            ], 200),
+        ]);
+
+        Sanctum::actingAs($kerani);
+
+        $response = $this->postJson("/api/v1/pdo/{$pdo->id}/details/{$detail->id}/pull-external-cost");
+
+        $response->assertOk()
+            ->assertJsonPath('data.amount', 3100000)
+            ->assertJsonPath('data.quantity', 1)
+            ->assertJsonPath('data.unit', 'lot')
+            ->assertJsonPath('data.external_component_key', null)
+            ->assertJsonPath('data.external_component_keys.0', 'PT-002')
+            ->assertJsonPath('data.external_component_keys.1', 'PT-001')
+            ->assertJsonPath('data.external_block_keys.0', 'BLK-002')
+            ->assertJsonPath('data.external_block_keys.1', 'BLK-001')
+            ->assertJsonPath('data.external_payload.component_keys.0', 'PT-002')
+            ->assertJsonPath('data.external_payload.block_keys.0', 'BLK-002');
+
+        Http::assertSent(function ($request): bool {
+            return str_starts_with($request->url(), 'http://payroll.test/internal/payroll-costs')
+                && $request['component'] === ExpenseItem::PAYROLL_COMPONENT_MAINTENANCE_TOTAL
+                && $request['component_keys'] === ['PT-002', 'PT-001']
+                && $request['block_keys'] === ['BLK-002', 'BLK-001']
+                && ! isset($request['component_key']);
         });
     }
 

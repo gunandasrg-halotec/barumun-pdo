@@ -107,6 +107,42 @@ class PayrollCostComponentOptionsTest extends TestCase
             ->assertJsonPath('error.message', 'Konfigurasi Payroll internal API belum lengkap.');
     }
 
+    public function test_maintenance_block_options_are_forwarded_with_estate_scope(): void
+    {
+        $admin = $this->adminUser();
+        $this->setPayrollApiConfig('http://payroll.test', 'test-payroll-token');
+
+        Http::fake([
+            'http://payroll.test/internal/payroll-cost-component-options*' => Http::response([
+                'data' => [
+                    'options' => [
+                        ['component_key' => 'BLK-001', 'label' => 'Alpha'],
+                        ['component_key' => 'BLK-003', 'label' => 'Zulu'],
+                    ],
+                ],
+            ], 200),
+        ]);
+
+        Sanctum::actingAs($admin);
+
+        $response = $this->getJson('/api/v1/payroll-cost-component-options?component='
+            .ExpenseItem::PAYROLL_COMPONENT_MAINTENANCE_TOTAL
+            .'&filter=blocks&estate_external_id=EST-001');
+
+        $response->assertOk()
+            ->assertJsonPath('success', true)
+            ->assertJsonPath('data.component', ExpenseItem::PAYROLL_COMPONENT_MAINTENANCE_TOTAL)
+            ->assertJsonPath('data.options.0.component_key', 'BLK-001')
+            ->assertJsonPath('data.options.1.label', 'Zulu');
+
+        Http::assertSent(function ($request): bool {
+            return str_starts_with($request->url(), 'http://payroll.test/internal/payroll-cost-component-options')
+                && $request['component'] === ExpenseItem::PAYROLL_COMPONENT_MAINTENANCE_TOTAL
+                && $request['filter'] === 'blocks'
+                && $request['estate_external_id'] === 'EST-001';
+        });
+    }
+
     private function adminUser(): User
     {
         $company = Company::factory()->create();

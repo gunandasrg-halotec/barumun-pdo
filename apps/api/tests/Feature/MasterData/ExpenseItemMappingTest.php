@@ -172,6 +172,85 @@ class ExpenseItemMappingTest extends TestCase
             ->assertJsonPath('data.external_component_key', null);
     }
 
+    public function test_maintenance_mapping_can_store_component_key_sets_and_block_sets_for_single_scoped_unit(): void
+    {
+        $admin = $this->adminUser();
+        $subcategory = $this->expenseSubcategory($admin->company_id);
+        $unit = PlantationUnit::factory()->create([
+            'company_id' => $admin->company_id,
+            'payroll_estate_external_id' => 'EST-001',
+        ]);
+
+        $this->setPayrollApiConfig('http://payroll.test', 'test-payroll-token');
+        Http::fake([
+            'http://payroll.test/internal/payroll-cost-component-options*' => function ($request) {
+                if ($request['filter'] ?? null) {
+                    return Http::response([
+                        'data' => [
+                            'options' => [
+                                ['component_key' => 'BLK-001', 'label' => 'Alpha'],
+                                ['component_key' => 'BLK-002', 'label' => 'Bravo'],
+                            ],
+                        ],
+                    ], 200);
+                }
+
+                return Http::response([
+                    'data' => [
+                        'options' => [
+                            ['component_key' => 'PT-001', 'label' => 'Zebra Work'],
+                            ['component_key' => 'PT-002', 'label' => 'Alat Berat'],
+                        ],
+                    ],
+                ], 200);
+            },
+        ]);
+
+        Sanctum::actingAs($admin);
+
+        $response = $this->postJson('/api/v1/expense-items', [
+            'subcategory_id' => $subcategory->id,
+            'code' => 'EXT-004E',
+            'name' => 'Maintenance Set',
+            'mode_input' => ExpenseItem::MODE_AUTO_EXTERNAL,
+            'external_source_system' => ExpenseItem::EXTERNAL_SOURCE_PAYROLL,
+            'external_component' => ExpenseItem::PAYROLL_COMPONENT_MAINTENANCE_TOTAL,
+            'external_component_keys' => ['PT-002', 'PT-001', 'PT-002'],
+            'external_block_keys' => ['BLK-002', 'BLK-001', 'BLK-002'],
+            'routine_plantation_unit_ids' => [$unit->id],
+        ]);
+
+        $response->assertStatus(201)
+            ->assertJsonPath('data.external_component', ExpenseItem::PAYROLL_COMPONENT_MAINTENANCE_TOTAL)
+            ->assertJsonPath('data.external_component_key', null)
+            ->assertJsonPath('data.external_component_keys.0', 'PT-002')
+            ->assertJsonPath('data.external_component_keys.1', 'PT-001')
+            ->assertJsonPath('data.external_block_keys.0', 'BLK-002')
+            ->assertJsonPath('data.external_block_keys.1', 'BLK-001');
+    }
+
+    public function test_maintenance_block_selectors_require_exactly_one_scoped_unit(): void
+    {
+        $admin = $this->adminUser();
+        $subcategory = $this->expenseSubcategory($admin->company_id);
+
+        Sanctum::actingAs($admin);
+
+        $response = $this->postJson('/api/v1/expense-items', [
+            'subcategory_id' => $subcategory->id,
+            'code' => 'EXT-004F',
+            'name' => 'Maintenance Block Invalid',
+            'mode_input' => ExpenseItem::MODE_AUTO_EXTERNAL,
+            'external_source_system' => ExpenseItem::EXTERNAL_SOURCE_PAYROLL,
+            'external_component' => ExpenseItem::PAYROLL_COMPONENT_MAINTENANCE_TOTAL,
+            'external_block_keys' => ['BLK-001'],
+            'routine_plantation_unit_ids' => null,
+        ]);
+
+        $response->assertStatus(422)
+            ->assertJsonValidationErrors(['external_block_keys']);
+    }
+
     public function test_invalid_external_role_is_rejected(): void
     {
         $admin = $this->adminUser();

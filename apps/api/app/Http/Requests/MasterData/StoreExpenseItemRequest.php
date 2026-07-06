@@ -29,6 +29,10 @@ class StoreExpenseItemRequest extends FormRequest
             'external_source_system'             => ['nullable', Rule::in(ExpenseItem::payrollSourceSystems())],
             'external_component'                 => ['nullable', Rule::in(ExpenseItem::payrollComponents())],
             'external_component_key'             => ['nullable', 'string', 'max:100'],
+            'external_component_keys'            => ['nullable', 'array'],
+            'external_component_keys.*'          => ['nullable', 'string', 'max:100'],
+            'external_block_keys'                => ['nullable', 'array'],
+            'external_block_keys.*'              => ['nullable', 'string', 'max:100'],
             'external_role'                      => ['nullable', Rule::in(ExpenseItem::payrollRoles())],
             'split_transfer'                    => ['sometimes', 'boolean'],
             'split_transfer_plantation_unit_ids' => ['nullable', 'array'],
@@ -49,7 +53,7 @@ class StoreExpenseItemRequest extends FormRequest
             $isAdmin   = $this->user()?->hasRole(Role::ADMIN) ?? false;
 
             if (! $this->isAutoExternalMode($modeInput)) {
-                if ($this->has('external_source_system') || $this->has('external_component') || $this->has('external_component_key') || $this->has('external_role')) {
+                if ($this->has('external_source_system') || $this->has('external_component') || $this->has('external_component_key') || $this->has('external_component_keys') || $this->has('external_block_keys') || $this->has('external_role')) {
                     $validator->errors()->add('mode_input', 'Mode manual tidak dapat menyimpan mapping sumber eksternal.');
                 }
 
@@ -71,7 +75,11 @@ class StoreExpenseItemRequest extends FormRequest
             }
 
             if ($this->input('external_component') === ExpenseItem::PAYROLL_COMPONENT_ADDITIONAL_WAGE_TYPE_TOTAL && ! $this->filled('external_component_key')) {
-                $validator->errors()->add('external_component_key', 'external_component_key wajib diisi untuk component additional_wage_type_total.');
+                $componentKeys = array_filter($this->input('external_component_keys', []), fn ($value) => is_string($value) && trim($value) !== '');
+
+                if ($componentKeys === []) {
+                    $validator->errors()->add('external_component_key', 'external_component_key wajib diisi untuk component additional_wage_type_total.');
+                }
             }
 
             if ($this->filled('external_role') && ! ExpenseItem::supportsPayrollRole($this->input('external_component'))) {

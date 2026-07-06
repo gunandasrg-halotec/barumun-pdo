@@ -88,6 +88,8 @@ class ExpenseItem extends Model
         'external_source_system',
         'external_component',
         'external_component_key',
+        'external_component_keys',
+        'external_block_keys',
         'external_role',
         'split_transfer',
         'split_transfer_plantation_unit_ids',
@@ -141,11 +143,27 @@ class ExpenseItem extends Model
         ], true);
     }
 
+    public static function supportsSelectorSets(?string $component): bool
+    {
+        return in_array($component, [
+            self::PAYROLL_COMPONENT_BASE_PAYROLL_TOTAL,
+            self::PAYROLL_COMPONENT_MAINTENANCE_TOTAL,
+            self::PAYROLL_COMPONENT_ADDITIONAL_WAGE_TYPE_TOTAL,
+        ], true);
+    }
+
+    public static function supportsMaintenanceBlockSelectors(?string $component): bool
+    {
+        return $component === self::PAYROLL_COMPONENT_MAINTENANCE_TOTAL;
+    }
+
     protected function casts(): array
     {
         return [
             'default_rate' => 'integer',
             'split_transfer' => 'boolean',
+            'external_component_keys' => 'array',
+            'external_block_keys' => 'array',
             'split_transfer_plantation_unit_ids' => PgUuidArray::class,
             'is_routine' => 'boolean',
             'is_active' => 'boolean',

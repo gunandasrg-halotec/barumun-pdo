@@ -64,6 +64,7 @@ describe('ItemFormPage Payroll component options', () => {
 
   const mockGet = (responses: {
     componentOptions?: Record<string, PayrollOption[]>
+    blockOptions?: Record<string, PayrollOption[]>
     expenseItem?: Record<string, unknown> | null
     optionsError?: Record<string, Error>
   } = {}) => vi.spyOn(api, 'get').mockImplementation((url: string, config?: { params?: { component?: string } }) => {
@@ -72,11 +73,24 @@ describe('ItemFormPage Payroll component options', () => {
     }
 
     if (url === '/plantation-units') {
-      return Promise.resolve({ data: { success: true, data: [] } })
+      return Promise.resolve({ data: { success: true, data: [{
+        id: 'unit-1',
+        code: 'KP',
+        name: 'Kebun Pusat',
+        is_active: true,
+        payroll_estate_external_id: 'EST-001',
+      }, {
+        id: 'unit-2',
+        code: 'BN',
+        name: 'Bukit Nusa',
+        is_active: true,
+        payroll_estate_external_id: 'EST-002',
+      }] } })
     }
 
     if (url === '/payroll-cost-component-options') {
       const component = config?.params?.component
+      const filter = (config?.params as { filter?: string } | undefined)?.filter
       if (responses.optionsError && component && responses.optionsError[component]) {
         return Promise.reject(responses.optionsError[component])
       }
@@ -86,7 +100,9 @@ describe('ItemFormPage Payroll component options', () => {
           success: true,
           data: {
             component,
-            options: responses.componentOptions?.[component ?? ''] ?? [],
+            options: filter === 'blocks'
+              ? responses.blockOptions?.[component ?? ''] ?? []
+              : responses.componentOptions?.[component ?? ''] ?? [],
           },
         },
       })
@@ -101,7 +117,7 @@ describe('ItemFormPage Payroll component options', () => {
     return Promise.resolve({ data: { success: true, data: [] } })
   })
 
-  it('memuat option payroll dengan opsi kosong untuk component yang mengizinkan all', async () => {
+  it('memuat option payroll sebagai checkbox list', async () => {
     const user = userEvent.setup()
     const get = mockGet({
       componentOptions: {
@@ -117,17 +133,17 @@ describe('ItemFormPage Payroll component options', () => {
     await user.selectOptions(screen.getByRole('combobox', { name: /Mode Input/i }), ['auto_external'])
     await user.selectOptions(screen.getByRole('combobox', { name: /Component Payroll/i }), ['base_payroll_total'])
 
-    const keySelect = await screen.findByRole('combobox', { name: /Component Key/i })
-    expect(keySelect).toHaveDisplayValue('Semua')
-    expect(screen.getByRole('option', { name: 'Pemanen' })).toBeInTheDocument()
-    expect(screen.getByRole('option', { name: 'BHL' })).toBeInTheDocument()
+    expect(await screen.findByText('Component Keys')).toBeInTheDocument()
+    expect(screen.getByLabelText('Pemanen')).toBeInTheDocument()
+    expect(screen.getByLabelText('BHL')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Semua' })).toBeInTheDocument()
 
     expect(get).toHaveBeenCalledWith('/payroll-cost-component-options', expect.objectContaining({
       params: { component: 'base_payroll_total' },
     }))
   })
 
-  it('tidak menampilkan opsi kosong untuk additional wage type', async () => {
+  it('tidak menampilkan tombol Semua untuk additional wage type', async () => {
     const user = userEvent.setup()
     mockGet({
       componentOptions: {
@@ -142,12 +158,11 @@ describe('ItemFormPage Payroll component options', () => {
     await user.selectOptions(screen.getByRole('combobox', { name: /Mode Input/i }), ['auto_external'])
     await user.selectOptions(screen.getByRole('combobox', { name: /Component Payroll/i }), ['additional_wage_type_total'])
 
-    const keySelect = await screen.findByRole('combobox', { name: /Component Key/i })
-    expect(screen.queryByRole('option', { name: 'Semua' })).not.toBeInTheDocument()
-    expect(keySelect).toHaveDisplayValue('Bonus Pemanen')
+    expect(await screen.findByLabelText('Bonus Pemanen')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Semua' })).not.toBeInTheDocument()
   })
 
-  it('menyembunyikan Component Key jika component tidak punya opsi', async () => {
+  it('menyembunyikan Component Keys jika component tidak punya opsi', async () => {
     const user = userEvent.setup()
     mockGet({
       componentOptions: {
@@ -160,7 +175,7 @@ describe('ItemFormPage Payroll component options', () => {
     await user.selectOptions(screen.getByRole('combobox', { name: /Mode Input/i }), ['auto_external'])
     await user.selectOptions(screen.getByRole('combobox', { name: /Component Payroll/i }), ['harvest_tbs_total'])
 
-    expect(screen.queryByLabelText('Component Key')).not.toBeInTheDocument()
+    expect(screen.queryByText('Component Keys')).not.toBeInTheDocument()
   })
 
   it('men-disable submit saat opsi option component masih loading atau gagal', async () => {
@@ -247,9 +262,10 @@ describe('ItemFormPage Payroll component options', () => {
     renderItemForm('/master/item/existing-id/edit')
 
     await waitFor(() => expect(screen.getByRole('combobox', { name: /Component Payroll/i })).toHaveValue('base_payroll_total'))
-    const keySelect = await screen.findByRole('combobox', { name: /Component Key/i })
-    expect(keySelect).toHaveDisplayValue('Semua')
-    expect(screen.queryByRole('option', { name: /invalid/i })).not.toBeInTheDocument()
+    const pemanen = await screen.findByLabelText('Pemanen')
+    const bhl = screen.getByLabelText('BHL')
+    expect(pemanen).not.toBeChecked()
+    expect(bhl).not.toBeChecked()
   })
 
   it('mengisi component key dari legacy external role saat edit base payroll lama', async () => {
@@ -275,9 +291,7 @@ describe('ItemFormPage Payroll component options', () => {
 
     await waitFor(() => expect((screen.getByRole('combobox', { name: /Mode Input/i }) as HTMLSelectElement).value).toBe('auto_external'))
     await waitFor(() => expect(screen.getByRole('combobox', { name: /Component Payroll/i })).toHaveValue('base_payroll_total'))
-    const keySelect = await screen.findByRole('combobox', { name: /Component Key/i })
-    const keySelectElement = keySelect as HTMLSelectElement
-    await waitFor(() => expect(keySelectElement.value).toBe('pemanen'))
+    await waitFor(() => expect(screen.getByLabelText('Pemanen')).toBeChecked())
   })
 
   it('menghapus component key saat component berubah ke non-option', async () => {
@@ -295,14 +309,35 @@ describe('ItemFormPage Payroll component options', () => {
 
     await user.selectOptions(screen.getByRole('combobox', { name: /Mode Input/i }), ['auto_external'])
     await user.selectOptions(screen.getByRole('combobox', { name: /Component Payroll/i }), ['base_payroll_total'])
-    const keySelect = await screen.findByRole('combobox', { name: /Component Key/i })
-    await user.selectOptions(keySelect, ['pemanen'])
+    await user.click(await screen.findByLabelText('Pemanen'))
+    expect(screen.getByLabelText('Pemanen')).toBeChecked()
 
     await user.selectOptions(screen.getByRole('combobox', { name: /Component Payroll/i }), ['harvest_tbs_total'])
-    expect(screen.queryByLabelText('Component Key')).not.toBeInTheDocument()
+    expect(screen.queryByText('Component Keys')).not.toBeInTheDocument()
 
     await user.selectOptions(screen.getByRole('combobox', { name: /Component Payroll/i }), ['base_payroll_total'])
-    const clearedKeySelect = await screen.findByRole('combobox', { name: /Component Key/i })
-    expect(clearedKeySelect).toHaveDisplayValue('Semua')
+    expect(await screen.findByLabelText('Pemanen')).not.toBeChecked()
+  })
+
+  it('menampilkan block selector maintenance saat scope tepat satu kebun', async () => {
+    const user = userEvent.setup()
+    mockGet({
+      componentOptions: {
+        maintenance_total: [{ component_key: 'PT-001', label: 'Zebra Work' }],
+      },
+      blockOptions: {
+        maintenance_total: [{ component_key: 'BLK-001', label: 'Alpha' }],
+      },
+    })
+
+    renderItemForm('/master/item/buat')
+
+    expect(await screen.findByText('Item Rutin Berlaku Untuk:')).toBeInTheDocument()
+    await user.click(screen.getByRole('checkbox', { name: /KP — Kebun Pusat/i }))
+    await user.selectOptions(screen.getByRole('combobox', { name: /Mode Input/i }), ['auto_external'])
+    await user.selectOptions(screen.getByRole('combobox', { name: /Component Payroll/i }), ['maintenance_total'])
+
+    expect(await screen.findByText('Block Kebun')).toBeInTheDocument()
+    expect(await screen.findByLabelText('Alpha')).toBeInTheDocument()
   })
 })
