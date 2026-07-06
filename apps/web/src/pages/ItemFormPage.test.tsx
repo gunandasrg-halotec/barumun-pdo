@@ -554,6 +554,69 @@ describe('ItemFormPage Payroll component options', () => {
     await waitFor(() => expect(screen.getByRole('button', { name: 'BHL' })).toHaveAttribute('aria-pressed', 'true'))
   })
 
+  it('menampilkan kolom rutin dan mode input di hierarki biaya', async () => {
+    const user = userEvent.setup()
+    const paginated = <T,>(data: T[]) => ({
+      data: {
+        success: true,
+        data,
+        meta: { current_page: 1, per_page: data.length || 1, total: data.length, last_page: 1 },
+      },
+    })
+
+    vi.spyOn(api, 'get').mockImplementation((url: string) => {
+      if (url === '/expense-categories') {
+        return Promise.resolve(paginated([{
+          id: 'cat-1',
+          code: 'CAT-1',
+          name: 'Kategori Satu',
+          display_order: 1,
+          include_in_recap: true,
+          is_active: true,
+          notes: null,
+        }]))
+      }
+
+      if (url === '/expense-subcategories') {
+        return Promise.resolve(paginated([testSubcategories[0]]))
+      }
+
+      if (url === '/expense-items') {
+        return Promise.resolve(paginated([{
+          ...baseItemPayload,
+          id: 'item-hierarchy-1',
+          subcategory_id: 'subcat-1',
+          code: 'ITM-001',
+          name: 'Item Hierarki',
+          mode_input: 'auto_external',
+          is_routine: true,
+        }]))
+      }
+
+      return Promise.resolve({ data: { success: true, data: [] } })
+    })
+
+    render(
+      <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+        <MemoryRouter initialEntries={['/master']}>
+          <Routes>
+            <Route path="/master" element={<MasterDataPage />} />
+          </Routes>
+        </MemoryRouter>
+      </QueryClientProvider>,
+    )
+
+    expect(await screen.findByText('Rutin')).toBeInTheDocument()
+    expect(screen.getByText('Mode Input')).toBeInTheDocument()
+    expect(await screen.findByText(/CAT-1/i)).toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: 'Sub' }))
+    await user.click(screen.getByRole('button', { name: 'Item' }))
+
+    expect(await screen.findByText('Ya')).toBeInTheDocument()
+    expect(screen.getByText('Auto External')).toBeInTheDocument()
+  })
+
   it('mengisi default item biaya saat pindah dari tambah ke edit tanpa refresh', async () => {
     const user = userEvent.setup()
     const expenseItem = {

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { Fragment, useEffect, useState } from 'react'
 import { useLocation, useNavigate, useSearchParams } from 'react-router-dom'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useCategories, useSubcategories, useItems, useUsers } from '@/hooks/useMasterData'
@@ -110,18 +110,18 @@ export function MasterDataPage() {
     navigate(`${path}?returnTo=${buildMasterDataReturnTo(returnTo)}`)
   }
 
-  const toggleCat = (id: string) => setExpandedCats((s) => {
-    const n = new Set(s)
-    n.has(id) ? n.delete(id) : n.add(id)
-    syncViewState({ expandedCatIds: Array.from(n) })
-    return n
-  })
-  const toggleSub = (id: string) => setExpandedSubs((s) => {
-    const n = new Set(s)
-    n.has(id) ? n.delete(id) : n.add(id)
-    syncViewState({ expandedSubIds: Array.from(n) })
-    return n
-  })
+  const toggleCat = (id: string) => {
+    const next = new Set(expandedCats)
+    next.has(id) ? next.delete(id) : next.add(id)
+    setExpandedCats(next)
+    syncViewState({ expandedCatIds: Array.from(next) })
+  }
+  const toggleSub = (id: string) => {
+    const next = new Set(expandedSubs)
+    next.has(id) ? next.delete(id) : next.add(id)
+    setExpandedSubs(next)
+    syncViewState({ expandedSubIds: Array.from(next) })
+  }
 
   const subsByCat  = (catId: string) => subcategories?.filter((s) => s.category_id === catId) ?? []
   const itemsBySub = (subId: string) => items?.filter((i) => i.subcategory_id === subId) ?? []
@@ -173,7 +173,7 @@ export function MasterDataPage() {
             <table className="w-full border-collapse">
               <thead>
                 <tr>
-                  {['Kategori / Sub / Item', 'Induk', 'Status', 'Aksi'].map((h) => (
+                  {['Kategori / Sub / Item', 'Induk', 'Rutin', 'Mode Input', 'Status', 'Aksi'].map((h) => (
                     <th key={h} className="px-4 py-3 text-left text-[11px] font-bold uppercase tracking-wider text-[#526257] bg-[#f7faf7] sticky top-0">
                       {h}
                     </th>
@@ -182,9 +182,9 @@ export function MasterDataPage() {
               </thead>
               <tbody>
                 {!categories?.length ? (
-                  <tr><td colSpan={4} className="p-6"><EmptyState /></td></tr>
+                  <tr><td colSpan={6} className="p-6"><EmptyState /></td></tr>
                 ) : categories.map((cat) => (
-                  <>
+                  <Fragment key={cat.id}>
                     {/* Kategori row */}
                     <tr key={cat.id} className="group-row">
                       <td className="px-4 py-3 font-[950]">
@@ -196,6 +196,8 @@ export function MasterDataPage() {
                           {cat.code} — {cat.name}
                         </div>
                       </td>
+                      <td className="px-4 py-3">—</td>
+                      <td className="px-4 py-3">—</td>
                       <td className="px-4 py-3">—</td>
                       <td className="px-4 py-3">
                         <Badge variant={cat.is_active ? 'approved' : 'draft'}>
@@ -214,7 +216,7 @@ export function MasterDataPage() {
 
                     {/* Sub-kategori rows */}
                     {expandedCats.has(cat.id) && subsByCat(cat.id).map((sub) => (
-                      <>
+                      <Fragment key={sub.id}>
                         <tr key={sub.id} className="subgroup-row">
                           <td className="px-4 py-3 pl-10 font-[900]">
                             <div className="flex items-center gap-2">
@@ -226,6 +228,8 @@ export function MasterDataPage() {
                             </div>
                           </td>
                           <td className="px-4 py-3 text-sm">{cat.name}</td>
+                          <td className="px-4 py-3">—</td>
+                          <td className="px-4 py-3">—</td>
                           <td className="px-4 py-3">
                             <Badge variant={sub.is_active ? 'approved' : 'draft'}>
                               {sub.is_active ? 'Aktif' : 'Nonaktif'}
@@ -247,6 +251,16 @@ export function MasterDataPage() {
                             <td className="px-4 py-2.5 pl-16 text-sm">{item.code} — {item.name}</td>
                             <td className="px-4 py-2.5 text-sm text-muted">{sub.name}</td>
                             <td className="px-4 py-2.5">
+                              <Badge variant={item.is_routine ? 'approved' : 'draft'}>
+                                {item.is_routine ? 'Ya' : 'Tidak'}
+                              </Badge>
+                            </td>
+                            <td className="px-4 py-2.5">
+                              <Badge variant={item.mode_input === 'auto_external' ? 'purple' : 'draft'}>
+                                {item.mode_input === 'auto_external' ? 'Auto External' : 'Manual'}
+                              </Badge>
+                            </td>
+                            <td className="px-4 py-2.5">
                               <Badge variant={item.is_active ? 'approved' : 'draft'}>
                                 {item.is_active ? 'Aktif' : 'Nonaktif'}
                               </Badge>
@@ -261,9 +275,9 @@ export function MasterDataPage() {
                             </td>
                           </tr>
                         ))}
-                      </>
+                      </Fragment>
                     ))}
-                  </>
+                  </Fragment>
                 ))}
               </tbody>
             </table>
