@@ -45,6 +45,12 @@ const categories = [{
   name: 'Kategori',
   display_order: 1,
   is_active: true,
+}, {
+  id: 'cat-2',
+  code: 'OPS',
+  name: 'Operasional',
+  display_order: 2,
+  is_active: true,
 }]
 
 const subcategories = [{
@@ -52,6 +58,13 @@ const subcategories = [{
   category_id: 'cat-1',
   code: 'SUB',
   name: 'Subkategori',
+  display_order: 1,
+  is_active: true,
+}, {
+  id: 'sub-2',
+  category_id: 'cat-2',
+  code: 'OPS-SUB',
+  name: 'Sub Operasional',
   display_order: 1,
   is_active: true,
 }]
@@ -78,6 +91,22 @@ const items = [{
   code: 'AUTO-3',
   name: 'Auto Fresh',
   mode_input: 'auto_external',
+  default_unit: null,
+  default_rate: null,
+}, {
+  id: 'item-cat-1',
+  subcategory_id: 'sub-1',
+  code: 'CAT-1',
+  name: 'First Group Item',
+  mode_input: 'manual',
+  default_unit: null,
+  default_rate: null,
+}, {
+  id: 'item-cat-2',
+  subcategory_id: 'sub-2',
+  code: 'OPS-1',
+  name: 'Second Group Item',
+  mode_input: 'manual',
   default_unit: null,
   default_rate: null,
 }, {
@@ -181,6 +210,51 @@ describe('PdoFormPage bulk external pull', () => {
     renderPdoForm('/pdo/pdo-1/edit')
 
     expect(await screen.findByRole('button', { name: 'Semua Data Sudah Fresh' })).toBeDisabled()
+  })
+
+  it('uses full-width table layout and expands only the first loaded group', async () => {
+    vi.spyOn(api, 'get').mockImplementation((url: string) => {
+      if (url === '/plantation-units') {
+        return Promise.resolve({ data: { success: true, data: [{ id: 'unit-1', code: 'KP', name: 'Kebun Pusat', is_active: true }] } })
+      }
+
+      if (url === '/expense-items') {
+        return Promise.resolve({ data: { success: true, data: items } })
+      }
+
+      if (url === '/expense-subcategories') {
+        return Promise.resolve({ data: { success: true, data: subcategories } })
+      }
+
+      if (url === '/expense-categories') {
+        return Promise.resolve({ data: { success: true, data: categories } })
+      }
+
+      if (url === '/pdo/pdo-1') {
+        return Promise.resolve({ data: { success: true, data: { pdo: basePdo } } })
+      }
+
+      if (url === '/pdo/pdo-1/details') {
+        return Promise.resolve({
+          data: {
+            success: true,
+            data: [
+              makeDetail({ id: 'detail-second', expense_item_id: 'item-cat-2', description: 'Second Group Detail', amount: 200, needs_pull: false }),
+              makeDetail({ id: 'detail-first', expense_item_id: 'item-cat-1', description: 'First Group Detail', amount: 100, needs_pull: false }),
+            ],
+          },
+        })
+      }
+
+      return Promise.resolve({ data: { success: true, data: [] } })
+    })
+
+    renderPdoForm('/pdo/pdo-1/edit')
+
+    expect(await screen.findByTestId('pdo-form-page')).toHaveClass('w-full')
+    expect(await screen.findByTestId('pdo-detail-table')).toHaveClass('min-w-[1200px]')
+    expect(await screen.findByDisplayValue('First Group Detail')).toBeInTheDocument()
+    expect(screen.queryByDisplayValue('Second Group Detail')).not.toBeInTheDocument()
   })
 
   it('runs bulk pull, refetches details, shows summary toast, row error, unsaved warning', async () => {

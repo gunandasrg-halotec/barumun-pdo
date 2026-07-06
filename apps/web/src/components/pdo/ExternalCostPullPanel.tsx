@@ -30,59 +30,37 @@ export function ExternalCostPullPanel({
   const showNeedsPull = snapshot?.needs_pull
   const showStale = snapshot?.is_stale_external_snapshot
   const showReadOnly = snapshot?.is_external_read_only
+  const tooltipLines = [
+    'Auto External: data volume, satuan, harga, dan jumlah diambil dari Payroll.',
+    showNeedsPull ? 'Baris ini wajib Ambil Data dulu sebelum submit PDO.' : undefined,
+    showStale ? 'Snapshot external sudah stale. Ambil Data ulang sebelum submit PDO.' : undefined,
+    showReadOnly ? 'Nilai volume, satuan, dan jumlah dikunci selama item masih Auto External aktif.' : undefined,
+    errorMessage ? `Error: ${errorMessage}` : undefined,
+    hasPulledMetadata ? `Komponen: ${payload?.component_label ?? snapshot?.external_component ?? '—'}` : undefined,
+    hasPulledMetadata ? `Periode Sumber: ${payload?.period ?? '—'}` : undefined,
+    hasPulledMetadata ? `Status Sumber: ${payload?.status ?? 'ok'}` : undefined,
+    hasPulledMetadata ? `Tarik Terakhir: ${formatDateTime(snapshot?.external_amount_pulled_at)}` : 'Belum ada data Payroll ditarik untuk baris ini.',
+    hasPulledMetadata ? `Dibuat Payroll: ${formatDateTime(payload?.generated_at)}` : undefined,
+    hasPulledMetadata ? `Estate Payroll: ${payload?.estate_external_id ?? '—'}` : undefined,
+  ].filter(Boolean).join('\n')
 
   return (
-    <div className="mt-3 p-3 rounded space-y-3 border border-[#bfdbfe] bg-[#eff6ff]">
-      <div className="flex flex-col gap-3 desk:flex-row desk:items-center desk:justify-between">
-        <p className="text-sm text-[#1d4ed8]">
-          <strong>Auto External:</strong> Data volume, satuan, harga, dan jumlah diambil dari Payroll.
-        </p>
-        <Button
-          type="button"
-          size="sm"
-          data-testid="pull-external-button"
-          className="border border-transparent bg-[#2563eb] text-white hover:bg-[#1d4ed8] disabled:border-[#93c5fd] disabled:bg-[#dbeafe] disabled:text-[#1e3a8a] disabled:opacity-100 disabled:hover:bg-[#dbeafe]"
-          loading={isPulling}
-          disabled={!snapshot?.id}
-          onClick={onPull}
-        >
-          <CloudDownload className="w-4 h-4" /> {isPulling ? 'Mengambil...' : 'Ambil Data'}
-        </Button>
-      </div>
-
-      {showNeedsPull && (
-        <p className="text-sm font-semibold text-[#b45309]">
-          Baris ini wajib Ambil Data dulu sebelum submit PDO.
-        </p>
-      )}
-
-      {showStale && (
-        <p className="text-sm font-semibold text-[#b91c1c]">
-          Snapshot external sudah stale. Ambil Data ulang sebelum submit PDO.
-        </p>
-      )}
-
-      {showReadOnly && (
-        <p className="text-sm text-[#1e3a8a]">
-          Nilai volume, satuan, dan jumlah dikunci selama item masih Auto External aktif.
-        </p>
-      )}
+    <div className="space-y-1.5">
+      <Button
+        type="button"
+        size="sm"
+        data-testid="pull-external-button"
+        title={tooltipLines}
+        className="border border-transparent bg-[#2563eb] text-white hover:bg-[#1d4ed8] disabled:border-[#93c5fd] disabled:bg-[#dbeafe] disabled:text-[#1e3a8a] disabled:opacity-100 disabled:hover:bg-[#dbeafe]"
+        loading={isPulling}
+        disabled={!snapshot?.id}
+        onClick={onPull}
+      >
+        <CloudDownload className="w-4 h-4" /> {isPulling ? 'Mengambil...' : 'Ambil Data'}
+      </Button>
 
       {errorMessage && (
-        <p className="text-sm font-semibold text-[#b91c1c]">{errorMessage}</p>
-      )}
-
-      {hasPulledMetadata ? (
-        <div className="grid grid-cols-1 desk:grid-cols-2 gap-2 text-sm text-[#1e3a8a]">
-          <p data-testid="external-component"><strong>Komponen:</strong> {payload?.component_label ?? snapshot?.external_component ?? '—'}</p>
-          <p data-testid="external-period"><strong>Periode Sumber:</strong> {payload?.period ?? '—'}</p>
-          <p data-testid="external-status"><strong>Status Sumber:</strong> {payload?.status ?? 'ok'}</p>
-          <p data-testid="external-pulled-at"><strong>Tarik Terakhir:</strong> {formatDateTime(snapshot?.external_amount_pulled_at)}</p>
-          <p data-testid="external-generated-at"><strong>Dibuat Payroll:</strong> {formatDateTime(payload?.generated_at)}</p>
-          <p data-testid="external-estate"><strong>Estate Payroll:</strong> {payload?.estate_external_id ?? '—'}</p>
-        </div>
-      ) : (
-        <p className="text-sm text-[#1e3a8a]">Belum ada data Payroll ditarik untuk baris ini.</p>
+        <p className="text-[11px] font-semibold text-[#b91c1c]">{errorMessage}</p>
       )}
     </div>
   )

@@ -1,4 +1,4 @@
-import { useEffect, useCallback, useState } from 'react'
+import { Fragment, useEffect, useCallback, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { useForm, useFieldArray } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
@@ -9,7 +9,7 @@ import { Button } from '@/components/ui/Button'
 import { useToastStore } from '@/store/toast.store'
 import { useAuthStore } from '@/store/auth.store'
 import { ExternalCostPullPanel } from '@/components/pdo/ExternalCostPullPanel'
-import { AttachmentSection } from '@/components/pdo/DetailAttachmentPanel'
+import { DetailAttachmentPanel } from '@/components/pdo/DetailAttachmentPanel'
 import { useItems, useSubcategories, useCategories } from '@/hooks/useMasterData'
 import { useBulkPullExternalCost, usePdo, usePullExternalCost } from '@/hooks/usePdo'
 import { fmt } from '@/lib/format'
@@ -50,6 +50,47 @@ type DetailSnapshot = Partial<PdoDetail> & { id?: string; _isNew?: boolean }
 
 const MONTHS = ['Januari','Februari','Maret','April','Mei','Juni','Juli','Agustus','September','Oktober','November','Desember']
 const YEARS  = Array.from({ length: 5 }, (_, i) => new Date().getFullYear() - i + 1)
+const DETAIL_TABLE_COLS = 11
+
+type CollapseOptions = {
+  expandFirst?: boolean
+  categoryOrder?: Map<string, number>
+  subcategoryOrder?: Map<string, number>
+}
+
+function buildCollapsedGroups(selections: RowSelection[], options: CollapseOptions = {}) {
+  const keys = new Set<string>()
+  let firstCatKey: string | undefined
+  let firstSubKey: string | undefined
+  const orderedSelections = options.expandFirst
+    ? [...selections].sort((a, b) => {
+        const catDiff = (options.categoryOrder?.get(a.categoryId) ?? 999) - (options.categoryOrder?.get(b.categoryId) ?? 999)
+        if (catDiff !== 0) return catDiff
+        return (options.subcategoryOrder?.get(a.subcategoryId) ?? 999) - (options.subcategoryOrder?.get(b.subcategoryId) ?? 999)
+      })
+    : selections
+
+  orderedSelections.forEach((selection) => {
+    if (!selection.categoryId) return
+
+    const catKey = `cat_${selection.categoryId}`
+    if (!firstCatKey) firstCatKey = catKey
+    keys.add(catKey)
+
+    if (selection.subcategoryId) {
+      const subKey = `sub_${selection.categoryId}_${selection.subcategoryId}`
+      if (catKey === firstCatKey && !firstSubKey) firstSubKey = subKey
+      keys.add(subKey)
+    }
+  })
+
+  if (options.expandFirst) {
+    if (firstCatKey) keys.delete(firstCatKey)
+    if (firstSubKey) keys.delete(firstSubKey)
+  }
+
+  return keys
+}
 
 export function PdoFormPage() {
   const { id }   = useParams<{ id: string }>()
@@ -76,6 +117,11 @@ export function PdoFormPage() {
   const { data: items }         = useItems({ is_active: true })
   const { data: subcategories } = useSubcategories({ is_active: true })
   const { data: categories }    = useCategories({ is_active: true })
+  const getCollapseOptions = () => ({
+    expandFirst: true,
+    categoryOrder: new Map((categories ?? []).map((category) => [category.id, category.display_order ?? 999])),
+    subcategoryOrder: new Map((subcategories ?? []).map((subcategory) => [subcategory.id, subcategory.display_order ?? 999])),
+  })
 
   const { data: existing } = usePdo(id)
   const pullExternalCost   = usePullExternalCost(id ?? '')
@@ -166,14 +212,7 @@ export function PdoFormPage() {
 
     setRowSelections(nextSelections)
 
-    const keys = new Set<string>()
-    nextSelections.forEach((selection) => {
-      if (selection.categoryId) {
-        keys.add(`cat_${selection.categoryId}`)
-        if (selection.subcategoryId) keys.add(`sub_${selection.categoryId}_${selection.subcategoryId}`)
-      }
-    })
-    setCollapsedGroups(keys)
+    setCollapsedGroups(buildCollapsedGroups(nextSelections, getCollapseOptions()))
   }
 
   const fetchPdoDetails = async () => {
@@ -439,15 +478,8 @@ export function PdoFormPage() {
     // Clear _isNew → moves new items from ungrouped section into their category groups
     setDetailSnapshots((prev) => prev.map((s) => ({ ...s, _isNew: undefined })))
 
-    // Collapse all groups
-    const keys = new Set<string>()
-    rowSelections.forEach((sel) => {
-      if (sel.categoryId) {
-        keys.add(`cat_${sel.categoryId}`)
-        if (sel.subcategoryId) keys.add(`sub_${sel.categoryId}_${sel.subcategoryId}`)
-      }
-    })
-    setCollapsedGroups(keys)
+    // Keep first group open after regrouping so user sees where items landed.
+    setCollapsedGroups(buildCollapsedGroups(rowSelections, getCollapseOptions()))
     setTimeout(() => window.scrollTo({ top: 0, behavior: 'smooth' }), 100)
   }, [fields, rowSelections, categories, subcategories, setValue])
 
@@ -513,21 +545,21 @@ export function PdoFormPage() {
     const isPulling          = pullingDetailId === snapshot?.id && pullExternalCost.isPending
 
     return (
-      <div key={fieldId} data-detail-row className="border border-line rounded-card p-4 relative">
-        <button
-          type="button"
-          className="absolute top-3 right-3 text-muted hover:text-red"
-          onClick={() => handleRemove(idx)}
-        >
-          <Trash2 className="w-4 h-4" />
-        </button>
-
-        {/* Cascading 3-level dropdown */}
-        <div className="grid grid-cols-1 desk:grid-cols-3 gap-3 mb-3">
-          <div>
-            <label className="label">Kategori</label>
+      <Fragment key={fieldId}>
+        <tr data-detail-row className="align-top border-t border-line bg-white">
+          <td className="px-2 py-2 text-center">
+            <button
+              type="button"
+              className="inline-flex items-center justify-center rounded-btn p-2 text-muted hover:bg-[#fee2e2] hover:text-red"
+              title="Hapus item"
+              onClick={() => handleRemove(idx)}
+            >
+              <Trash2 className="w-4 h-4" />
+            </button>
+          </td>
+          <td className="px-2 py-2">
             <select
-              className="input-base"
+              className="table-input min-w-[170px]"
               value={sel.categoryId}
               onChange={(e) => handleCategoryChange(idx, e.target.value)}
             >
@@ -536,11 +568,10 @@ export function PdoFormPage() {
                 <option key={c.id} value={c.id}>{c.code} — {c.name}</option>
               ))}
             </select>
-          </div>
-          <div>
-            <label className="label">Sub-Kategori</label>
+          </td>
+          <td className="px-2 py-2">
             <select
-              className="input-base"
+              className="table-input min-w-[180px]"
               value={sel.subcategoryId}
               disabled={!sel.categoryId}
               onChange={(e) => handleSubcategoryChange(idx, e.target.value)}
@@ -552,12 +583,11 @@ export function PdoFormPage() {
                 <option key={s.id} value={s.id}>{s.code} — {s.name}</option>
               ))}
             </select>
-          </div>
-          <div>
-            <label className="label">Item Biaya</label>
+          </td>
+          <td className="px-2 py-2">
             <select
               {...register(`details.${idx}.expense_item_id`)}
-              className="input-base"
+              className="table-input min-w-[210px]"
               disabled={!sel.subcategoryId}
               onChange={(e) => {
                 register(`details.${idx}.expense_item_id`).onChange(e)
@@ -574,91 +604,86 @@ export function PdoFormPage() {
             {errors.details?.[idx]?.expense_item_id && (
               <p className="field-error">{errors.details[idx]?.expense_item_id?.message}</p>
             )}
-          </div>
-        </div>
-
-        <div className="grid grid-cols-1 desk:grid-cols-2 gap-3 mb-3">
-          <div>
-            <label className="label">Deskripsi</label>
-            <input {...register(`details.${idx}.description`)} className="input-base" />
+          </td>
+          <td className="px-2 py-2">
+            <input {...register(`details.${idx}.description`)} className="table-input min-w-[220px]" />
             {errors.details?.[idx]?.description && (
               <p className="field-error">{errors.details[idx]?.description?.message}</p>
             )}
-          </div>
-          <div>
-            <label className="label">Catatan Item</label>
-            <input {...register(`details.${idx}.notes`)} className="input-base" />
-          </div>
-        </div>
-
-        <div className="grid grid-cols-2 desk:grid-cols-4 gap-3">
-          <div>
-            <label className="label">Volume</label>
+          </td>
+          <td className="px-2 py-2">
+            <input {...register(`details.${idx}.notes`)} className="table-input min-w-[170px]" />
+          </td>
+          <td className="px-2 py-2">
             <input
               type="number"
               {...register(`details.${idx}.quantity`, { onChange: () => calculateAmount(idx) })}
-              className="input-base"
+              className="table-input min-w-[105px]"
               step="0.01"
               disabled={isExternalReadOnly}
             />
-          </div>
-          <div>
-            <label className="label">Satuan</label>
+          </td>
+          <td className="px-2 py-2">
             <input
               {...register(`details.${idx}.unit`)}
-              className="input-base"
+              className="table-input min-w-[95px]"
               disabled={isExternalReadOnly}
             />
-          </div>
-          <div>
-            <label className="label">Harga Satuan</label>
+          </td>
+          <td className="px-2 py-2">
             <input
               type="number"
               {...register(`details.${idx}.rate`, { onChange: () => calculateAmount(idx) })}
-              className="input-base"
+              className="table-input min-w-[120px]"
               disabled={isExternalReadOnly}
             />
-          </div>
-          <div>
-            <label className="label">Jumlah (Rp)</label>
+          </td>
+          <td className="px-2 py-2">
             <input
               type="number"
               {...register(`details.${idx}.amount`)}
               data-testid={`detail-amount-${idx}`}
-              className="input-base font-bold bg-[#f7faf7] cursor-not-allowed"
+              className="table-input min-w-[130px] font-bold bg-[#f7faf7] cursor-not-allowed"
               readOnly
             />
             {errors.details?.[idx]?.amount && (
               <p className="field-error">{errors.details[idx]?.amount?.message}</p>
             )}
-          </div>
-        </div>
-
-        {isAutoExternal && (
-          <ExternalCostPullPanel
-            errorMessage={pullError}
-            isPulling={isPulling}
-            onPull={() => handlePullExternalCost(idx)}
-            snapshot={snapshot}
-          />
-        )}
+          </td>
+          <td className="px-2 py-2 min-w-[150px]">
+            {isAutoExternal ? (
+              <ExternalCostPullPanel
+                errorMessage={pullError}
+                isPulling={isPulling}
+                onPull={() => handlePullExternalCost(idx)}
+                snapshot={snapshot}
+              />
+            ) : (
+              <span className="text-xs text-muted">—</span>
+            )}
+          </td>
+        </tr>
 
         {snapshot?.id ? (
-          <AttachmentSection detailId={snapshot.id} />
+          <DetailAttachmentPanel detailId={snapshot.id} canUpload={true} colSpan={DETAIL_TABLE_COLS} />
         ) : (
-          <div className="mt-3 pt-3 border-t border-dashed border-line flex items-center gap-2">
-            <Paperclip className="w-3.5 h-3.5 text-muted" />
-            <span className="text-[11px] text-muted italic">
-              Simpan item terlebih dahulu untuk menambah lampiran.
-            </span>
-          </div>
+          <tr>
+            <td colSpan={DETAIL_TABLE_COLS} className="px-4 py-2 border-t border-dashed border-line bg-[#f9fbf9]">
+              <div className="flex items-center gap-2 pl-8">
+                <Paperclip className="w-3.5 h-3.5 text-muted" />
+                <span className="text-[11px] text-muted italic">
+                  Simpan item terlebih dahulu untuk menambah lampiran.
+                </span>
+              </div>
+            </td>
+          </tr>
         )}
-      </div>
+      </Fragment>
     )
   }
 
   return (
-    <div className="max-w-4xl">
+    <div data-testid="pdo-form-page" className="w-full">
       <div className="flex items-center gap-3 mb-6">
         <Button variant="secondary" size="sm" onClick={() => navigate('/pdo')}>
           <ArrowLeft className="w-4 h-4" />
@@ -673,7 +698,7 @@ export function PdoFormPage() {
         () => toast('Harap lengkapi semua field yang wajib diisi pada item biaya', 'error')
       )}>
         {/* Header */}
-        <div className="card mb-4">
+        <div className="card mb-4 max-w-4xl">
           <h3 className="text-[17px] font-[850] mb-4">Informasi Umum</h3>
           <div className="grid grid-cols-1 desk:grid-cols-3 gap-4">
             <div>
@@ -752,80 +777,100 @@ export function PdoFormPage() {
                 Klik "Tambah Item" untuk memulai input rencana biaya.
               </p>
             ) : (
-              <div className="flex flex-col gap-2">
-                {/* Ungrouped rows (newly added, no category selected yet) */}
-                {ungrouped.length > 0 && (
-                  <div className="flex flex-col gap-3">
+              <div className="overflow-x-auto rounded-card border border-line">
+                <table data-testid="pdo-detail-table" className="table-sticky min-w-[1200px] w-full border-collapse">
+                  <thead>
+                    <tr>
+                      <th className="w-[46px] px-2 py-2 text-center">Aksi</th>
+                      <th className="px-2 py-2 text-left">Kategori</th>
+                      <th className="px-2 py-2 text-left">Sub-Kategori</th>
+                      <th className="px-2 py-2 text-left">Item Biaya</th>
+                      <th className="px-2 py-2 text-left">Deskripsi</th>
+                      <th className="px-2 py-2 text-left">Catatan Item</th>
+                      <th className="px-2 py-2 text-left">Volume</th>
+                      <th className="px-2 py-2 text-left">Satuan</th>
+                      <th className="px-2 py-2 text-left">Harga Satuan</th>
+                      <th className="px-2 py-2 text-left">Jumlah (Rp)</th>
+                      <th className="px-2 py-2 text-left">Ambil Data</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {ungrouped.length > 0 && (
+                      <tr className="subgroup-row">
+                        <td colSpan={DETAIL_TABLE_COLS} className="px-3 py-2">
+                          Item Baru
+                        </td>
+                      </tr>
+                    )}
                     {ungrouped.map(({ fieldId, idx }) => renderDetailRow(fieldId, idx))}
-                  </div>
-                )}
 
-                {/* Grouped rows: collapsible by category → sub-kategori */}
-                {sortedCats.map((cg) => {
-                  const catCollapsed = collapsedGroups.has(`cat_${cg.catKey}`)
-                  const sortedSubs   = [...cg.subMap.values()].sort((a, b) => a.subOrder - b.subOrder)
-                  const catTotal     = sortedSubs.reduce(
-                    (s, sg) => s + sg.items.reduce(
-                      (ss, { idx }) => ss + (Number(detailValues?.[idx]?.amount) || 0),
-                      0
-                    ),
-                    0
-                  )
-
-                  return (
-                    <div key={`cat_${cg.catKey}`} className="border border-line rounded-card overflow-hidden">
-                      {/* Category toggle header */}
-                      <div
-                        className="flex items-center gap-2 px-3 py-2.5 bg-[#f0f4f0] cursor-pointer select-none"
-                        onClick={() => toggleGroup(`cat_${cg.catKey}`)}
-                      >
-                        <span
-                          className="text-muted text-[10px] transition-transform duration-150"
-                          style={{ display: 'inline-block', transform: catCollapsed ? 'rotate(0deg)' : 'rotate(90deg)' }}
-                        >▶</span>
-                        <span className="text-sm font-[850] text-ink">{cg.catLabel}</span>
-                        <span className="ml-auto text-xs font-[700] text-muted">{fmt(catTotal)}</span>
-                      </div>
-
-                      {!catCollapsed && sortedSubs.map((sg) => {
-                        const subCollapsed = collapsedGroups.has(`sub_${cg.catKey}_${sg.subKey}`)
-                        const subTotal     = sg.items.reduce(
-                          (s, { idx }) => s + (Number(detailValues?.[idx]?.amount) || 0),
+                    {sortedCats.map((cg) => {
+                      const catCollapsed = collapsedGroups.has(`cat_${cg.catKey}`)
+                      const sortedSubs   = [...cg.subMap.values()].sort((a, b) => a.subOrder - b.subOrder)
+                      const catTotal     = sortedSubs.reduce(
+                        (s, sg) => s + sg.items.reduce(
+                          (ss, { idx }) => ss + (Number(detailValues?.[idx]?.amount) || 0),
                           0
-                        )
+                        ),
+                        0
+                      )
 
-                        return (
-                          <div key={`sub_${sg.subKey}`}>
-                            {/* Subcategory toggle header */}
-                            <div
-                              className="flex items-center gap-2 pl-7 pr-3 py-2 bg-[#f7faf7] border-t border-line cursor-pointer select-none"
-                              onClick={() => toggleGroup(`sub_${cg.catKey}_${sg.subKey}`)}
-                            >
-                              <span
-                                className="text-muted transition-transform duration-150"
-                                style={{
-                                  display: 'inline-block',
-                                  fontSize: 9,
-                                  transform: subCollapsed ? 'rotate(0deg)' : 'rotate(90deg)',
-                                }}
-                              >▶</span>
-                              <span className="text-[11px] font-[850] uppercase tracking-wider text-muted">
-                                {sg.subLabel}
-                              </span>
-                              <span className="ml-auto text-xs font-[700] text-muted">{fmt(subTotal)}</span>
-                            </div>
-
-                            {!subCollapsed && (
-                              <div className="flex flex-col gap-3 p-3 border-t border-line bg-white">
-                                {sg.items.map(({ fieldId, idx }) => renderDetailRow(fieldId, idx))}
+                      return (
+                        <Fragment key={`cat_${cg.catKey}`}>
+                          <tr
+                            className="group-row cursor-pointer select-none"
+                            onClick={() => toggleGroup(`cat_${cg.catKey}`)}
+                          >
+                            <td colSpan={DETAIL_TABLE_COLS} className="px-3 py-2">
+                              <div className="flex items-center gap-2">
+                                <span
+                                  className="text-[10px] transition-transform duration-150"
+                                  style={{ display: 'inline-block', transform: catCollapsed ? 'rotate(0deg)' : 'rotate(90deg)' }}
+                                >▶</span>
+                                <span>{cg.catLabel}</span>
+                                <span className="ml-auto text-xs font-[700] text-muted">{fmt(catTotal)}</span>
                               </div>
-                            )}
-                          </div>
-                        )
-                      })}
-                    </div>
-                  )
-                })}
+                            </td>
+                          </tr>
+
+                          {!catCollapsed && sortedSubs.map((sg) => {
+                            const subCollapsed = collapsedGroups.has(`sub_${cg.catKey}_${sg.subKey}`)
+                            const subTotal     = sg.items.reduce(
+                              (s, { idx }) => s + (Number(detailValues?.[idx]?.amount) || 0),
+                              0
+                            )
+
+                            return (
+                              <Fragment key={`sub_${cg.catKey}_${sg.subKey}`}>
+                                <tr
+                                  className="subgroup-row cursor-pointer select-none"
+                                  onClick={() => toggleGroup(`sub_${cg.catKey}_${sg.subKey}`)}
+                                >
+                                  <td colSpan={DETAIL_TABLE_COLS} className="px-3 py-2">
+                                    <div className="flex items-center gap-2 pl-4">
+                                      <span
+                                        className="transition-transform duration-150"
+                                        style={{
+                                          display: 'inline-block',
+                                          fontSize: 9,
+                                          transform: subCollapsed ? 'rotate(0deg)' : 'rotate(90deg)',
+                                        }}
+                                      >▶</span>
+                                      <span className="text-[11px] uppercase tracking-wider">{sg.subLabel}</span>
+                                      <span className="ml-auto text-xs font-[700] text-muted">{fmt(subTotal)}</span>
+                                    </div>
+                                  </td>
+                                </tr>
+
+                                {!subCollapsed && sg.items.map(({ fieldId, idx }) => renderDetailRow(fieldId, idx))}
+                              </Fragment>
+                            )
+                          })}
+                        </Fragment>
+                      )
+                    })}
+                  </tbody>
+                </table>
               </div>
             )}
 

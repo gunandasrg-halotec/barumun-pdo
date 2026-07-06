@@ -113,8 +113,8 @@ describe('ExternalCostPullPanel', () => {
 
     await waitFor(() => expect(screen.getByTestId('amount')).toHaveTextContent(fmt(250000)))
     expect(screen.getByTestId('total')).toHaveTextContent(fmt(250000))
-    expect(screen.getByTestId('external-component')).toHaveTextContent('Gaji Pokok')
-    expect(screen.getByTestId('external-period')).toHaveTextContent('2026-06')
+    expect(screen.getByTestId('pull-external-button')).toHaveAttribute('title', expect.stringContaining('Gaji Pokok'))
+    expect(screen.getByTestId('pull-external-button')).toHaveAttribute('title', expect.stringContaining('2026-06'))
   })
 
   it('shows zero amount as valid pulled data', async () => {
@@ -144,7 +144,7 @@ describe('ExternalCostPullPanel', () => {
     await user.click(screen.getByTestId('pull-external-button'))
 
     await waitFor(() => expect(screen.getByTestId('amount')).toHaveTextContent(fmt(0)))
-    expect(screen.getByTestId('external-status')).toHaveTextContent('empty')
+    expect(screen.getByTestId('pull-external-button')).toHaveAttribute('title', expect.stringContaining('empty'))
     expect(screen.queryByText('Belum ada data Payroll ditarik untuk baris ini.')).not.toBeInTheDocument()
   })
 
@@ -185,8 +185,14 @@ describe('ExternalCostPullPanel', () => {
       />,
     )
 
-    expect(screen.getByText('Snapshot external sudah stale. Ambil Data ulang sebelum submit PDO.')).toBeInTheDocument()
-    expect(screen.getByText('Nilai volume, satuan, dan jumlah dikunci selama item masih Auto External aktif.')).toBeInTheDocument()
+    expect(screen.getByTestId('pull-external-button')).toHaveAttribute(
+      'title',
+      expect.stringContaining('Snapshot external sudah stale. Ambil Data ulang sebelum submit PDO.'),
+    )
+    expect(screen.getByTestId('pull-external-button')).toHaveAttribute(
+      'title',
+      expect.stringContaining('Nilai volume, satuan, dan jumlah dikunci selama item masih Auto External aktif.'),
+    )
   })
 
   it('keeps pull button label visible while disabled before draft saved', () => {
