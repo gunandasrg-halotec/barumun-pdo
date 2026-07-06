@@ -590,6 +590,7 @@ export function ItemFormPage() {
                         inputId="role-payroll"
                         aria-label="Role Payroll"
                         cacheOptions
+                        isClearable
                         defaultOptions={roleSelectOptions}
                         value={selectedRoleOption}
                         loadOptions={async (inputValue) => {

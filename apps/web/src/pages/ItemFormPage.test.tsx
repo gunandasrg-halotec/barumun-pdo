@@ -14,6 +14,7 @@ vi.mock('react-select/async', () => ({
   default: function AsyncSelectMock({
     'aria-label': ariaLabel,
     defaultOptions,
+    isClearable,
     isMulti,
     loadOptions,
     onChange,
@@ -22,6 +23,7 @@ vi.mock('react-select/async', () => ({
   }: {
     'aria-label'?: string
     defaultOptions?: boolean | SelectOption[]
+    isClearable?: boolean
     isMulti?: boolean
     loadOptions?: (inputValue: string) => Promise<SelectOption[]>
     onChange?: (value: SelectOption[] | SelectOption | null) => void
@@ -47,6 +49,11 @@ vi.mock('react-select/async', () => ({
             setOptions(nextOptions ?? [])
           }}
         />
+        {isClearable && currentValue.length > 0 && (
+          <button type="button" aria-label={`Clear ${ariaLabel ?? placeholder ?? 'async-select'}`} onClick={() => onChange?.(null)}>
+            ×
+          </button>
+        )}
         <div>
           {options.map((option) => {
             const exists = currentValue.some((selected) => selected.value === option.value)
@@ -434,6 +441,9 @@ describe('ItemFormPage Payroll component options', () => {
     await waitFor(() => expect((screen.getByRole('combobox', { name: /Mode Input/i }) as HTMLSelectElement).value).toBe('auto_external'))
     await waitFor(() => expect(screen.getByRole('combobox', { name: /Component Payroll/i })).toHaveValue('base_payroll_total'))
     await waitFor(() => expect(screen.getByRole('button', { name: 'Pemanen' })).toHaveAttribute('aria-pressed', 'true'))
+
+    await userEvent.click(screen.getByRole('button', { name: 'Clear Role Payroll' }))
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Pemanen' })).toHaveAttribute('aria-pressed', 'false'))
   })
 
   it('mengisi component key saat edit jika selector set kosong tapi legacy component key ada', async () => {
