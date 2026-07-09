@@ -92,7 +92,7 @@ class PdoSupplementaryApprovalService
         });
     }
 
-    /** Reject di tahap manapun → kembali ke status rejected (bukan draft, agar KERANI tahu perlu resubmit) */
+    /** Reject di tahap manapun → kembali ke status draft (sama seperti PDO Bulanan), agar KERANI bisa edit dan resubmit */
     public function reject(PdoSupplementaryHeader $supp, string $reason, User $actor): PdoSupplementaryHeader
     {
         if (! $actor->canApprove()) {
@@ -112,7 +112,7 @@ class PdoSupplementaryApprovalService
 
         return DB::transaction(function () use ($supp, $actor, $reason) {
             $stage = $supp->status;
-            $supp->update(['status' => PdoSupplementaryHeader::STATUS_REJECTED]);
+            $supp->update(['status' => PdoSupplementaryHeader::STATUS_DRAFT, 'submission_date' => null]);
 
             $this->appendLog($supp, $actor, $stage, PdoSupplementaryApprovalLog::ACTION_REJECT, $reason);
 
