@@ -34,6 +34,8 @@ class PdoSupplementaryHeader extends Model
         'period_year',
         'submission_date',
         'status',
+        'manager_kebun_approved',
+        'manager_keuangan_approved',
         'merged_at',
         'notes',
     ];
@@ -41,10 +43,12 @@ class PdoSupplementaryHeader extends Model
     protected function casts(): array
     {
         return [
-            'period_month'    => 'integer',
-            'period_year'     => 'integer',
-            'submission_date' => 'date',
-            'merged_at'       => 'datetime',
+            'period_month'              => 'integer',
+            'period_year'               => 'integer',
+            'submission_date'           => 'date',
+            'manager_kebun_approved'    => 'boolean',
+            'manager_keuangan_approved' => 'boolean',
+            'merged_at'                 => 'datetime',
         ];
     }
 

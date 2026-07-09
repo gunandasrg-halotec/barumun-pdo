@@ -145,19 +145,8 @@ class WhatsAppNotificationService
         $this->send($supp->company_id, NotificationTemplate::EVENT_PDO_APPROVED_ASISTEN, $recipients, $this->suppBaseVars($supp));
     }
 
-    /** Manajer Kebun approve PDO Tambahan → Manajer Keuangan + Asisten + Kerani */
-    public function notifySupplementaryApprovedByManagerKebun(PdoSupplementaryHeader $supp): void
-    {
-        $supp->loadMissing(['creator', 'plantationUnit']);
-        $recipients = $this->suppByRole($supp, Role::MANAJER_KEUANGAN)
-            ->merge($this->suppAsistenByUnit($supp))
-            ->merge($this->suppCreator($supp));
-
-        $this->send($supp->company_id, NotificationTemplate::EVENT_PDO_APPROVED_MANAGER, $recipients, $this->suppBaseVars($supp));
-    }
-
-    /** Manajer Keuangan approve PDO Tambahan → Direktur + Asisten + Kerani */
-    public function notifySupplementaryApprovedByManagerKeuangan(PdoSupplementaryHeader $supp): void
+    /** Kedua Manajer approve PDO Tambahan (paralel, status → in_review_direktur) → Direktur + Asisten + Kerani */
+    public function notifySupplementaryApprovedByManager(PdoSupplementaryHeader $supp): void
     {
         $supp->loadMissing(['creator', 'plantationUnit']);
         $recipients = $this->suppByRole($supp, Role::DIREKTUR_KEUANGAN)

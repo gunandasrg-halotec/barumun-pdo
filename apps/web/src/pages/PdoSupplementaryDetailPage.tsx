@@ -30,7 +30,7 @@ const STATUS_BADGE: Record<string, 'draft' | 'approved' | 'reject' | 'review' | 
 
 const STATUS_LABEL: Record<string, string> = {
   draft: 'Draft', submitted: 'Diajukan', reviewed_asisten: 'Disetujui Asisten',
-  in_review_manager: 'Disetujui Manajer Kebun', in_review_direktur: 'Disetujui Manajer Keuangan',
+  in_review_manager: 'Menunggu Manajer (paralel)', in_review_direktur: 'Disetujui Kedua Manajer',
   final_merged: 'Disetujui Direktur', rejected: 'Ditolak',
 }
 
@@ -38,8 +38,8 @@ const STATUS_LABEL: Record<string, string> = {
 const PIPELINE: { role: string; label: string; doneStatus: string }[] = [
   { role: 'KERANI',            label: 'Pengajuan oleh Kerani',       doneStatus: 'submitted'          },
   { role: 'ASISTEN_KEBUN',     label: 'Review Asisten Kebun',        doneStatus: 'reviewed_asisten'   },
-  { role: 'MANAJER_KEBUN',     label: 'Review Manajer Kebun',        doneStatus: 'in_review_manager'  },
-  { role: 'MANAJER_KEUANGAN',  label: 'Review Manajer Keuangan',     doneStatus: 'in_review_direktur' },
+  { role: 'MANAJER_KEBUN',     label: 'Review Manajer (paralel)',    doneStatus: 'in_review_manager'  },
+  { role: 'MANAJER_KEUANGAN',  label: 'Kedua Manajer Disetujui',     doneStatus: 'in_review_direktur' },
   { role: 'DIREKTUR_KEUANGAN', label: 'Persetujuan Direktur Keuangan', doneStatus: 'final_merged'     },
 ]
 
@@ -139,16 +139,31 @@ export function PdoSupplementaryDetailPage() {
               </Button>
             </>
           )}
-          {userCanApprove && !['final_merged', 'rejected', 'draft'].includes(supp.status) && (
-            <>
-              <Button variant="danger" onClick={() => { setModalType('reject'); setShowModal(true) }}>
-                <XCircle className="w-4 h-4" /> Reject
-              </Button>
-              <Button onClick={() => { setModalType('approve'); setShowModal(true) }}>
-                <CheckCircle className="w-4 h-4" /> Approve
-              </Button>
-            </>
-          )}
+          {userCanApprove && !['final_merged', 'rejected', 'draft'].includes(supp.status) && (() => {
+            // BR-APPR-002: Sembunyikan tombol Approve jika manajer ini sudah approve di tahap paralel
+            const isManagerStage = ['reviewed_asisten', 'in_review_manager'].includes(supp.status)
+            const alreadyApproved = isManagerStage && (
+              (role === 'MANAJER_KEBUN'    && supp.manager_kebun_approved === true) ||
+              (role === 'MANAJER_KEUANGAN' && supp.manager_keuangan_approved === true)
+            )
+            return (
+              <>
+                <Button variant="danger" onClick={() => { setModalType('reject'); setShowModal(true) }}>
+                  <XCircle className="w-4 h-4" /> Reject
+                </Button>
+                {!alreadyApproved && (
+                  <Button onClick={() => { setModalType('approve'); setShowModal(true) }}>
+                    <CheckCircle className="w-4 h-4" /> Approve
+                  </Button>
+                )}
+                {alreadyApproved && (
+                  <span className="text-sm text-green font-semibold flex items-center gap-1">
+                    <CheckCircle className="w-4 h-4" /> Sudah disetujui — menunggu manajer lain
+                  </span>
+                )}
+              </>
+            )
+          })()}
         </div>
       </div>
 
@@ -242,6 +257,30 @@ export function PdoSupplementaryDetailPage() {
                 </div>
               )
             })}
+          </div>
+        )}
+
+        {/* BR-APPR-002: Panel status per-manajer di tahap paralel */}
+        {['reviewed_asisten', 'in_review_manager'].includes(supp.status) && (
+          <div className="mt-4 grid grid-cols-2 gap-2">
+            {[
+              { label: 'Manajer Kebun',    approved: supp.manager_kebun_approved },
+              { label: 'Manajer Keuangan', approved: supp.manager_keuangan_approved },
+            ].map(({ label, approved }) => (
+              <div
+                key={label}
+                className={`flex items-center gap-2 text-xs px-2 py-1.5 rounded border ${
+                  approved === true  ? 'bg-[#ddf8e9] border-green text-green' :
+                  approved === false ? 'bg-[#fee2e2] border-red text-red' :
+                  'bg-[#f1f5f9] border-line text-muted'
+                }`}
+              >
+                {approved === true  ? <CheckCircle className="w-3 h-3 shrink-0" /> :
+                 approved === false ? <XCircle className="w-3 h-3 shrink-0" /> :
+                 <Clock className="w-3 h-3 shrink-0" />}
+                {label}: {approved === true ? 'Disetujui' : approved === false ? 'Ditolak' : 'Menunggu'}
+              </div>
+            ))}
           </div>
         )}
       </div>

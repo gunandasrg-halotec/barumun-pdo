@@ -15,12 +15,18 @@ class PdoSupplementaryApprovalService
 {
     /**
      * Chain identik dengan PDO Bulanan — status final berbeda: final_merged (bukan final).
+     * Tahap Asisten & Direktur: sequential (satu approver).
+     * Tahap Manajer: paralel — Manajer Kebun & Manajer Keuangan approve independen,
+     * lanjut ke Direktur setelah KEDUANYA approve (lihat approveManagerParallel()).
      */
     private const TRANSITION_MAP = [
         PdoSupplementaryHeader::STATUS_SUBMITTED          => [Role::ASISTEN_KEBUN,     PdoSupplementaryHeader::STATUS_REVIEWED_ASISTEN],
-        PdoSupplementaryHeader::STATUS_REVIEWED_ASISTEN   => [Role::MANAJER_KEBUN,     PdoSupplementaryHeader::STATUS_IN_REVIEW_MANAGER],
-        PdoSupplementaryHeader::STATUS_IN_REVIEW_MANAGER  => [Role::MANAJER_KEUANGAN,  PdoSupplementaryHeader::STATUS_IN_REVIEW_DIREKTUR],
         PdoSupplementaryHeader::STATUS_IN_REVIEW_DIREKTUR => [Role::DIREKTUR_KEUANGAN, PdoSupplementaryHeader::STATUS_FINAL_MERGED],
+    ];
+
+    private const PARALLEL_STATUSES = [
+        PdoSupplementaryHeader::STATUS_REVIEWED_ASISTEN,
+        PdoSupplementaryHeader::STATUS_IN_REVIEW_MANAGER,
     ];
 
     public function __construct(
@@ -73,31 +79,85 @@ class PdoSupplementaryApprovalService
             ]], 403));
         }
 
-        [$requiredRole, $nextStatus] = $this->resolveTransition($supp, $actor);
+        return DB::transaction(function () use ($supp, $actor, $reason) {
+            $supp = PdoSupplementaryHeader::lockForUpdate()->findOrFail($supp->id);
 
-        return DB::transaction(function () use ($supp, $actor, $reason, $nextStatus) {
-            $stage = $supp->status;
-            $supp->update(['status' => $nextStatus]);
-
-            $this->appendLog($supp, $actor, $stage, PdoSupplementaryApprovalLog::ACTION_APPROVE, $reason);
-
-            $fresh = $supp->fresh()->load(['creator', 'plantationUnit']);
-
-            if ($nextStatus === PdoSupplementaryHeader::STATUS_FINAL_MERGED) {
-                $this->mergeIntoParent($supp, $actor);
-                $fresh = $supp->fresh()->load(['creator', 'plantationUnit']);
+            if (in_array($supp->status, self::PARALLEL_STATUSES, true)) {
+                return $this->approveManagerParallel($supp, $actor, $reason);
             }
 
-            match ($nextStatus) {
-                PdoSupplementaryHeader::STATUS_REVIEWED_ASISTEN   => $this->wa->notifySupplementaryApprovedByAsisten($fresh),
-                PdoSupplementaryHeader::STATUS_IN_REVIEW_MANAGER  => $this->wa->notifySupplementaryApprovedByManagerKebun($fresh),
-                PdoSupplementaryHeader::STATUS_IN_REVIEW_DIREKTUR => $this->wa->notifySupplementaryApprovedByManagerKeuangan($fresh),
-                PdoSupplementaryHeader::STATUS_FINAL_MERGED       => $this->wa->notifySupplementaryFinal($fresh),
-                default                                            => null,
-            };
-
-            return $fresh;
+            return $this->approveSingleStage($supp, $actor, $reason);
         });
+    }
+
+    private function approveSingleStage(PdoSupplementaryHeader $supp, User $actor, ?string $reason): PdoSupplementaryHeader
+    {
+        [$requiredRole, $nextStatus] = $this->resolveTransition($supp, $actor);
+
+        $stage = $supp->status;
+        $supp->update(['status' => $nextStatus]);
+
+        $this->appendLog($supp, $actor, $stage, PdoSupplementaryApprovalLog::ACTION_APPROVE, $reason);
+
+        $fresh = $supp->fresh()->load(['creator', 'plantationUnit']);
+
+        if ($nextStatus === PdoSupplementaryHeader::STATUS_FINAL_MERGED) {
+            $this->mergeIntoParent($supp, $actor);
+            $fresh = $supp->fresh()->load(['creator', 'plantationUnit']);
+        }
+
+        match ($nextStatus) {
+            PdoSupplementaryHeader::STATUS_REVIEWED_ASISTEN => $this->wa->notifySupplementaryApprovedByAsisten($fresh),
+            PdoSupplementaryHeader::STATUS_FINAL_MERGED     => $this->wa->notifySupplementaryFinal($fresh),
+            default                                          => null,
+        };
+
+        return $fresh;
+    }
+
+    /**
+     * BR-APPR-002 (PDO Tambahan): Approval paralel Manajer Kebun + Manajer Keuangan.
+     * Manajer pertama yang approve menandai statusnya sendiri; status header masuk
+     * in_review_manager. Direktur baru dinotifikasi & status naik ke in_review_direktur
+     * setelah KEDUA manajer approve — urutan tidak masalah.
+     */
+    private function approveManagerParallel(PdoSupplementaryHeader $supp, User $actor, ?string $reason): PdoSupplementaryHeader
+    {
+        $isManagerKebun    = $actor->hasRole(Role::MANAJER_KEBUN);
+        $isManagerKeuangan = $actor->hasRole(Role::MANAJER_KEUANGAN);
+
+        if (! $isManagerKebun && ! $isManagerKeuangan) {
+            abort(response()->json(['success' => false, 'error' => [
+                'code'    => 'FORBIDDEN',
+                'message' => 'Approval tahap ini membutuhkan role Manajer Kebun atau Manajer Keuangan.',
+            ]], 403));
+        }
+
+        $alreadyApproved = $isManagerKebun
+            ? $supp->manager_kebun_approved === true
+            : $supp->manager_keuangan_approved === true;
+
+        if ($alreadyApproved) {
+            abort(response()->json(['success' => false, 'error' => [
+                'code'    => 'ALREADY_APPROVED',
+                'message' => 'Anda sudah memberikan persetujuan pada PDO Tambahan ini.',
+            ]], 409));
+        }
+
+        $stage   = $supp->status;
+        $field   = $isManagerKebun ? 'manager_kebun_approved' : 'manager_keuangan_approved';
+        $supp->update(['status' => PdoSupplementaryHeader::STATUS_IN_REVIEW_MANAGER, $field => true]);
+
+        $this->appendLog($supp, $actor, $stage, PdoSupplementaryApprovalLog::ACTION_APPROVE, $reason);
+
+        $supp = $supp->fresh();
+
+        if ($supp->manager_kebun_approved === true && $supp->manager_keuangan_approved === true) {
+            $supp->update(['status' => PdoSupplementaryHeader::STATUS_IN_REVIEW_DIREKTUR]);
+            $this->wa->notifySupplementaryApprovedByManager($supp->fresh()->load(['creator', 'plantationUnit']));
+        }
+
+        return $supp->fresh()->load(['creator', 'plantationUnit']);
     }
 
     /** Reject di tahap manapun → kembali ke status draft (sama seperti PDO Bulanan), agar KERANI bisa edit dan resubmit */
@@ -120,7 +180,12 @@ class PdoSupplementaryApprovalService
 
         return DB::transaction(function () use ($supp, $actor, $reason) {
             $stage = $supp->status;
-            $supp->update(['status' => PdoSupplementaryHeader::STATUS_DRAFT, 'submission_date' => null]);
+            $supp->update([
+                'status'                    => PdoSupplementaryHeader::STATUS_DRAFT,
+                'submission_date'           => null,
+                'manager_kebun_approved'    => null,
+                'manager_keuangan_approved' => null,
+            ]);
 
             $this->appendLog($supp, $actor, $stage, PdoSupplementaryApprovalLog::ACTION_REJECT, $reason);
 
