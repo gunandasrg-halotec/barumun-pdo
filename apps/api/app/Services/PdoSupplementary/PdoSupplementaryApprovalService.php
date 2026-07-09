@@ -65,6 +65,14 @@ class PdoSupplementaryApprovalService
     /** Approve berdasarkan role approver — chain sama seperti PDO Bulanan */
     public function approve(PdoSupplementaryHeader $supp, ?string $reason, User $actor): PdoSupplementaryHeader
     {
+        // BR-APPR-003: larangan self-approval — sama seperti PDO Bulanan
+        if ($supp->created_by === $actor->id) {
+            abort(response()->json(['success' => false, 'error' => [
+                'code'    => 'SELF_APPROVAL_NOT_ALLOWED',
+                'message' => 'Anda tidak dapat menyetujui PDO Tambahan yang Anda buat sendiri.',
+            ]], 403));
+        }
+
         [$requiredRole, $nextStatus] = $this->resolveTransition($supp, $actor);
 
         return DB::transaction(function () use ($supp, $actor, $reason, $nextStatus) {
