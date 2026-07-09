@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { api } from '@/lib/api'
+import { api, getApiErrorMessage } from '@/lib/api'
 import { useAuthStore } from '@/store/auth.store'
 import { Badge } from '@/components/ui/Badge'
 import { Button } from '@/components/ui/Button'
@@ -88,17 +88,23 @@ export function PdoSupplementaryDetailPage() {
     onError: () => toast('Gagal mengajukan', 'error'),
   })
 
-  const approvalMut = useMutation({
-    mutationFn: ({ action, reason }: { action: string; reason?: string }) =>
-      api.post(`/pdo-supplementary/${id}/approve`, { action, reason }),
-    onSuccess: () => {
-      toast(modalType === 'approve' ? 'Berhasil disetujui' : 'Berhasil ditolak/dikembalikan')
-      qc.invalidateQueries({ queryKey: ['pdo-supplementary', id] })
-      qc.invalidateQueries({ queryKey: ['pdo-supplementary-logs', id] })
-      setShowModal(false)
-      setReason('')
-    },
-    onError: () => toast('Gagal memproses approval', 'error'),
+  const onApprovalSettled = () => {
+    qc.invalidateQueries({ queryKey: ['pdo-supplementary', id] })
+    qc.invalidateQueries({ queryKey: ['pdo-supplementary-logs', id] })
+    setShowModal(false)
+    setReason('')
+  }
+
+  const approveMut = useMutation({
+    mutationFn: (reason?: string) => api.post(`/pdo-supplementary/${id}/approve`, { reason }),
+    onSuccess: () => { toast('Berhasil disetujui'); onApprovalSettled() },
+    onError: (error) => toast(getApiErrorMessage(error), 'error'),
+  })
+
+  const rejectMut = useMutation({
+    mutationFn: (reason: string) => api.post(`/pdo-supplementary/${id}/reject`, { reason }),
+    onSuccess: () => { toast('Berhasil ditolak/dikembalikan'); onApprovalSettled() },
+    onError: (error) => toast(getApiErrorMessage(error), 'error'),
   })
 
   if (isLoading) return <div className="text-muted text-sm">Memuat...</div>
@@ -297,15 +303,15 @@ export function PdoSupplementaryDetailPage() {
             <Button
               variant="danger"
               disabled={!reason.trim()}
-              loading={approvalMut.isPending}
-              onClick={() => approvalMut.mutate({ action: 'reject', reason })}
+              loading={rejectMut.isPending}
+              onClick={() => rejectMut.mutate(reason)}
             >
               Reject
             </Button>
           ) : (
             <Button
-              loading={approvalMut.isPending}
-              onClick={() => approvalMut.mutate({ action: 'approve', reason: reason || undefined })}
+              loading={approveMut.isPending}
+              onClick={() => approveMut.mutate(reason || undefined)}
             >
               Approve
             </Button>

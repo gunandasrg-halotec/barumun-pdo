@@ -153,7 +153,7 @@ class WhatsAppNotificationService
             ->merge($this->suppAsistenByUnit($supp))
             ->merge($this->suppCreator($supp));
 
-        $this->send($supp->company_id, NotificationTemplate::EVENT_PDO_APPROVED_ASISTEN, $recipients, $this->suppBaseVars($supp));
+        $this->send($supp->company_id, NotificationTemplate::EVENT_PDO_APPROVED_MANAGER, $recipients, $this->suppBaseVars($supp));
     }
 
     /** Manajer Keuangan approve PDO Tambahan → Direktur + Asisten + Kerani */

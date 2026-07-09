@@ -4,7 +4,7 @@ import { useForm, useFieldArray } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { api } from '@/lib/api'
+import { api, getApiErrorMessage } from '@/lib/api'
 import { Button } from '@/components/ui/Button'
 import { useToastStore } from '@/store/toast.store'
 import { useItems } from '@/hooks/useMasterData'
@@ -160,7 +160,7 @@ export function PdoSupplementaryFormPage() {
       qc.invalidateQueries({ queryKey: ['pdo-supplementary'] })
       navigate(`/pdo-tambahan/${header.id}`)
     },
-    onError: () => toast('Gagal menyimpan PDO Tambahan', 'error'),
+    onError: (error) => toast(getApiErrorMessage(error), 'error'),
   })
 
   const submit = useMutation({
@@ -193,7 +193,7 @@ export function PdoSupplementaryFormPage() {
       qc.invalidateQueries({ queryKey: ['pdo-supplementary'] })
       navigate(`/pdo-tambahan/${header.id}`)
     },
-    onError: () => toast('Gagal mengajukan PDO Tambahan', 'error'),
+    onError: (error) => toast(getApiErrorMessage(error), 'error'),
   })
 
   return (
