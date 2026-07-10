@@ -156,6 +156,60 @@ class RealizationEntryServiceTest extends TestCase
     }
 
     // ─────────────────────────────────────────────────────
+    // list() filters — dipakai oleh drill-down KPI header Buku Kas Kebun
+    // ─────────────────────────────────────────────────────
+
+    public function test_list_filters_by_funding_source_group(): void
+    {
+        $detail = $this->makeDetail(PdoHeader::STATUS_FINAL, budget: 1000000, transferred: 1000000);
+
+        RealizationEntry::factory()->create(['pdo_detail_id' => $detail->id, 'funding_source' => RealizationEntry::FUNDING_KAS_KEBUN]);
+        RealizationEntry::factory()->create(['pdo_detail_id' => $detail->id, 'funding_source' => RealizationEntry::FUNDING_REKENING_KEBUN]);
+        RealizationEntry::factory()->create(['pdo_detail_id' => $detail->id, 'funding_source' => RealizationEntry::FUNDING_REKENING_UTAMA]);
+
+        $kebunOnly = $this->service->list($this->kerani, [
+            'funding_source' => [RealizationEntry::FUNDING_KAS_KEBUN, RealizationEntry::FUNDING_REKENING_KEBUN],
+        ]);
+
+        $this->assertCount(2, $kebunOnly);
+        $this->assertTrue($kebunOnly->every(fn ($e) => in_array($e->funding_source, [RealizationEntry::FUNDING_KAS_KEBUN, RealizationEntry::FUNDING_REKENING_KEBUN])));
+    }
+
+    public function test_list_filters_by_period_and_unit(): void
+    {
+        $detailJuly = $this->makeDetail(PdoHeader::STATUS_FINAL, budget: 1000000, transferred: 1000000, periodYear: 2026, periodMonth: 7);
+        $detailJune = $this->makeDetail(PdoHeader::STATUS_FINAL, budget: 1000000, transferred: 1000000, periodYear: 2026, periodMonth: 6);
+
+        RealizationEntry::factory()->create(['pdo_detail_id' => $detailJuly->id]);
+        RealizationEntry::factory()->create(['pdo_detail_id' => $detailJune->id]);
+
+        $julyOnly = $this->service->list($this->kerani, [
+            'unit_id'      => $this->unit->id,
+            'period_year'  => 2026,
+            'period_month' => 7,
+        ]);
+
+        $this->assertCount(1, $julyOnly);
+        $this->assertEquals($detailJuly->id, $julyOnly->first()->pdo_detail_id);
+    }
+
+    public function test_list_filters_by_date_range(): void
+    {
+        $detail = $this->makeDetail(PdoHeader::STATUS_FINAL, budget: 1000000, transferred: 1000000);
+
+        RealizationEntry::factory()->create(['pdo_detail_id' => $detail->id, 'transaction_date' => '2026-07-05']);
+        RealizationEntry::factory()->create(['pdo_detail_id' => $detail->id, 'transaction_date' => '2026-07-20']);
+
+        $result = $this->service->list($this->kerani, [
+            'start_date' => '2026-07-01',
+            'end_date'   => '2026-07-10',
+        ]);
+
+        $this->assertCount(1, $result);
+        $this->assertEquals('2026-07-05', $result->first()->transaction_date->format('Y-m-d'));
+    }
+
+    // ─────────────────────────────────────────────────────
     // Audit Log
     // ─────────────────────────────────────────────────────
 
@@ -183,13 +237,15 @@ class RealizationEntryServiceTest extends TestCase
     // HELPER
     // ─────────────────────────────────────────────────────
 
-    private function makeDetail(string $status, int $budget, int $transferred): PdoDetail
+    private function makeDetail(string $status, int $budget, int $transferred, ?int $periodYear = null, ?int $periodMonth = null): PdoDetail
     {
         $pdo = PdoHeader::factory()->create([
             'company_id'         => $this->companyId,
             'plantation_unit_id' => $this->unit->id,
             'created_by'         => $this->kerani->id,
             'status'             => $status,
+            ...($periodYear  ? ['period_year' => $periodYear] : []),
+            ...($periodMonth ? ['period_month' => $periodMonth] : []),
         ]);
 
         $detail = PdoDetail::factory()->create([

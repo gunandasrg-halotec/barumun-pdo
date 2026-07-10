@@ -26,6 +26,11 @@ class ReportService
             $params[]   = $filters['category_id'];
         }
 
+        // total_transferred/total_realized are pre-aggregated per pdo_detail_id in subqueries
+        // rather than joined directly, to avoid a join fan-out (joining both transfer_entries
+        // and realization_entries onto pdo_details multiplies rows when a detail has more than
+        // one row on either side). The previous SUM(DISTINCT amount) workaround for that
+        // undercounts whenever two entries legitimately share the same amount.
         return DB::select("
             SELECT
                 pu.code          AS unit_code,
@@ -40,24 +45,30 @@ class ReportService
                 ei.name          AS item_name,
                 pd.description,
                 pd.amount        AS budget,
-                COALESCE(SUM(DISTINCT te.amount), 0) AS total_transferred,
-                COALESCE(SUM(DISTINCT re.amount), 0) AS total_realized,
-                pd.amount - COALESCE(SUM(DISTINCT re.amount), 0) AS sisa
+                COALESCE(te_agg.total_transferred, 0) AS total_transferred,
+                COALESCE(re_agg.total_realized, 0)    AS total_realized,
+                pd.amount - COALESCE(re_agg.total_realized, 0) AS sisa
             FROM pdo_headers ph
             JOIN plantation_units pu ON pu.id = ph.plantation_unit_id
             JOIN pdo_details pd ON pd.pdo_header_id = ph.id
             JOIN expense_items ei ON ei.id = pd.expense_item_id
             JOIN expense_subcategories esc ON esc.id = ei.subcategory_id
             JOIN expense_categories ec ON ec.id = esc.category_id
-            LEFT JOIN transfer_entries te ON te.pdo_detail_id = pd.id AND te.status = 'committed'
-            LEFT JOIN realization_entries re ON re.pdo_detail_id = pd.id
+            LEFT JOIN (
+                SELECT pdo_detail_id, SUM(amount) AS total_transferred
+                FROM transfer_entries
+                WHERE status = 'committed'
+                GROUP BY pdo_detail_id
+            ) te_agg ON te_agg.pdo_detail_id = pd.id
+            LEFT JOIN (
+                SELECT pdo_detail_id, SUM(amount) AS total_realized
+                FROM realization_entries
+                GROUP BY pdo_detail_id
+            ) re_agg ON re_agg.pdo_detail_id = pd.id
             WHERE ph.company_id = ?
               AND ph.period_year  = ?
               AND ph.period_month = ?
               {$unitWhere}
-            GROUP BY pu.code, pu.name, ph.pdo_number, ph.status,
-                     ec.code, ec.name, esc.code, esc.name,
-                     ei.code, ei.name, pd.description, pd.amount
             ORDER BY pu.code, ec.display_order, esc.display_order, pd.display_order
         ", $params);
     }

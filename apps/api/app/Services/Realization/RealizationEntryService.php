@@ -23,7 +23,13 @@ class RealizationEntryService
             ->whereHas('pdoDetail.pdoHeader', fn ($q) => $q->where('company_id', $actor->company_id))
             ->when($actor->plantation_unit_id, fn ($q) => $q->whereHas('pdoDetail.pdoHeader', fn ($qq) => $qq->where('plantation_unit_id', $actor->plantation_unit_id)))
             ->when(!empty($filters['unit_ids']), fn ($q) => $q->whereHas('pdoDetail.pdoHeader', fn ($qq) => $qq->whereIn('plantation_unit_id', $filters['unit_ids'])))
+            ->when(isset($filters['unit_id']), fn ($q) => $q->whereHas('pdoDetail.pdoHeader', fn ($qq) => $qq->where('plantation_unit_id', $filters['unit_id'])))
             ->when(isset($filters['pdo_detail_id']), fn ($q) => $q->where('pdo_detail_id', $filters['pdo_detail_id']))
+            ->when(isset($filters['period_year']), fn ($q) => $q->whereHas('pdoDetail.pdoHeader', fn ($qq) => $qq->where('period_year', $filters['period_year'])))
+            ->when(isset($filters['period_month']), fn ($q) => $q->whereHas('pdoDetail.pdoHeader', fn ($qq) => $qq->where('period_month', $filters['period_month'])))
+            ->when(!empty($filters['funding_source']), fn ($q) => $q->whereIn('funding_source', $filters['funding_source']))
+            ->when(isset($filters['start_date']), fn ($q) => $q->whereDate('transaction_date', '>=', $filters['start_date']))
+            ->when(isset($filters['end_date']), fn ($q) => $q->whereDate('transaction_date', '<=', $filters['end_date']))
             ->orderByDesc('transaction_date')
             ->get();
     }

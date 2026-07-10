@@ -97,6 +97,8 @@ export function RekapitulasiPage() {
   const [file,      setFile]              = useState<File | null>(null)
   // realisasi detail modal
   const [detailItem, setDetailItem]       = useState<{ pdoDetailId: string; itemName: string } | null>(null)
+  // realisasi aggregate drill-down modal (klik cell "Realisasi" di KPI header)
+  const [aggregateGroup, setAggregateGroup] = useState<'kebun' | 'pribadi' | null>(null)
 
   // ── Plantation units (cross-unit roles only) ─────────────────────────────
   const { data: units } = useQuery({
@@ -222,7 +224,7 @@ export function RekapitulasiPage() {
     onError: () => toast('Gagal upload bukti', 'error'),
   })
 
-  // ── Realisasi detail entries (click on cell) ─────────────────────────────
+  // ── Realisasi detail entries (click on item cell) ────────────────────────
   const { data: detailEntries, isFetching: detailFetching } = useQuery({
     queryKey: ['realisasi-detail', detailItem?.pdoDetailId],
     queryFn: async () => {
@@ -232,6 +234,27 @@ export function RekapitulasiPage() {
       return res.data.data
     },
     enabled: !!detailItem,
+  })
+
+  // ── Realisasi aggregate entries (click on KPI header "Realisasi" cell) ───
+  const AGGREGATE_FUNDING_SOURCES: Record<'kebun' | 'pribadi', string[]> = {
+    kebun:   ['kas_kebun', 'rekening_kebun'],
+    pribadi: ['rekening_utama'],
+  }
+  const { data: aggregateEntries, isFetching: aggregateFetching } = useQuery({
+    queryKey: ['realisasi-aggregate', aggregateGroup, resolvedUnitId, year, month, validStartDate, validEndDate],
+    queryFn: async () => {
+      const params = new URLSearchParams()
+      params.set('unit_id', resolvedUnitId)
+      params.set('period_year', String(year))
+      params.set('period_month', String(month))
+      if (validStartDate) params.set('start_date', validStartDate)
+      if (validEndDate)   params.set('end_date', validEndDate)
+      AGGREGATE_FUNDING_SOURCES[aggregateGroup!].forEach((fs) => params.append('funding_source[]', fs))
+      const res = await api.get<ApiResponse<RealizationEntry[]>>('/realization-entries', { params })
+      return res.data.data
+    },
+    enabled: !!aggregateGroup && !!resolvedUnitId,
   })
 
   // ── Filtered recap ───────────────────────────────────────────────────────
@@ -412,28 +435,38 @@ export function RekapitulasiPage() {
             <div className="grid grid-cols-6">
               {/* Kas Kebun */}
               {[
-                { label: 'Transfer',   value: recap.transfer_kebun,   group: 'Kas Kebun' },
-                { label: 'Realisasi',  value: recap.realisasi_kebun,  group: 'Kas Kebun' },
-                { label: 'Saldo',      value: recap.saldo_kebun,      group: 'Kas Kebun' },
+                { label: 'Transfer',   value: recap.transfer_kebun,   group: 'Kas Kebun', clickGroup: null },
+                { label: 'Realisasi',  value: recap.realisasi_kebun,  group: 'Kas Kebun', clickGroup: 'kebun' as const },
+                { label: 'Saldo',      value: recap.saldo_kebun,      group: 'Kas Kebun', clickGroup: null },
               ].map((k, i) => (
-                <div key={`kebun-${i}`} className="p-3 text-center border-r border-line border-t-2 border-t-[#1D9E75]">
+                <div
+                  key={`kebun-${i}`}
+                  className={`p-3 text-center border-r border-line border-t-2 border-t-[#1D9E75] ${k.clickGroup ? 'cursor-pointer hover:bg-[#f7faf7] transition-colors' : ''}`}
+                  onClick={k.clickGroup ? () => setAggregateGroup(k.clickGroup) : undefined}
+                  title={k.clickGroup ? 'Klik untuk lihat riwayat realisasi Kas Kebun' : undefined}
+                >
                   <div className="text-[9px] font-[700] text-[#0F6E56] uppercase tracking-wider mb-0.5">{k.group}</div>
                   <div className="text-[10px] font-[850] text-muted uppercase tracking-wider mb-1">{k.label}</div>
-                  <div className={`text-[14px] font-[950] ${k.value < 0 ? 'text-red-600' : 'text-[#0F6E56]'}`}>
+                  <div className={`text-[14px] font-[950] ${k.value < 0 ? 'text-red-600' : 'text-[#0F6E56]'} ${k.clickGroup ? 'underline decoration-dotted underline-offset-2' : ''}`}>
                     {new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', maximumFractionDigits: 0 }).format(k.value)}
                   </div>
                 </div>
               ))}
               {/* Pribadi / Vendor */}
               {[
-                { label: 'Transfer',   value: recap.transfer_pribadi,   group: 'Pribadi / Vendor' },
-                { label: 'Realisasi',  value: recap.realisasi_pribadi,  group: 'Pribadi / Vendor' },
-                { label: 'Saldo',      value: recap.saldo_pribadi,      group: 'Pribadi / Vendor' },
+                { label: 'Transfer',   value: recap.transfer_pribadi,   group: 'Pribadi / Vendor', clickGroup: null },
+                { label: 'Realisasi',  value: recap.realisasi_pribadi,  group: 'Pribadi / Vendor', clickGroup: 'pribadi' as const },
+                { label: 'Saldo',      value: recap.saldo_pribadi,      group: 'Pribadi / Vendor', clickGroup: null },
               ].map((k, i) => (
-                <div key={`pribadi-${i}`} className="p-3 text-center border-r border-line last:border-r-0 border-t-2 border-t-[#185FA5]">
+                <div
+                  key={`pribadi-${i}`}
+                  className={`p-3 text-center border-r border-line last:border-r-0 border-t-2 border-t-[#185FA5] ${k.clickGroup ? 'cursor-pointer hover:bg-[#f7faf7] transition-colors' : ''}`}
+                  onClick={k.clickGroup ? () => setAggregateGroup(k.clickGroup) : undefined}
+                  title={k.clickGroup ? 'Klik untuk lihat riwayat realisasi Pribadi/Vendor' : undefined}
+                >
                   <div className="text-[9px] font-[700] text-[#185FA5] uppercase tracking-wider mb-0.5">{k.group}</div>
                   <div className="text-[10px] font-[850] text-muted uppercase tracking-wider mb-1">{k.label}</div>
-                  <div className={`text-[14px] font-[950] ${k.value < 0 ? 'text-red-600' : 'text-[#185FA5]'}`}>
+                  <div className={`text-[14px] font-[950] ${k.value < 0 ? 'text-red-600' : 'text-[#185FA5]'} ${k.clickGroup ? 'underline decoration-dotted underline-offset-2' : ''}`}>
                     {new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', maximumFractionDigits: 0 }).format(k.value)}
                   </div>
                 </div>
@@ -580,7 +613,7 @@ export function RekapitulasiPage() {
         </div>
       </Modal>
 
-      {/* ── Modal Detail Realisasi ──────────────────────────────────────────── */}
+      {/* ── Modal Detail Realisasi (per item) ─────────────────────────────────── */}
       <Modal
         open={!!detailItem}
         onClose={() => setDetailItem(null)}
@@ -625,6 +658,62 @@ export function RekapitulasiPage() {
         )}
         <div className="flex justify-end mt-4">
           <Button variant="secondary" onClick={() => setDetailItem(null)}>Tutup</Button>
+        </div>
+      </Modal>
+
+      {/* ── Modal Detail Realisasi (aggregate — klik cell KPI header) ─────────── */}
+      <Modal
+        open={!!aggregateGroup}
+        onClose={() => setAggregateGroup(null)}
+        title={`Realisasi ${aggregateGroup === 'kebun' ? 'Kas Kebun' : 'Pribadi / Vendor'}`}
+        width="w-[900px]"
+        className="!max-h-none"
+      >
+        {aggregateFetching ? (
+          <div className="space-y-3 py-2">
+            {Array.from({ length: 3 }).map((_, i) => (
+              <div key={i} className="h-6 bg-[#f0f4f0] rounded animate-pulse" />
+            ))}
+          </div>
+        ) : !aggregateEntries?.length ? (
+          <EmptyState message="Belum ada data realisasi." />
+        ) : (
+          <div>
+            <table className="w-full border-collapse text-sm">
+              <thead>
+                <tr>
+                  {['No. Ref', 'Tanggal', 'Item Biaya', 'Jumlah', 'Metode', 'Sumber Dana', 'Dicatat Oleh'].map((h) => (
+                    <th key={h} className="px-3 py-2 text-left text-[11px] font-bold uppercase tracking-wider bg-[#f7faf7] border border-line">
+                      {h}
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {aggregateEntries.map((r) => (
+                  <tr key={r.id} className="border-t border-line hover:bg-[#fbfdfb]">
+                    <td className="px-3 py-2 font-bold">{r.proof_number}</td>
+                    <td className="px-3 py-2">{fmtDate(r.transaction_date)}</td>
+                    <td className="px-3 py-2">{r.pdo_detail?.expense_item?.name ?? '—'}</td>
+                    <td className="px-3 py-2 font-bold text-right">{fmt(r.amount)}</td>
+                    <td className="px-3 py-2">{PAYMENT_LABEL[r.payment_method]}</td>
+                    <td className="px-3 py-2">{FUNDING_LABEL[r.funding_source] ?? r.funding_source}</td>
+                    <td className="px-3 py-2">{r.recorder?.full_name ?? '—'}</td>
+                  </tr>
+                ))}
+              </tbody>
+              <tfoot>
+                <tr className="border-t-2 border-line font-bold">
+                  <td className="px-3 py-2" colSpan={3}>Total</td>
+                  <td className="px-3 py-2 text-right">{fmt(aggregateEntries.reduce((s, r) => s + r.amount, 0))}</td>
+                  <td colSpan={3} />
+                </tr>
+              </tfoot>
+            </table>
+          </div>
+        )}
+        <div className="flex justify-end mt-4">
+          <Button variant="secondary" onClick={() => setAggregateGroup(null)}>Tutup</Button>
         </div>
       </Modal>
     </div>

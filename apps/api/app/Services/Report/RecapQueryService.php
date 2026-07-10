@@ -56,6 +56,12 @@ class RecapQueryService
             'end_date2'   => $endDate,
         ]);
 
+        // total_transfer/total_realization are pre-aggregated per pdo_detail_id in subqueries
+        // (not joined directly) to avoid a join fan-out: joining transfer_entries AND
+        // realization_entries onto pdo_details in one query multiplies rows whenever a detail
+        // has more than one row on either side, and SUM(DISTINCT amount) — the previous
+        // workaround — silently drops legitimate duplicate-amount entries instead of
+        // duplicate rows, undercounting totals like "3x Rp 120.000 => Rp 120.000".
         $rows = DB::select("
             SELECT
                 ec.id            AS category_id,
@@ -74,37 +80,41 @@ class RecapQueryService
                 pd.description,
                 CASE WHEN ei.is_deduction THEN -pd.amount ELSE pd.amount END AS pengajuan,
                 ei.is_deduction,
-                COALESCE(SUM(DISTINCT te.amount), 0) AS total_transfer,
-                COALESCE(SUM(DISTINCT re.amount), 0) AS total_realization
+                COALESCE(te_agg.total_transfer, 0)      AS total_transfer,
+                COALESCE(re_agg.total_realization, 0)   AS total_realization
             FROM pdo_details pd
             JOIN pdo_headers ph             ON ph.id = pd.pdo_header_id
             JOIN expense_items ei           ON ei.id = pd.expense_item_id
             JOIN expense_subcategories es   ON es.id = ei.subcategory_id
             JOIN expense_categories ec      ON ec.id = es.category_id
-            LEFT JOIN transfer_entries te   ON te.pdo_detail_id = pd.id
-            LEFT JOIN realization_entries re ON re.pdo_detail_id = pd.id
-                {$dateFilterSql}
+            LEFT JOIN (
+                SELECT pdo_detail_id, SUM(amount) AS total_transfer
+                FROM transfer_entries
+                GROUP BY pdo_detail_id
+            ) te_agg ON te_agg.pdo_detail_id = pd.id
+            LEFT JOIN (
+                SELECT re.pdo_detail_id, SUM(re.amount) AS total_realization
+                FROM realization_entries re
+                WHERE 1 = 1
+                    {$dateFilterSql}
+                GROUP BY re.pdo_detail_id
+            ) re_agg ON re_agg.pdo_detail_id = pd.id
             WHERE ph.period_year  = :year
               AND ph.period_month = :month
               AND ph.plantation_unit_id = :unit_id
               AND ec.include_in_recap = TRUE
               {$categoryFilterSql}
-            GROUP BY
-                ec.id, ec.code, ec.name, ec.display_order,
-                es.id, es.code, es.name, es.display_order,
-                ei.id, ei.code, ei.name, ei.is_deduction,
-                pd.id, pd.account_number, pd.description, pd.amount
             ORDER BY ec.display_order, es.display_order, ei.id
         ", [
+            'start_date'   => $startDate,
+            'start_date2'  => $startDate,
+            'end_date'     => $endDate,
+            'end_date2'    => $endDate,
             'year'        => $year,
             'month'       => $month,
             'unit_id'     => $unitId,
             'category_id'  => $categoryId,
             'category_id2' => $categoryId,
-            'start_date'   => $startDate,
-            'start_date2'  => $startDate,
-            'end_date'     => $endDate,
-            'end_date2'    => $endDate,
         ]);
 
         $transferKebun   = (int) ($kantong->transfer_kebun   ?? 0);

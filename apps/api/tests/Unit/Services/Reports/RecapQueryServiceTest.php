@@ -173,6 +173,48 @@ class RecapQueryServiceTest extends TestCase
         $this->assertEquals($cat1->code, $result['categories'][0]['category_code']);
     }
 
+    // ── 9: duplicate-amount entries must not be undercounted ──────────────────
+
+    public function test_total_realization_sums_multiple_entries_with_same_amount(): void
+    {
+        $cat  = ExpenseCategory::factory()->create(['company_id' => $this->companyId, 'include_in_recap' => true]);
+        $sub  = ExpenseSubcategory::factory()->create(['category_id' => $cat->id]);
+        $item = ExpenseItem::factory()->create(['subcategory_id' => $sub->id]);
+
+        $keraniRole = Role::firstOrCreate(['code' => Role::KERANI], ['name' => 'Kerani']);
+        $kerani     = User::factory()->create([
+            'role_id'            => $keraniRole->id,
+            'plantation_unit_id' => $this->unit->id,
+        ]);
+        $pdo = PdoHeader::factory()->create([
+            'company_id'         => $this->companyId,
+            'plantation_unit_id' => $this->unit->id,
+            'created_by'         => $kerani->id,
+            'status'             => PdoHeader::STATUS_FINAL,
+            'period_month'       => $this->month,
+            'period_year'        => $this->year,
+        ]);
+        $detail = PdoDetail::factory()->create([
+            'pdo_header_id'   => $pdo->id,
+            'expense_item_id' => $item->id,
+            'amount'          => 1_000_000,
+        ]);
+
+        // Three realization entries with the SAME amount — must all be counted, not
+        // collapsed by SUM(DISTINCT). Two transfer entries with different amounts too.
+        RealizationEntry::factory()->create(['pdo_detail_id' => $detail->id, 'amount' => 120_000]);
+        RealizationEntry::factory()->create(['pdo_detail_id' => $detail->id, 'amount' => 120_000]);
+        RealizationEntry::factory()->create(['pdo_detail_id' => $detail->id, 'amount' => 120_000]);
+        TransferEntry::factory()->create(['pdo_detail_id' => $detail->id, 'amount' => 400_000]);
+        TransferEntry::factory()->create(['pdo_detail_id' => $detail->id, 'amount' => 400_000]);
+
+        $result = $this->query();
+        $item   = $result['categories'][0]['subcategories'][0]['items'][0];
+
+        $this->assertEquals(360_000, $item['total_realization']);
+        $this->assertEquals(800_000, $item['total_transfer']);
+    }
+
     // ── 8: kerani unit is enforced by controller (tested via feature) ─────────
 
     public function test_kerani_unit_filter_enforced_regardless_of_request_param(): void
