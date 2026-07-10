@@ -496,7 +496,17 @@ export function TransferBulkPage() {
           }
         }
 
-        const amount = d.draft_total > 0 ? d.draft_total : (firstLoad ? available : 0)
+        // Jangan prefill dengan sisa dana jika PDO ini sudah pernah punya draft ATAU
+        // committed transfer di item manapun (bukan cuma item ini) — hormati pilihan
+        // eksplisit user sebelumnya (termasuk item yang sengaja di-nol-kan), dan cegah
+        // item baru (mis. dari PDO Tambahan yang baru digabung) ikut ter-prefill diam-diam
+        // di PDO yang sebenarnya sudah pernah dipakai untuk transfer sebelumnya. Prefill
+        // hanya terjadi pada kunjungan pertama yang benar-benar belum pernah ada transfer
+        // sama sekali di PDO ini.
+        const pdoHasAnyHistory = summary.details.some((x) => x.draft_total > 0 || x.total_transferred > 0)
+        const amount = d.draft_total > 0
+          ? d.draft_total
+          : (firstLoad && !pdoHasAnyHistory ? available : 0)
         return {
           pdo_detail_id: d.pdo_detail_id,
           isSplit:       false,
