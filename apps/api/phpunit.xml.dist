@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <phpunit xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
          xsi:noNamespaceSchemaLocation="vendor/phpunit/phpunit/phpunit.xsd"
-         bootstrap="vendor/autoload.php"
+         bootstrap="tests/bootstrap.php"
          colors="true"
 >
     <testsuites>
@@ -20,13 +20,28 @@
     </source>
 
     <php>
-        <env name="APP_ENV" value="testing"/>
+        <!--
+            force="true" is required on every entry here: docker-compose injects APP_ENV,
+            DB_CONNECTION, DB_DATABASE etc. as real container environment variables (via
+            env_file: docker/api/.env.docker), and both Laravel's dotenv loader and
+            PHPUnit's <env> tag leave already-set real env vars alone by default. Without
+            force="true", APP_ENV never actually becomes "testing" (stays the container's
+            real "local"), Laravel never loads .env.testing, and tests silently run against
+            the dev database (pdo_db), wiping it via RefreshDatabase.
+            Tests must use Postgres (not sqlite) per project convention — pdo_db_test is a
+            separate database on the same Postgres container, isolated from dev data.
+        -->
+        <env name="APP_ENV" value="testing" force="true"/>
         <env name="APP_MAINTENANCE_DRIVER" value="file"/>
         <env name="BCRYPT_ROUNDS" value="4"/>
         <env name="BROADCAST_CONNECTION" value="null"/>
         <env name="CACHE_STORE" value="array"/>
-        <env name="DB_CONNECTION" value="sqlite"/>
-        <env name="DB_DATABASE" value=":memory:"/>
+        <env name="DB_CONNECTION" value="pgsql" force="true"/>
+        <env name="DB_HOST" value="db" force="true"/>
+        <env name="DB_PORT" value="5432" force="true"/>
+        <env name="DB_DATABASE" value="pdo_db_test" force="true"/>
+        <env name="DB_USERNAME" value="pdo_user" force="true"/>
+        <env name="DB_PASSWORD" value="secret" force="true"/>
         <env name="MAIL_MAILER" value="array"/>
         <env name="QUEUE_CONNECTION" value="sync"/>
         <env name="SESSION_DRIVER" value="array"/>
