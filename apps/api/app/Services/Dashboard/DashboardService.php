@@ -31,12 +31,16 @@ class DashboardService
 
         $params = array_merge([$companyId, $month, $year], $unitIds ?? []);
 
-        // Query amount separately dari transfer/realization untuk avoid row multiplication
+        // Query amount separately dari transfer/realization untuk avoid row multiplication.
+        // JOIN expense_items (many-to-one dari pd, tidak menyebabkan fan-out) untuk
+        // menghormati is_deduction — item deduction (mis. POTONGAN PANJAR) harus
+        // mengurangi total, bukan menambah, konsisten dengan PdoService::syncGrandTotal().
         $amountStats = DB::selectOne("
             SELECT
-                COALESCE(SUM(pd.amount), 0)  AS total_amount
+                COALESCE(SUM(CASE WHEN ei.is_deduction THEN -pd.amount ELSE pd.amount END), 0) AS total_amount
             FROM pdo_headers ph
-            LEFT JOIN pdo_details pd ON pd.pdo_header_id = ph.id
+            LEFT JOIN pdo_details pd  ON pd.pdo_header_id = ph.id
+            LEFT JOIN expense_items ei ON ei.id = pd.expense_item_id
             WHERE ph.company_id = ?
               AND ph.period_month = ?
               AND ph.period_year  = ?
@@ -96,14 +100,33 @@ class DashboardService
         ", $params);
         $byDest = collect($destRows)->pluck('subtotal', 'transfer_destination');
 
-        // Pengajuan & realisasi per plantation unit (tanpa transfer agar tidak multiply rows)
+        // Pengajuan per plantation unit. Joins only pd + expense_items (many-to-one,
+        // no fan-out) so is_deduction can be respected; realisasi is queried separately
+        // below and merged in PHP — joining pd (one-to-many from header) together with
+        // re (one-to-many from pd) in one query would multiply pd.amount by the number
+        // of realisasi rows per detail.
         // Note: LEFT JOIN plantation_units untuk include PDOs tanpa unit (consistency dengan global query)
         $unitRows = DB::select("
             SELECT
                 pu.id   AS unit_id,
                 pu.code AS unit_code,
                 pu.name AS unit_name,
-                COALESCE(SUM(pd.amount), 0) AS total_amount,
+                COALESCE(SUM(CASE WHEN ei.is_deduction THEN -pd.amount ELSE pd.amount END), 0) AS total_amount
+            FROM pdo_headers ph
+            LEFT JOIN plantation_units pu ON pu.id = ph.plantation_unit_id
+            LEFT JOIN pdo_details pd   ON pd.pdo_header_id = ph.id
+            LEFT JOIN expense_items ei ON ei.id = pd.expense_item_id
+            WHERE ph.company_id = ?
+              AND ph.period_month = ?
+              AND ph.period_year  = ?
+              {$unitClause}
+            GROUP BY pu.id, pu.code, pu.name
+            ORDER BY COALESCE(pu.code, 'zzz')
+        ", $params);
+
+        $unitRealizedRows = DB::select("
+            SELECT
+                pu.id AS unit_id,
                 COALESCE(SUM(re.amount), 0) AS total_realized
             FROM pdo_headers ph
             LEFT JOIN plantation_units pu ON pu.id = ph.plantation_unit_id
@@ -113,9 +136,9 @@ class DashboardService
               AND ph.period_month = ?
               AND ph.period_year  = ?
               {$unitClause}
-            GROUP BY pu.id, pu.code, pu.name
-            ORDER BY COALESCE(pu.code, 'zzz')
+            GROUP BY pu.id
         ", $params);
+        $realizedByUnit = collect($unitRealizedRows)->pluck('total_realized', 'unit_id');
 
         // Transfer per unit per destination
         $unitDestRows = DB::select("
@@ -141,7 +164,7 @@ class DashboardService
             $transferByUnit[$row->unit_id][$row->transfer_destination] = (int) $row->subtotal;
         }
 
-        $byUnit = array_values(array_filter(array_map(function ($r) use ($transferByUnit) {
+        $byUnit = array_values(array_filter(array_map(function ($r) use ($transferByUnit, $realizedByUnit) {
             // Skip rows dengan unit_id NULL
             if (! $r->unit_id) {
                 return null;
@@ -156,7 +179,7 @@ class DashboardService
                 'unit_name'             => $r->unit_name,
                 'total_amount'          => (int) $r->total_amount,
                 'total_transferred'     => $rekKebun + $pribadi + $vendor,
-                'total_realized'        => (int) $r->total_realized,
+                'total_realized'        => (int) ($realizedByUnit[$r->unit_id] ?? 0),
                 'transferred_rek_kebun' => $rekKebun,
                 'transferred_pribadi'   => $pribadi,
                 'transferred_vendor'    => $vendor,
@@ -194,22 +217,35 @@ class DashboardService
 
         $params = array_merge([$companyId, $year, $month], $unitIds ?? []);
 
+        // total_transferred/total_realized are pre-aggregated per pdo_detail_id in
+        // subqueries rather than joined directly, to avoid a join fan-out — joining both
+        // transfer_entries and realization_entries onto pdo_details in one query
+        // multiplies every row (including total_budget) whenever a detail has more than
+        // one row on either side. Same fix pattern as RecapQueryService.
         $rows = DB::select("
             SELECT
                 ec.id            AS category_id,
                 ec.code          AS category_code,
                 ec.name          AS category_name,
                 ec.include_in_recap,
-                COALESCE(SUM(pd.amount), 0)  AS total_budget,
-                COALESCE(SUM(te.amount), 0)  AS total_transferred,
-                COALESCE(SUM(re.amount), 0)  AS total_realized
+                COALESCE(SUM(CASE WHEN ei.is_deduction THEN -pd.amount ELSE pd.amount END), 0) AS total_budget,
+                COALESCE(SUM(te_agg.total_transferred), 0) AS total_transferred,
+                COALESCE(SUM(re_agg.total_realized), 0)    AS total_realized
             FROM expense_categories ec
             JOIN expense_subcategories esc ON esc.category_id = ec.id
             JOIN expense_items ei ON ei.subcategory_id = esc.id
             JOIN pdo_details pd ON pd.expense_item_id = ei.id
             JOIN pdo_headers ph ON ph.id = pd.pdo_header_id
-            LEFT JOIN transfer_entries te ON te.pdo_detail_id = pd.id
-            LEFT JOIN realization_entries re ON re.pdo_detail_id = pd.id
+            LEFT JOIN (
+                SELECT pdo_detail_id, SUM(amount) AS total_transferred
+                FROM transfer_entries
+                GROUP BY pdo_detail_id
+            ) te_agg ON te_agg.pdo_detail_id = pd.id
+            LEFT JOIN (
+                SELECT pdo_detail_id, SUM(amount) AS total_realized
+                FROM realization_entries
+                GROUP BY pdo_detail_id
+            ) re_agg ON re_agg.pdo_detail_id = pd.id
             WHERE ec.company_id = ?
               AND ph.period_year  = ?
               AND ph.period_month = ?

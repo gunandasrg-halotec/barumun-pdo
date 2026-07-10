@@ -3,9 +3,13 @@
 namespace Tests\Unit\Services\Dashboard;
 
 use App\Models\Company;
+use App\Models\ExpenseCategory;
+use App\Models\ExpenseItem;
+use App\Models\ExpenseSubcategory;
 use App\Models\PdoDetail;
 use App\Models\PdoHeader;
 use App\Models\PlantationUnit;
+use App\Models\RealizationEntry;
 use App\Models\Role;
 use App\Models\TransferEntry;
 use App\Models\User;
@@ -106,5 +110,92 @@ class DashboardServiceTest extends TestCase
 
         $this->assertEquals(now()->month, $summary['period']['month']);
         $this->assertEquals(now()->year,  $summary['period']['year']);
+    }
+
+    public function test_kpi_total_amount_subtracts_deduction_items(): void
+    {
+        $keraniRole = Role::factory()->create(['code' => Role::KERANI]);
+        $kerani     = User::factory()->create(['company_id' => $this->companyId, 'role_id' => $keraniRole->id]);
+        $item       = ExpenseItem::factory()->create(['is_deduction' => true]);
+
+        $pdo = PdoHeader::factory()->create([
+            'company_id'         => $this->companyId,
+            'plantation_unit_id' => $this->unit->id,
+            'created_by'         => $kerani->id,
+            'status'             => PdoHeader::STATUS_FINAL,
+            'period_month'       => now()->month,
+            'period_year'        => now()->year,
+        ]);
+        PdoDetail::factory()->create(['pdo_header_id' => $pdo->id, 'amount' => 1_000_000]);
+        PdoDetail::factory()->create(['pdo_header_id' => $pdo->id, 'expense_item_id' => $item->id, 'amount' => 300_000]);
+
+        $summary = $this->service->summary($this->manajer);
+
+        // 1.000.000 - 300.000 (deduction), bukan 1.300.000
+        $this->assertEquals(700_000, $summary['total_amount']);
+    }
+
+    public function test_by_unit_breakdown_subtracts_deduction_and_is_not_multiplied_by_realizations(): void
+    {
+        $keraniRole = Role::factory()->create(['code' => Role::KERANI]);
+        $kerani     = User::factory()->create(['company_id' => $this->companyId, 'role_id' => $keraniRole->id]);
+        $item       = ExpenseItem::factory()->create(['is_deduction' => true]);
+
+        $pdo = PdoHeader::factory()->create([
+            'company_id'         => $this->companyId,
+            'plantation_unit_id' => $this->unit->id,
+            'created_by'         => $kerani->id,
+            'status'             => PdoHeader::STATUS_FINAL,
+            'period_month'       => now()->month,
+            'period_year'        => now()->year,
+        ]);
+        $detail = PdoDetail::factory()->create(['pdo_header_id' => $pdo->id, 'amount' => 1_000_000]);
+        PdoDetail::factory()->create(['pdo_header_id' => $pdo->id, 'expense_item_id' => $item->id, 'amount' => 300_000]);
+
+        // Dua realisasi pada detail yang sama — harus tetap fan-out-safe untuk total_amount.
+        RealizationEntry::factory()->create(['pdo_detail_id' => $detail->id, 'amount' => 200_000]);
+        RealizationEntry::factory()->create(['pdo_detail_id' => $detail->id, 'amount' => 200_000]);
+
+        $summary = $this->service->summary($this->manajer);
+        $unitRow = collect($summary['by_unit'])->firstWhere('unit_id', $this->unit->id);
+
+        $this->assertEquals(700_000, $unitRow['total_amount']);
+        $this->assertEquals(400_000, $unitRow['total_realized']);
+    }
+
+    public function test_category_summary_subtracts_deduction_and_is_not_multiplied_by_transfers(): void
+    {
+        $keraniRole = Role::factory()->create(['code' => Role::KERANI]);
+        $kerani     = User::factory()->create(['company_id' => $this->companyId, 'role_id' => $keraniRole->id]);
+
+        $category    = ExpenseCategory::factory()->create(['company_id' => $this->companyId]);
+        $subcategory = ExpenseSubcategory::factory()->create(['category_id' => $category->id]);
+        $item        = ExpenseItem::factory()->create(['subcategory_id' => $subcategory->id, 'is_deduction' => true]);
+
+        $pdo = PdoHeader::factory()->create([
+            'company_id'         => $this->companyId,
+            'plantation_unit_id' => $this->unit->id,
+            'created_by'         => $kerani->id,
+            'status'             => PdoHeader::STATUS_FINAL,
+            'period_month'       => now()->month,
+            'period_year'        => now()->year,
+        ]);
+        $detail = PdoDetail::factory()->create([
+            'pdo_header_id'   => $pdo->id,
+            'expense_item_id' => $item->id,
+            'amount'          => 500_000,
+        ]);
+
+        // Dua transfer pada detail yang sama — total_budget harus tetap 1 kali (fan-out-safe).
+        TransferEntry::factory()->create(['pdo_detail_id' => $detail->id, 'amount' => 100_000]);
+        TransferEntry::factory()->create(['pdo_detail_id' => $detail->id, 'amount' => 100_000]);
+
+        $result = $this->service->categorySummary($this->manajer);
+        $row    = collect($result)->firstWhere('category_id', $category->id);
+
+        // is_deduction => -500.000, bukan +500.000
+        $this->assertEquals(-500_000, $row['total_budget']);
+        // 100.000 + 100.000, bukan dikali oleh fan-out
+        $this->assertEquals(200_000, $row['total_transferred']);
     }
 }
