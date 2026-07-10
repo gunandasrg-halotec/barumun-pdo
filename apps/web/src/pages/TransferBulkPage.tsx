@@ -1,11 +1,11 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { Fragment, useEffect, useMemo, useRef, useState } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '@/lib/api'
 import { Button } from '@/components/ui/Button'
 import { useToastStore } from '@/store/toast.store'
 import { fmt } from '@/lib/format'
-import { ArrowLeft, ChevronDown, ChevronUp, Download } from 'lucide-react'
+import { ArrowLeft, ChevronDown, ChevronUp, Download, GitBranch } from 'lucide-react'
 import type { ApiResponse } from '@/types'
 
 // ─── types ────────────────────────────────────────────────────────────────────
@@ -36,7 +36,9 @@ interface CategoryInfo { code: string; name: string }
 type DestBreakdown = Record<TransferDest, number>
 
 interface PdoDetailSummary {
-  pdo_detail_id:     string
+  pdo_detail_id:        string
+  source_pdo_number:    string | null
+  source_pdo_merged_at: string | null
   expense_item:      ExpenseItemInfo | null
   category:          CategoryInfo | null
   subcategory:       CategoryInfo | null
@@ -569,12 +571,12 @@ export function TransferBulkPage() {
     })
   }
 
-  const updateNormal = (idx: number, field: keyof NormalRow, value: string | number) => {
-    setRows((prev) => prev.map((r, i) => i === idx ? { ...r, normal: { ...r.normal, [field]: value } } : r))
+  const updateNormal = (pdoDetailId: string, field: keyof NormalRow, value: string | number) => {
+    setRows((prev) => prev.map((r) => r.pdo_detail_id === pdoDetailId ? { ...r, normal: { ...r.normal, [field]: value } } : r))
   }
 
-  const updateSplit = (idx: number, field: keyof RowState['split'], value: string | number) => {
-    setRows((prev) => prev.map((r, i) => i === idx ? { ...r, split: { ...r.split, [field]: value } } : r))
+  const updateSplit = (pdoDetailId: string, field: keyof RowState['split'], value: string | number) => {
+    setRows((prev) => prev.map((r) => r.pdo_detail_id === pdoDetailId ? { ...r, split: { ...r.split, [field]: value } } : r))
   }
 
   const invalidate = () => {
@@ -652,6 +654,206 @@ export function TransferBulkPage() {
     commit.mutate()
   }
 
+  // ── Pengelompokan tampilan: item Bulanan dulu, lalu item Tambahan per PDO
+  // asal dengan divider — mirip PdoDetailPage, agar user tidak salah transfer
+  // item dari PDO yang berbeda dari yang dimaksud. Ini murni pengelompokan
+  // untuk RENDER; `rows`/`details` sendiri tetap dalam urutan asli.
+  const rowsByDetailId = useMemo(() => new Map(rows.map((r) => [r.pdo_detail_id, r])), [rows])
+  const bulananDetails = details.filter((d) => !d.source_pdo_number)
+  const tambahanGroups = useMemo(() => {
+    const groups = new Map<string, { pdoNumber: string; mergedAt: string | null; items: PdoDetailSummary[] }>()
+    for (const d of details) {
+      if (!d.source_pdo_number) continue
+      if (!groups.has(d.source_pdo_number)) {
+        groups.set(d.source_pdo_number, { pdoNumber: d.source_pdo_number, mergedAt: d.source_pdo_merged_at, items: [] })
+      }
+      groups.get(d.source_pdo_number)!.items.push(d)
+    }
+    return [...groups.values()].sort((a, b) => (a.mergedAt ?? '').localeCompare(b.mergedAt ?? ''))
+  }, [details])
+
+  const renderDetailRow = (detail: PdoDetailSummary, row: RowState) => {
+    const hasHistory   = detail.entries.length > 0
+    const draftCount   = detail.draft_entries.length
+    const isDeduction  = detail.expense_item?.is_deduction ?? false
+    // Potongan dianggap sudah committed bila total transfernya negatif
+    // (entri potongan otomatis sudah dibuat saat simpan permanen).
+    const isDeductionCommitted = isDeduction && detail.total_transferred < 0
+    const available    = Math.max(detail.amount_approved - detail.total_transferred, 0)
+    const isExpanded   = expandedIds.has(detail.pdo_detail_id)
+    const itemCode     = detail.expense_item?.code
+    const itemName     = detail.expense_item?.name ?? '—'
+    const itemLabel    = itemCode ? `[${itemCode}] ${itemName}` : itemName
+    const categoryLabel = detail.category ? `${detail.category.code} — ${detail.category.name}` : '—'
+    const subcategoryLabel = detail.subcategory ? `${detail.subcategory.code} — ${detail.subcategory.name}` : null
+
+    const toggles = (
+      <span className="inline-flex gap-2 ml-2">
+        {draftCount > 0 && (
+          <button type="button" onClick={() => toggleExpand(detail.pdo_detail_id)} className="inline-flex items-center gap-0.5 text-xs text-amber-600 hover:text-amber-800 font-normal">
+            Draft ({draftCount})
+            {isExpanded ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
+          </button>
+        )}
+        {hasHistory && (
+          <button type="button" onClick={() => toggleExpand(detail.pdo_detail_id)} className="inline-flex items-center gap-0.5 text-xs text-blue-600 hover:text-blue-800 font-normal">
+            Riwayat ({detail.entries.length})
+          </button>
+        )}
+      </span>
+    )
+
+    const metaCols = isDeduction ? (
+      <>
+        {/* Item potongan: Total Pengajuan minus; kolom transfer/sisa tak berlaku */}
+        <td className="px-3 py-2 text-sm text-red-600 font-medium">-{fmt(detail.amount_approved)}</td>
+        {/* Sudah Ditransfer = potongan yang sudah diterapkan (negatif) bila sudah committed */}
+        <td className="px-3 py-2 text-sm text-red-600 font-medium">{detail.total_transferred < 0 ? fmt(detail.total_transferred) : '—'}</td>
+        <td className="px-3 py-2 text-sm text-muted">—</td>
+        <td className="px-3 py-2 text-sm text-muted">—</td>
+      </>
+    ) : (
+      <>
+        <td className="px-3 py-2 text-sm">{fmt(detail.amount_approved)}</td>
+        <td className="px-3 py-2 text-sm text-teal-700 font-medium">{fmt(detail.total_transferred)}</td>
+        <td className="px-3 py-2 text-sm text-amber-600 font-medium">{detail.draft_total > 0 ? fmt(detail.draft_total) : '—'}</td>
+        <td className="px-3 py-2 text-sm font-bold text-green-700">{fmt(detail.remaining)}</td>
+      </>
+    )
+
+    const expandedRow = isExpanded && (
+      <tr key={`${detail.pdo_detail_id}-exp`}>
+        <td colSpan={11} className="px-0 py-0 bg-gray-50 border-t border-dashed border-line">
+          {draftCount > 0 && <DraftTable entries={detail.draft_entries} />}
+          {hasHistory && <HistoryTable entries={detail.entries} />}
+        </td>
+      </tr>
+    )
+
+    if (row.isSplit) {
+      const totalSplit  = Number(row.split.amount1) + Number(row.split.amount2)
+      const overLimit   = totalSplit > available
+      const sameDestErr = Number(row.split.amount1) > 0 && Number(row.split.amount2) > 0 && row.split.dest1 === row.split.dest2
+
+      return (
+        <Fragment key={detail.pdo_detail_id}>
+          <tr key={`${detail.pdo_detail_id}-header`} className="border-t-2 border-line bg-[#f7faf7]">
+            <td className="px-3 py-2 text-xs text-muted">
+              <div className="font-[700] text-ink">{categoryLabel}</div>
+              {subcategoryLabel && <div className="text-[11px] mt-0.5">{subcategoryLabel}</div>}
+            </td>
+            <td className="px-3 py-2 font-bold text-sm">
+              {itemLabel}
+              <span className="ml-2 text-xs bg-blue-100 text-blue-700 px-1.5 py-0.5 rounded font-normal">Split</span>
+              {toggles}
+            </td>
+            {metaCols}
+            <td colSpan={5} className="px-3 py-2 text-xs text-muted">
+              <div className="flex items-center gap-2 flex-wrap">
+                <div><span className="font-bold mr-1">Tgl:</span>
+                  <input type="date" value={row.split.transfer_date} onChange={(e) => updateSplit(detail.pdo_detail_id, 'transfer_date', e.target.value)} className="input-base w-36 text-sm" /></div>
+                <div><span className="font-bold mr-1">Ref:</span>
+                  <input type="text" placeholder="No. Referensi" value={row.split.reference_number} onChange={(e) => updateSplit(detail.pdo_detail_id, 'reference_number', e.target.value)} className="input-base w-32 text-sm" /></div>
+                <div><span className="font-bold mr-1">Catatan:</span>
+                  <input type="text" placeholder="Catatan" value={row.split.notes} onChange={(e) => updateSplit(detail.pdo_detail_id, 'notes', e.target.value)} className="input-base w-32 text-sm" /></div>
+              </div>
+              {overLimit && <p className="text-red-500 text-xs mt-1">Total split melebihi sisa dana</p>}
+              {sameDestErr && <p className="text-red-500 text-xs">Tujuan 1 dan 2 tidak boleh sama</p>}
+            </td>
+          </tr>
+          <tr key={`${detail.pdo_detail_id}-s1`} className="border-t border-dashed border-line">
+            <td className="px-3 py-2 pl-8 text-xs text-muted">↳ Tujuan 1</td>
+            <td colSpan={5} />
+            <td className="px-3 py-2">
+              <select value={row.split.dest1} onChange={(e) => updateSplit(detail.pdo_detail_id, 'dest1', e.target.value as TransferDest)} className={`input-base w-32 text-sm ${sameDestErr ? 'border-red-400' : ''}`}>
+                {DEST_OPTIONS.map((d) => <option key={d} value={d}>{DEST_LABELS[d]}</option>)}
+              </select>
+            </td>
+            <td className="px-3 py-2">
+              <input type="number" min={0} value={row.split.amount1} onChange={(e) => updateSplit(detail.pdo_detail_id, 'amount1', e.target.value)} className={`input-base w-36 ${overLimit ? 'border-red-400' : ''}`} />
+            </td>
+            <td colSpan={3} />
+          </tr>
+          <tr key={`${detail.pdo_detail_id}-s2`} className="border-t border-dashed border-line">
+            <td className="px-3 py-2 pl-8 text-xs text-muted">↳ Tujuan 2</td>
+            <td colSpan={5} />
+            <td className="px-3 py-2">
+              <select value={row.split.dest2} onChange={(e) => updateSplit(detail.pdo_detail_id, 'dest2', e.target.value as TransferDest)} className={`input-base w-32 text-sm ${sameDestErr ? 'border-red-400' : ''}`}>
+                {DEST_OPTIONS.map((d) => <option key={d} value={d}>{DEST_LABELS[d]}</option>)}
+              </select>
+            </td>
+            <td className="px-3 py-2">
+              <input type="number" min={0} value={row.split.amount2} onChange={(e) => updateSplit(detail.pdo_detail_id, 'amount2', e.target.value)} className={`input-base w-36 ${overLimit ? 'border-red-400' : ''}`} />
+            </td>
+            <td colSpan={3} />
+          </tr>
+          {expandedRow}
+        </Fragment>
+      )
+    }
+
+    // Normal mode
+    const overLim = Number(row.normal.amount) > available
+
+    return (
+      <Fragment key={detail.pdo_detail_id}>
+        <tr key={detail.pdo_detail_id} className="border-t border-line hover:bg-[#fbfdfb]">
+          <td className="px-3 py-3 text-xs text-muted">
+            <div className="font-[700] text-ink">{categoryLabel}</div>
+            {subcategoryLabel && <div className="text-[11px] mt-0.5">{subcategoryLabel}</div>}
+          </td>
+          <td className="px-3 py-3 text-sm font-medium whitespace-nowrap">
+            {itemLabel}
+            {isDeduction && <span className="ml-2 text-xs bg-red-100 text-red-700 px-1.5 py-0.5 rounded font-normal">Potongan</span>}
+            {toggles}
+          </td>
+          {metaCols}
+          {isDeduction ? (
+            isDeductionCommitted ? (
+              <td colSpan={5} className="px-3 py-2 text-xs text-muted italic">
+                Potongan sudah dikurangkan dari transfer {DEST_LABELS[row.normal.dest]} (−{fmt(detail.amount_approved)}).
+              </td>
+            ) : (
+              <>
+                {/* Belum committed: tujuan boleh dipilih; field lain disabled */}
+                <td className="px-3 py-2">
+                  <select value={row.normal.dest} onChange={(e) => updateNormal(detail.pdo_detail_id, 'dest', e.target.value as TransferDest)} className="input-base w-32 text-sm">
+                    {DEST_OPTIONS.map((d) => <option key={d} value={d}>{DEST_LABELS[d]}</option>)}
+                  </select>
+                </td>
+                <td colSpan={4} className="px-3 py-2 text-xs text-muted italic">
+                  Potongan −{fmt(detail.amount_approved)} akan dikurangkan dari transfer {DEST_LABELS[row.normal.dest]} saat simpan permanen.
+                </td>
+              </>
+            )
+          ) : (
+            <>
+              <td className="px-3 py-2">
+                <select value={row.normal.dest} onChange={(e) => updateNormal(detail.pdo_detail_id, 'dest', e.target.value as TransferDest)} className="input-base w-32 text-sm">
+                  {DEST_OPTIONS.map((d) => <option key={d} value={d}>{DEST_LABELS[d]}</option>)}
+                </select>
+              </td>
+              <td className="px-3 py-2">
+                <input type="number" min={0} max={available} value={row.normal.amount} onChange={(e) => updateNormal(detail.pdo_detail_id, 'amount', e.target.value)} className={`input-base w-36 ${overLim ? 'border-red-400' : ''}`} />
+                {overLim && <p className="text-red-500 text-xs mt-1">Melebihi sisa dana</p>}
+              </td>
+              <td className="px-3 py-2">
+                <input type="date" value={row.normal.transfer_date} onChange={(e) => updateNormal(detail.pdo_detail_id, 'transfer_date', e.target.value)} className="input-base w-36" />
+              </td>
+              <td className="px-3 py-2">
+                <input type="text" placeholder="TRF/2026/001" value={row.normal.reference_number} onChange={(e) => updateNormal(detail.pdo_detail_id, 'reference_number', e.target.value)} className="input-base w-36" />
+              </td>
+              <td className="px-3 py-2">
+                <input type="text" value={row.normal.notes} onChange={(e) => updateNormal(detail.pdo_detail_id, 'notes', e.target.value)} className="input-base w-40" />
+              </td>
+            </>
+          )}
+        </tr>
+        {expandedRow}
+      </Fragment>
+    )
+  }
+
   return (
     <div>
       <div className="flex items-center gap-3 mb-6">
@@ -702,189 +904,50 @@ export function TransferBulkPage() {
                   ))}
                 </tr>
               ))
-            ) : details.map((detail, idx) => {
-              const row      = rows[idx]
-              if (!row) return null
-              const hasHistory   = detail.entries.length > 0
-              const draftCount   = detail.draft_entries.length
-              const isDeduction  = detail.expense_item?.is_deduction ?? false
-              // Potongan dianggap sudah committed bila total transfernya negatif
-              // (entri potongan otomatis sudah dibuat saat simpan permanen).
-              const isDeductionCommitted = isDeduction && detail.total_transferred < 0
-              const available    = Math.max(detail.amount_approved - detail.total_transferred, 0)
-              const isExpanded   = expandedIds.has(detail.pdo_detail_id)
-              const itemCode     = detail.expense_item?.code
-              const itemName     = detail.expense_item?.name ?? '—'
-              const itemLabel    = itemCode ? `[${itemCode}] ${itemName}` : itemName
-              const categoryLabel = detail.category ? `${detail.category.code} — ${detail.category.name}` : '—'
-              const subcategoryLabel = detail.subcategory ? `${detail.subcategory.code} — ${detail.subcategory.name}` : null
-
-              const toggles = (
-                <span className="inline-flex gap-2 ml-2">
-                  {draftCount > 0 && (
-                    <button type="button" onClick={() => toggleExpand(detail.pdo_detail_id)} className="inline-flex items-center gap-0.5 text-xs text-amber-600 hover:text-amber-800 font-normal">
-                      Draft ({draftCount})
-                      {isExpanded ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
-                    </button>
-                  )}
-                  {hasHistory && (
-                    <button type="button" onClick={() => toggleExpand(detail.pdo_detail_id)} className="inline-flex items-center gap-0.5 text-xs text-blue-600 hover:text-blue-800 font-normal">
-                      Riwayat ({detail.entries.length})
-                    </button>
-                  )}
-                </span>
-              )
-
-              const metaCols = isDeduction ? (
-                <>
-                  {/* Item potongan: Total Pengajuan minus; kolom transfer/sisa tak berlaku */}
-                  <td className="px-3 py-2 text-sm text-red-600 font-medium">-{fmt(detail.amount_approved)}</td>
-                  {/* Sudah Ditransfer = potongan yang sudah diterapkan (negatif) bila sudah committed */}
-                  <td className="px-3 py-2 text-sm text-red-600 font-medium">{detail.total_transferred < 0 ? fmt(detail.total_transferred) : '—'}</td>
-                  <td className="px-3 py-2 text-sm text-muted">—</td>
-                  <td className="px-3 py-2 text-sm text-muted">—</td>
-                </>
-              ) : (
-                <>
-                  <td className="px-3 py-2 text-sm">{fmt(detail.amount_approved)}</td>
-                  <td className="px-3 py-2 text-sm text-teal-700 font-medium">{fmt(detail.total_transferred)}</td>
-                  <td className="px-3 py-2 text-sm text-amber-600 font-medium">{detail.draft_total > 0 ? fmt(detail.draft_total) : '—'}</td>
-                  <td className="px-3 py-2 text-sm font-bold text-green-700">{fmt(detail.remaining)}</td>
-                </>
-              )
-
-              const expandedRow = isExpanded && (
-                <tr key={`${detail.pdo_detail_id}-exp`}>
-                  <td colSpan={11} className="px-0 py-0 bg-gray-50 border-t border-dashed border-line">
-                    {draftCount > 0 && <DraftTable entries={detail.draft_entries} />}
-                    {hasHistory && <HistoryTable entries={detail.entries} />}
-                  </td>
-                </tr>
-              )
-
-              if (row.isSplit) {
-                const totalSplit  = Number(row.split.amount1) + Number(row.split.amount2)
-                const overLimit   = totalSplit > available
-                const sameDestErr = Number(row.split.amount1) > 0 && Number(row.split.amount2) > 0 && row.split.dest1 === row.split.dest2
-
-                return (
+            ) : (
+              <>
+                {bulananDetails.map((d) => {
+                  const row = rowsByDetailId.get(d.pdo_detail_id)
+                  return row ? renderDetailRow(d, row) : null
+                })}
+                {tambahanGroups.length > 0 && (
                   <>
-                    <tr key={`${detail.pdo_detail_id}-header`} className="border-t-2 border-line bg-[#f7faf7]">
-                      <td className="px-3 py-2 text-xs text-muted">
-                        <div className="font-[700] text-ink">{categoryLabel}</div>
-                        {subcategoryLabel && <div className="text-[11px] mt-0.5">{subcategoryLabel}</div>}
-                      </td>
-                      <td className="px-3 py-2 font-bold text-sm">
-                        {itemLabel}
-                        <span className="ml-2 text-xs bg-blue-100 text-blue-700 px-1.5 py-0.5 rounded font-normal">Split</span>
-                        {toggles}
-                      </td>
-                      {metaCols}
-                      <td colSpan={5} className="px-3 py-2 text-xs text-muted">
-                        <div className="flex items-center gap-2 flex-wrap">
-                          <div><span className="font-bold mr-1">Tgl:</span>
-                            <input type="date" value={row.split.transfer_date} onChange={(e) => updateSplit(idx, 'transfer_date', e.target.value)} className="input-base w-36 text-sm" /></div>
-                          <div><span className="font-bold mr-1">Ref:</span>
-                            <input type="text" placeholder="No. Referensi" value={row.split.reference_number} onChange={(e) => updateSplit(idx, 'reference_number', e.target.value)} className="input-base w-32 text-sm" /></div>
-                          <div><span className="font-bold mr-1">Catatan:</span>
-                            <input type="text" placeholder="Catatan" value={row.split.notes} onChange={(e) => updateSplit(idx, 'notes', e.target.value)} className="input-base w-32 text-sm" /></div>
+                    {/* Divider — item dari PDO Tambahan */}
+                    <tr>
+                      <td colSpan={11} className="px-0 pt-2 pb-0">
+                        <div className="flex items-center gap-2 px-3 py-2.5 bg-amber-50 border-t-2 border-amber-400">
+                          <GitBranch className="w-4 h-4 text-amber-700 shrink-0" />
+                          <span className="text-[12px] font-[850] text-amber-800 uppercase tracking-wide">Item dari PDO Tambahan</span>
+                          <span className="ml-auto text-[11px] font-[700] text-amber-700 bg-amber-100 border border-amber-300 px-2 py-0.5 rounded-full whitespace-nowrap">
+                            digabung setelah disetujui Direktur
+                          </span>
                         </div>
-                        {overLimit && <p className="text-red-500 text-xs mt-1">Total split melebihi sisa dana</p>}
-                        {sameDestErr && <p className="text-red-500 text-xs">Tujuan 1 dan 2 tidak boleh sama</p>}
                       </td>
                     </tr>
-                    <tr key={`${detail.pdo_detail_id}-s1`} className="border-t border-dashed border-line">
-                      <td className="px-3 py-2 pl-8 text-xs text-muted">↳ Tujuan 1</td>
-                      <td colSpan={5} />
-                      <td className="px-3 py-2">
-                        <select value={row.split.dest1} onChange={(e) => updateSplit(idx, 'dest1', e.target.value as TransferDest)} className={`input-base w-32 text-sm ${sameDestErr ? 'border-red-400' : ''}`}>
-                          {DEST_OPTIONS.map((d) => <option key={d} value={d}>{DEST_LABELS[d]}</option>)}
-                        </select>
-                      </td>
-                      <td className="px-3 py-2">
-                        <input type="number" min={0} value={row.split.amount1} onChange={(e) => updateSplit(idx, 'amount1', e.target.value)} className={`input-base w-36 ${overLimit ? 'border-red-400' : ''}`} />
-                      </td>
-                      <td colSpan={3} />
-                    </tr>
-                    <tr key={`${detail.pdo_detail_id}-s2`} className="border-t border-dashed border-line">
-                      <td className="px-3 py-2 pl-8 text-xs text-muted">↳ Tujuan 2</td>
-                      <td colSpan={5} />
-                      <td className="px-3 py-2">
-                        <select value={row.split.dest2} onChange={(e) => updateSplit(idx, 'dest2', e.target.value as TransferDest)} className={`input-base w-32 text-sm ${sameDestErr ? 'border-red-400' : ''}`}>
-                          {DEST_OPTIONS.map((d) => <option key={d} value={d}>{DEST_LABELS[d]}</option>)}
-                        </select>
-                      </td>
-                      <td className="px-3 py-2">
-                        <input type="number" min={0} value={row.split.amount2} onChange={(e) => updateSplit(idx, 'amount2', e.target.value)} className={`input-base w-36 ${overLimit ? 'border-red-400' : ''}`} />
-                      </td>
-                      <td colSpan={3} />
-                    </tr>
-                    {expandedRow}
-                  </>
-                )
-              }
-
-              // Normal mode
-              const overLim = Number(row.normal.amount) > available
-
-              return (
-                <>
-                  <tr key={detail.pdo_detail_id} className="border-t border-line hover:bg-[#fbfdfb]">
-                    <td className="px-3 py-3 text-xs text-muted">
-                      <div className="font-[700] text-ink">{categoryLabel}</div>
-                      {subcategoryLabel && <div className="text-[11px] mt-0.5">{subcategoryLabel}</div>}
-                    </td>
-                    <td className="px-3 py-3 text-sm font-medium whitespace-nowrap">
-                      {itemLabel}
-                      {isDeduction && <span className="ml-2 text-xs bg-red-100 text-red-700 px-1.5 py-0.5 rounded font-normal">Potongan</span>}
-                      {toggles}
-                    </td>
-                    {metaCols}
-                    {isDeduction ? (
-                      isDeductionCommitted ? (
-                        <td colSpan={5} className="px-3 py-2 text-xs text-muted italic">
-                          Potongan sudah dikurangkan dari transfer {DEST_LABELS[row.normal.dest]} (−{fmt(detail.amount_approved)}).
-                        </td>
-                      ) : (
-                        <>
-                          {/* Belum committed: tujuan boleh dipilih; field lain disabled */}
-                          <td className="px-3 py-2">
-                            <select value={row.normal.dest} onChange={(e) => updateNormal(idx, 'dest', e.target.value as TransferDest)} className="input-base w-32 text-sm">
-                              {DEST_OPTIONS.map((d) => <option key={d} value={d}>{DEST_LABELS[d]}</option>)}
-                            </select>
-                          </td>
-                          <td colSpan={4} className="px-3 py-2 text-xs text-muted italic">
-                            Potongan −{fmt(detail.amount_approved)} akan dikurangkan dari transfer {DEST_LABELS[row.normal.dest]} saat simpan permanen.
-                          </td>
-                        </>
+                    {tambahanGroups.map((g) => {
+                      const groupSubtotal = g.items.reduce((s, d) => s + (d.expense_item?.is_deduction ? -d.amount_approved : d.amount_approved), 0)
+                      return (
+                        <Fragment key={g.pdoNumber}>
+                          <tr>
+                            <td colSpan={11} className="px-6 py-1.5 bg-amber-50 border-t border-amber-200">
+                              <div className="flex items-center gap-2 text-[12px] text-amber-700">
+                                <span className="font-[850]">{g.pdoNumber}</span>
+                                {g.mergedAt && <span className="text-amber-500">· digabung {fmtDate(g.mergedAt)}</span>}
+                                <span className="ml-auto font-[700]">{fmt(groupSubtotal)}</span>
+                              </div>
+                            </td>
+                          </tr>
+                          {g.items.map((d) => {
+                            const row = rowsByDetailId.get(d.pdo_detail_id)
+                            return row ? renderDetailRow(d, row) : null
+                          })}
+                        </Fragment>
                       )
-                    ) : (
-                      <>
-                        <td className="px-3 py-2">
-                          <select value={row.normal.dest} onChange={(e) => updateNormal(idx, 'dest', e.target.value as TransferDest)} className="input-base w-32 text-sm">
-                            {DEST_OPTIONS.map((d) => <option key={d} value={d}>{DEST_LABELS[d]}</option>)}
-                          </select>
-                        </td>
-                        <td className="px-3 py-2">
-                          <input type="number" min={0} max={available} value={row.normal.amount} onChange={(e) => updateNormal(idx, 'amount', e.target.value)} className={`input-base w-36 ${overLim ? 'border-red-400' : ''}`} />
-                          {overLim && <p className="text-red-500 text-xs mt-1">Melebihi sisa dana</p>}
-                        </td>
-                        <td className="px-3 py-2">
-                          <input type="date" value={row.normal.transfer_date} onChange={(e) => updateNormal(idx, 'transfer_date', e.target.value)} className="input-base w-36" />
-                        </td>
-                        <td className="px-3 py-2">
-                          <input type="text" placeholder="TRF/2026/001" value={row.normal.reference_number} onChange={(e) => updateNormal(idx, 'reference_number', e.target.value)} className="input-base w-36" />
-                        </td>
-                        <td className="px-3 py-2">
-                          <input type="text" value={row.normal.notes} onChange={(e) => updateNormal(idx, 'notes', e.target.value)} className="input-base w-40" />
-                        </td>
-                      </>
-                    )}
-                  </tr>
-                  {expandedRow}
-                </>
-              )
-            })}
+                    })}
+                  </>
+                )}
+              </>
+            )}
           </tbody>
         </table>
       </div>

@@ -73,7 +73,8 @@ class TransferEntryService
 
             return [
                 'pdo_detail_id'    => $detail->id,
-                'source_pdo_number' => $detail->sourceSupplementary?->pdo_number,
+                'source_pdo_number'    => $detail->sourceSupplementary?->pdo_number,
+                'source_pdo_merged_at' => $detail->sourceSupplementary?->merged_at,
                 'expense_item'     => $detail->expenseItem
                     ? array_merge(
                         $detail->expenseItem->only(['id', 'code', 'name']),
