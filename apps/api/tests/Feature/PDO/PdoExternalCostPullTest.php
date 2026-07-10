@@ -150,6 +150,172 @@ class PdoExternalCostPullTest extends TestCase
         });
     }
 
+    public function test_kerani_can_bulk_pull_external_cost_with_partial_success_and_skips_ineligible_rows(): void
+    {
+        $this->setPayrollApiConfig('http://payroll.test', 'test-payroll-token');
+
+        $kerani = $this->keraniUser();
+        $pdo = $this->draftPdo($kerani);
+
+        $succeededDetail = $this->autoExternalDetail($pdo, externalComponentKey: 'pemanen');
+        $failedDetail = $this->autoExternalDetail($pdo, externalComponentKey: 'bhl');
+        $freshDetail = $this->autoExternalDetail($pdo, externalComponentKey: 'mandor');
+        $manualDetail = $this->manualDetail($pdo);
+
+        $freshDetail->update([
+            'amount' => 650000,
+            'quantity' => 6,
+            'unit' => 'HK',
+            'external_source_system' => ExpenseItem::EXTERNAL_SOURCE_PAYROLL,
+            'external_component' => ExpenseItem::PAYROLL_COMPONENT_BASE_PAYROLL_TOTAL,
+            'external_component_key' => 'mandor',
+            'external_component_keys' => ['mandor'],
+            'external_payload' => [
+                'status' => 'ok',
+                'amount' => 650000,
+                'unit' => 'HK',
+                'volume' => 6,
+                'component' => ExpenseItem::PAYROLL_COMPONENT_BASE_PAYROLL_TOTAL,
+                'component_key' => 'mandor',
+                'component_keys' => ['mandor'],
+                'source_system' => ExpenseItem::EXTERNAL_SOURCE_PAYROLL,
+                'role' => null,
+                'block_keys' => null,
+            ],
+            'external_amount_pulled_at' => now()->subHour(),
+        ]);
+        $pdo->update(['grand_total_amount' => 650000]);
+
+        Http::fake([
+            'http://payroll.test/internal/payroll-costs*' => function ($request) {
+                $componentKeys = $request['component_keys'] ?? [];
+
+                if ($componentKeys === ['pemanen']) {
+                    return Http::response([
+                        'status' => 'ok',
+                        'amount' => 1250000,
+                        'unit' => 'HK',
+                        'volume' => 12,
+                        'component' => ExpenseItem::PAYROLL_COMPONENT_BASE_PAYROLL_TOTAL,
+                        'component_label' => 'Gaji Pokok',
+                        'period' => '2026-06',
+                        'estate_external_id' => 'EST-001',
+                        'generated_at' => '2026-06-23T10:00:00+07:00',
+                    ], 200);
+                }
+
+                return Http::response([
+                    'error' => 'Komponen Payroll tidak valid untuk item ini.',
+                ], 422);
+            },
+        ]);
+
+        Sanctum::actingAs($kerani);
+
+        $this->postJson("/api/v1/pdo/{$pdo->id}/pull-external-costs")
+            ->assertOk()
+            ->assertJsonPath('success', true)
+            ->assertJsonPath('data.total', 2)
+            ->assertJsonPath('data.succeeded_count', 1)
+            ->assertJsonPath('data.failed_count', 1)
+            ->assertJsonPath('data.succeeded.0.detail_id', $succeededDetail->id)
+            ->assertJsonPath('data.failed.0.detail_id', $failedDetail->id)
+            ->assertJsonPath('data.failed.0.message', 'Komponen Payroll tidak valid untuk item ini.')
+            ->assertJsonPath('data.grand_total', 1900000);
+
+        Http::assertSentCount(2);
+        Http::assertSent(fn ($request): bool => ($request['component_keys'] ?? []) === ['pemanen']);
+        Http::assertSent(fn ($request): bool => ($request['component_keys'] ?? []) === ['bhl']);
+
+        $succeededDetail->refresh();
+        $failedDetail->refresh();
+        $freshDetail->refresh();
+        $manualDetail->refresh();
+        $pdo->refresh();
+
+        $this->assertSame(1250000, $succeededDetail->amount);
+        $this->assertNotNull($succeededDetail->external_amount_pulled_at);
+        $this->assertSame(0, $failedDetail->amount);
+        $this->assertNull($failedDetail->external_amount_pulled_at);
+        $this->assertSame(650000, $freshDetail->amount);
+        $this->assertSame(0, $manualDetail->amount);
+        $this->assertSame(1900000, $pdo->grand_total_amount);
+        $this->assertSame(1, AuditLog::query()
+            ->where('entity_type', 'pdo_details')
+            ->where('action', 'EXTERNAL_PULL')
+            ->where('entity_id', $succeededDetail->id)
+            ->count());
+        $this->assertSame(0, AuditLog::query()
+            ->where('entity_type', 'pdo_details')
+            ->where('action', 'EXTERNAL_PULL')
+            ->where('entity_id', $failedDetail->id)
+            ->count());
+    }
+
+    public function test_bulk_pull_returns_zero_counts_when_no_eligible_details_exist(): void
+    {
+        $this->setPayrollApiConfig('http://payroll.test', 'test-payroll-token');
+
+        $kerani = $this->keraniUser();
+        $pdo = $this->draftPdo($kerani);
+        $freshDetail = $this->autoExternalDetail($pdo, externalComponentKey: 'mandor');
+        $this->manualDetail($pdo);
+
+        $freshDetail->update([
+            'amount' => 650000,
+            'quantity' => 6,
+            'unit' => 'HK',
+            'external_source_system' => ExpenseItem::EXTERNAL_SOURCE_PAYROLL,
+            'external_component' => ExpenseItem::PAYROLL_COMPONENT_BASE_PAYROLL_TOTAL,
+            'external_component_key' => 'mandor',
+            'external_component_keys' => ['mandor'],
+            'external_payload' => [
+                'status' => 'ok',
+                'amount' => 650000,
+                'unit' => 'HK',
+                'volume' => 6,
+                'component' => ExpenseItem::PAYROLL_COMPONENT_BASE_PAYROLL_TOTAL,
+                'component_key' => 'mandor',
+                'component_keys' => ['mandor'],
+                'source_system' => ExpenseItem::EXTERNAL_SOURCE_PAYROLL,
+                'role' => null,
+                'block_keys' => null,
+            ],
+            'external_amount_pulled_at' => now()->subHour(),
+        ]);
+
+        Http::fake();
+
+        Sanctum::actingAs($kerani);
+
+        $this->postJson("/api/v1/pdo/{$pdo->id}/pull-external-costs")
+            ->assertOk()
+            ->assertJsonPath('success', true)
+            ->assertJsonPath('data.total', 0)
+            ->assertJsonPath('data.succeeded_count', 0)
+            ->assertJsonPath('data.failed_count', 0)
+            ->assertJsonPath('data.succeeded', [])
+            ->assertJsonPath('data.failed', []);
+
+        Http::assertNothingSent();
+    }
+
+    public function test_bulk_pull_rejects_non_draft_pdo(): void
+    {
+        $this->setPayrollApiConfig('http://payroll.test', 'test-payroll-token');
+
+        $kerani = $this->keraniUser();
+        $pdo = $this->draftPdo($kerani);
+        $pdo->update(['status' => PdoHeader::STATUS_SUBMITTED]);
+        $this->autoExternalDetail($pdo);
+
+        Sanctum::actingAs($kerani);
+
+        $this->postJson("/api/v1/pdo/{$pdo->id}/pull-external-costs")
+            ->assertStatus(409)
+            ->assertJsonPath('error.code', 'PDO_NOT_EDITABLE');
+    }
+
     public function test_pull_external_cost_previous_month_rolls_back_year_for_january_pdo(): void
     {
         $this->setPayrollApiConfig('http://payroll.test', 'test-payroll-token');
@@ -188,7 +354,7 @@ class PdoExternalCostPullTest extends TestCase
         });
     }
 
-    public function test_pull_base_payroll_with_selected_component_key_does_not_send_legacy_role_param(): void
+    public function test_pull_base_payroll_with_selected_component_key_and_role_sends_both_params(): void
     {
         $this->setPayrollApiConfig('http://payroll.test', 'test-payroll-token');
 
@@ -215,12 +381,12 @@ class PdoExternalCostPullTest extends TestCase
         $this->postJson("/api/v1/pdo/{$pdo->id}/details/{$detail->id}/pull-external-cost")->assertOk()
             ->assertJsonPath('data.external_component_key', 'bhl')
             ->assertJsonPath('data.external_payload.component_key', 'bhl')
-            ->assertJsonPath('data.external_payload.role', null);
+            ->assertJsonPath('data.external_payload.role', ExpenseItem::PAYROLL_ROLE_PEMANEN);
 
         $detail->refresh();
         $this->assertSame('bhl', $detail->external_component_key);
         $this->assertSame('bhl', $detail->external_payload['component_key']);
-        $this->assertNull($detail->external_payload['role'] ?? null);
+        $this->assertSame(ExpenseItem::PAYROLL_ROLE_PEMANEN, $detail->external_payload['role']);
 
         Http::assertSent(function ($request): bool {
             return str_starts_with($request->url(), 'http://payroll.test/internal/payroll-costs')
@@ -229,12 +395,13 @@ class PdoExternalCostPullTest extends TestCase
                 && $request['month'] === 6
                 && $request['estate_external_id'] === 'EST-001'
                 && $request['component'] === ExpenseItem::PAYROLL_COMPONENT_BASE_PAYROLL_TOTAL
-                && $request['component_key'] === 'bhl'
-                && ! isset($request['role']);
+                && $request['component_keys'] === ['bhl']
+                && ! isset($request['component_key'])
+                && $request['role'] === ExpenseItem::PAYROLL_ROLE_PEMANEN;
         });
     }
 
-    public function test_pull_base_payroll_with_legacy_role_maps_to_component_key_request_param(): void
+    public function test_pull_base_payroll_with_role_sends_role_request_param(): void
     {
         $this->setPayrollApiConfig('http://payroll.test', 'test-payroll-token');
 
@@ -264,15 +431,15 @@ class PdoExternalCostPullTest extends TestCase
 
         $this->postJson("/api/v1/pdo/{$pdo->id}/details/{$detail->id}/pull-external-cost")
             ->assertOk()
-            ->assertJsonPath('data.external_component_key', ExpenseItem::PAYROLL_ROLE_PEMANEN)
-            ->assertJsonPath('data.external_payload.component_key', ExpenseItem::PAYROLL_ROLE_PEMANEN)
-            ->assertJsonPath('data.external_payload.role', null);
+            ->assertJsonPath('data.external_component_key', null)
+            ->assertJsonPath('data.external_payload.component_key', null)
+            ->assertJsonPath('data.external_payload.role', ExpenseItem::PAYROLL_ROLE_PEMANEN);
 
         $detail->refresh();
 
-        $this->assertSame(ExpenseItem::PAYROLL_ROLE_PEMANEN, $detail->external_component_key);
-        $this->assertSame(ExpenseItem::PAYROLL_ROLE_PEMANEN, $detail->external_payload['component_key']);
-        $this->assertNull($detail->external_payload['role'] ?? null);
+        $this->assertNull($detail->external_component_key);
+        $this->assertNull($detail->external_payload['component_key']);
+        $this->assertSame(ExpenseItem::PAYROLL_ROLE_PEMANEN, $detail->external_payload['role']);
 
         Http::assertSent(function ($request): bool {
             return str_starts_with($request->url(), 'http://payroll.test/internal/payroll-costs')
@@ -280,8 +447,9 @@ class PdoExternalCostPullTest extends TestCase
                 && $request['month'] === 6
                 && $request['estate_external_id'] === 'EST-001'
                 && $request['component'] === ExpenseItem::PAYROLL_COMPONENT_BASE_PAYROLL_TOTAL
-                && $request['component_key'] === ExpenseItem::PAYROLL_ROLE_PEMANEN
-                && ! isset($request['role']);
+                && ! isset($request['component_keys'])
+                && ! isset($request['component_key'])
+                && $request['role'] === ExpenseItem::PAYROLL_ROLE_PEMANEN;
         });
     }
 
@@ -318,7 +486,7 @@ class PdoExternalCostPullTest extends TestCase
         $this->assertNull($detail->external_payload['role'] ?? null);
     }
 
-    public function test_pull_maintenance_component_passes_component_key_without_role(): void
+    public function test_pull_maintenance_component_passes_component_key_and_role(): void
     {
         $this->setPayrollApiConfig('http://payroll.test', 'test-payroll-token');
 
@@ -353,17 +521,142 @@ class PdoExternalCostPullTest extends TestCase
             ->assertJsonPath('data.external_component', ExpenseItem::PAYROLL_COMPONENT_MAINTENANCE_TOTAL)
             ->assertJsonPath('data.external_component_key', 'pekerjaan-001')
             ->assertJsonPath('data.external_payload.component_key', 'pekerjaan-001')
-            ->assertJsonPath('data.external_payload.role', null);
+            ->assertJsonPath('data.external_payload.role', ExpenseItem::PAYROLL_ROLE_PEMANEN);
 
         Http::assertSent(function ($request): bool {
             return str_starts_with($request->url(), 'http://payroll.test/internal/payroll-costs')
                 && $request['component'] === ExpenseItem::PAYROLL_COMPONENT_MAINTENANCE_TOTAL
-                && $request['component_key'] === 'pekerjaan-001'
-                && ! isset($request['role']);
+                && $request['component_keys'] === ['pekerjaan-001']
+                && ! isset($request['component_key'])
+                && $request['role'] === ExpenseItem::PAYROLL_ROLE_PEMANEN;
         });
     }
 
-    public function test_pull_non_option_component_does_not_send_component_key_or_role(): void
+    public function test_pull_maintenance_selector_sets_send_component_keys_and_block_keys_and_store_lot_snapshot(): void
+    {
+        $this->setPayrollApiConfig('http://payroll.test', 'test-payroll-token');
+
+        $kerani = $this->keraniUser();
+        $pdo = $this->draftPdo($kerani);
+        $unitB = PlantationUnit::factory()->create([
+            'company_id' => $kerani->company_id,
+            'payroll_estate_external_id' => 'EST-002',
+        ]);
+        $detail = $this->autoExternalDetail(
+            $pdo,
+            externalRole: null,
+            externalComponentKey: null,
+            externalComponent: ExpenseItem::PAYROLL_COMPONENT_MAINTENANCE_TOTAL,
+        );
+        $detail->expenseItem()->update([
+            'external_component_keys' => ['PT-002', 'PT-001'],
+            'external_block_scopes' => [
+                [
+                    'plantation_unit_id' => $pdo->plantation_unit_id,
+                    'block_keys' => ['BLK-002', 'BLK-001'],
+                ],
+                [
+                    'plantation_unit_id' => $unitB->id,
+                    'block_keys' => ['BLK-101'],
+                ],
+            ],
+        ]);
+        $detail->update([
+            'external_component_keys' => ['PT-002', 'PT-001'],
+            'external_block_keys' => ['BLK-002', 'BLK-001'],
+        ]);
+
+        Http::fake([
+            'http://payroll.test/internal/payroll-costs*' => Http::response([
+                'status' => 'ok',
+                'amount' => 3100000,
+                'unit' => 'HK',
+                'volume' => 22,
+                'component' => ExpenseItem::PAYROLL_COMPONENT_MAINTENANCE_TOTAL,
+                'component_label' => 'Alat Berat, Zebra Work',
+                'block_label' => 'Bravo, Alpha',
+                'period' => '2026-06',
+                'estate_external_id' => 'EST-001',
+                'generated_at' => '2026-06-23T12:30:00+07:00',
+            ], 200),
+        ]);
+
+        Sanctum::actingAs($kerani);
+
+        $response = $this->postJson("/api/v1/pdo/{$pdo->id}/details/{$detail->id}/pull-external-cost");
+
+        $response->assertOk()
+            ->assertJsonPath('data.amount', 3100000)
+            ->assertJsonPath('data.quantity', 1)
+            ->assertJsonPath('data.unit', 'lot')
+            ->assertJsonPath('data.external_component_key', null)
+            ->assertJsonPath('data.external_component_keys.0', 'PT-002')
+            ->assertJsonPath('data.external_component_keys.1', 'PT-001')
+            ->assertJsonPath('data.external_block_keys.0', 'BLK-002')
+            ->assertJsonPath('data.external_block_keys.1', 'BLK-001')
+            ->assertJsonPath('data.external_payload.component_keys.0', 'PT-002')
+            ->assertJsonPath('data.external_payload.block_keys.0', 'BLK-002');
+
+        Http::assertSent(function ($request): bool {
+            return str_starts_with($request->url(), 'http://payroll.test/internal/payroll-costs')
+                && $request['component'] === ExpenseItem::PAYROLL_COMPONENT_MAINTENANCE_TOTAL
+                && $request['component_keys'] === ['PT-002', 'PT-001']
+                && $request['block_keys'] === ['BLK-002', 'BLK-001']
+                && ! isset($request['component_key']);
+        });
+    }
+
+    public function test_create_pdo_snapshots_only_relevant_maintenance_block_scope_for_unit(): void
+    {
+        $kerani = $this->keraniUser();
+        $unitA = $kerani->plantationUnit;
+        $unitB = PlantationUnit::factory()->create([
+            'company_id' => $kerani->company_id,
+            'payroll_estate_external_id' => 'EST-002',
+        ]);
+        $subcategory = ExpenseSubcategory::factory()->create([
+            'category_id' => ExpenseCategory::factory()->create(['company_id' => $kerani->company_id])->id,
+        ]);
+
+        $item = ExpenseItem::factory()->create([
+            'subcategory_id' => $subcategory->id,
+            'mode_input' => ExpenseItem::MODE_AUTO_EXTERNAL,
+            'external_source_system' => ExpenseItem::EXTERNAL_SOURCE_PAYROLL,
+            'external_component' => ExpenseItem::PAYROLL_COMPONENT_MAINTENANCE_TOTAL,
+            'external_component_keys' => ['PT-001'],
+            'external_block_scopes' => [
+                [
+                    'plantation_unit_id' => $unitA->id,
+                    'block_keys' => ['BLK-001', 'BLK-002'],
+                ],
+                [
+                    'plantation_unit_id' => $unitB->id,
+                    'block_keys' => ['BLK-101'],
+                ],
+            ],
+            'is_routine' => true,
+            'routine_plantation_unit_ids' => [$unitA->id],
+            'is_active' => true,
+        ]);
+
+        Sanctum::actingAs($kerani);
+
+        $response = $this->postJson('/api/v1/pdo', [
+            'plantation_unit_id' => $unitA->id,
+            'period_month' => 6,
+            'period_year' => 2026,
+        ]);
+
+        $response->assertCreated();
+
+        $pdo = PdoHeader::with('details')->findOrFail($response->json('data.id'));
+        $detail = $pdo->details->firstWhere('expense_item_id', $item->id);
+
+        $this->assertNotNull($detail);
+        $this->assertSame(['BLK-001', 'BLK-002'], $detail->external_block_keys);
+    }
+
+    public function test_pull_non_option_component_does_not_send_component_key_but_sends_role(): void
     {
         $this->setPayrollApiConfig('http://payroll.test', 'test-payroll-token');
 
@@ -400,7 +693,7 @@ class PdoExternalCostPullTest extends TestCase
             return str_starts_with($request->url(), 'http://payroll.test/internal/payroll-costs')
                 && $request['component'] === ExpenseItem::PAYROLL_COMPONENT_HARVEST_TBS_TOTAL
                 && ! isset($request['component_key'])
-                && ! isset($request['role']);
+                && $request['role'] === ExpenseItem::PAYROLL_ROLE_PEMANEN;
         });
     }
 
@@ -936,7 +1229,7 @@ class PdoExternalCostPullTest extends TestCase
 
     private function autoExternalDetail(
         PdoHeader $pdo,
-        ?string $externalRole = ExpenseItem::PAYROLL_ROLE_PEMANEN,
+        ?string $externalRole = null,
         ?string $externalComponentKey = null,
         ?string $externalComponent = ExpenseItem::PAYROLL_COMPONENT_BASE_PAYROLL_TOTAL,
     ): PdoDetail {

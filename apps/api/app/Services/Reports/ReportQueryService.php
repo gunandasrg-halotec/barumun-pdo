@@ -22,6 +22,14 @@ class ReportQueryService
             ? SystemSetting::getValue($companyId, SystemSetting::KEY_THRESHOLD_PROOF, 1_000_000)
             : 1_000_000);
 
+        $realizationPctSql = DB::getDriverName() === 'sqlite'
+            ? 'CASE WHEN COALESCE(te.total_transfer, 0) > 0
+                    THEN ROUND(CAST(COALESCE(re.total_realization, 0) AS REAL) / COALESCE(te.total_transfer, 0) * 100, 2)
+                    ELSE 0 END as realization_pct'
+            : 'CASE WHEN COALESCE(te.total_transfer, 0) > 0
+                    THEN ROUND(COALESCE(re.total_realization, 0)::numeric / COALESCE(te.total_transfer, 0) * 100, 2)
+                    ELSE 0 END as realization_pct';
+
         $query = DB::table('pdo_headers as ph')
             ->join('pdo_details as pd', 'pd.pdo_header_id', '=', 'ph.id')
             ->join('expense_items as ei', 'ei.id', '=', 'pd.expense_item_id')
@@ -72,9 +80,7 @@ class ReportQueryService
                 DB::raw('COALESCE(te.total_transfer, 0) as total_transfer'),
                 DB::raw('COALESCE(re.total_realization, 0) as total_realization'),
                 DB::raw('COALESCE(te.total_transfer, 0) - COALESCE(re.total_realization, 0) as saldo'),
-                DB::raw('CASE WHEN COALESCE(te.total_transfer, 0) > 0
-                              THEN ROUND(COALESCE(re.total_realization, 0)::numeric / COALESCE(te.total_transfer, 0) * 100, 2)
-                              ELSE 0 END as realization_pct'),
+                DB::raw($realizationPctSql),
                 'missing_proof.pdo_detail_id as has_missing_proof',
             ]);
 

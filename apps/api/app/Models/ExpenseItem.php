@@ -88,6 +88,9 @@ class ExpenseItem extends Model
         'external_source_system',
         'external_component',
         'external_component_key',
+        'external_component_keys',
+        'external_block_keys',
+        'external_block_scopes',
         'external_role',
         'split_transfer',
         'split_transfer_plantation_unit_ids',
@@ -125,7 +128,7 @@ class ExpenseItem extends Model
 
     public static function supportsPayrollRole(?string $component): bool
     {
-        return $component === self::PAYROLL_COMPONENT_BASE_PAYROLL_TOTAL;
+        return is_string($component) && in_array($component, self::PAYROLL_COMPONENT_OPTIONS, true);
     }
 
     public static function optionedPayrollComponents(): array
@@ -141,11 +144,91 @@ class ExpenseItem extends Model
         ], true);
     }
 
+    public static function supportsSelectorSets(?string $component): bool
+    {
+        return in_array($component, [
+            self::PAYROLL_COMPONENT_BASE_PAYROLL_TOTAL,
+            self::PAYROLL_COMPONENT_MAINTENANCE_TOTAL,
+            self::PAYROLL_COMPONENT_ADDITIONAL_WAGE_TYPE_TOTAL,
+        ], true);
+    }
+
+    public static function supportsMaintenanceBlockSelectors(?string $component): bool
+    {
+        return $component === self::PAYROLL_COMPONENT_MAINTENANCE_TOTAL;
+    }
+
+    /** @return array<int,array{plantation_unit_id:string,block_keys:array<int,string>}>|null */
+    public function resolveExternalBlockScopes(): ?array
+    {
+        if (! is_array($this->external_block_scopes)) {
+            return null;
+        }
+
+        $scopes = [];
+
+        foreach ($this->external_block_scopes as $scope) {
+            if (! is_array($scope)) {
+                continue;
+            }
+
+            $unitId = isset($scope['plantation_unit_id']) && is_string($scope['plantation_unit_id'])
+                ? trim($scope['plantation_unit_id'])
+                : '';
+
+            if ($unitId === '') {
+                continue;
+            }
+
+            $blockKeys = [];
+            foreach (($scope['block_keys'] ?? []) as $blockKey) {
+                if (! is_string($blockKey)) {
+                    continue;
+                }
+
+                $normalized = trim($blockKey);
+                if ($normalized === '' || in_array($normalized, $blockKeys, true)) {
+                    continue;
+                }
+
+                $blockKeys[] = $normalized;
+            }
+
+            if ($blockKeys === []) {
+                continue;
+            }
+
+            $scopes[] = [
+                'plantation_unit_id' => $unitId,
+                'block_keys' => $blockKeys,
+            ];
+        }
+
+        return $scopes === [] ? null : $scopes;
+    }
+
+    /** @return array<int,string>|null */
+    public function resolveExternalBlockKeysForPlantationUnit(?string $plantationUnitId): ?array
+    {
+        if ($plantationUnitId !== null) {
+            foreach ($this->resolveExternalBlockScopes() ?? [] as $scope) {
+                if ($scope['plantation_unit_id'] === $plantationUnitId) {
+                    return $scope['block_keys'];
+                }
+            }
+        }
+
+        return is_array($this->external_block_keys) ? $this->external_block_keys : null;
+    }
+
     protected function casts(): array
     {
         return [
             'default_rate' => 'integer',
             'split_transfer' => 'boolean',
+            'external_component_keys' => 'array',
+            'external_block_keys' => 'array',
+            'external_block_scopes' => 'array',
             'split_transfer_plantation_unit_ids' => PgUuidArray::class,
             'is_routine' => 'boolean',
             'is_active' => 'boolean',

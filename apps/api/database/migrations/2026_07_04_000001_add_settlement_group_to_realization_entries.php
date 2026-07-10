@@ -1,7 +1,9 @@
 <?php
 
 use Illuminate\Database\Migrations\Migration;
+use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Schema;
 
 return new class extends Migration
 {
@@ -14,6 +16,14 @@ return new class extends Migration
      */
     public function up(): void
     {
+        if (DB::getDriverName() === 'sqlite') {
+            Schema::table('realization_entries', function (Blueprint $table) {
+                $table->string('settlement_group')->nullable();
+            });
+
+            return;
+        }
+
         DB::statement(<<<'SQL'
             DO $$
             BEGIN
@@ -47,6 +57,14 @@ return new class extends Migration
 
     public function down(): void
     {
+        if (DB::getDriverName() === 'sqlite') {
+            Schema::table('realization_entries', function (Blueprint $table) {
+                $table->dropColumn('settlement_group');
+            });
+
+            return;
+        }
+
         DB::statement('DROP INDEX IF EXISTS realization_entries_settlement_group_idx');
         DB::statement('ALTER TABLE realization_entries DROP COLUMN IF EXISTS settlement_group');
         DB::statement('DROP TYPE IF EXISTS realization_settlement_group_enum');

@@ -225,6 +225,16 @@ class RealizationEntryService
                 ], 422));
             }
 
+            $totalRealizedAll = (int) $detail->realizationEntries()->sum('amount');
+            $newTotalAll = $totalRealizedAll + $data['amount'];
+
+            if ($newTotalAll > $detail->amount) {
+                abort(response()->json([
+                    'success' => false,
+                    'error'   => ['code' => 'REALIZATION_EXCEEDS_BUDGET', 'message' => "Total realisasi ({$newTotalAll}) melebihi anggaran ({$detail->amount})."],
+                ], 422));
+            }
+
             $entry = RealizationEntry::create([
                 'pdo_detail_id'    => $detail->id,
                 'recorded_by'      => $actor->id,

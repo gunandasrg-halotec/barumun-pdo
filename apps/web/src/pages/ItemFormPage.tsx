@@ -1,15 +1,17 @@
 import { useEffect, useMemo, useRef } from 'react'
-import { useNavigate, useParams } from 'react-router-dom'
+import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { useForm, useWatch } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api, getApiErrorMessage } from '@/lib/api'
+import { resolveMasterDataReturnTo } from '@/lib/masterDataState'
 import { Button } from '@/components/ui/Button'
 import { useToastStore } from '@/store/toast.store'
-import { usePayrollComponentOptions, useSubcategories } from '@/hooks/useMasterData'
+import AsyncSelect from 'react-select/async'
+import { fetchPayrollComponentOptions, usePayrollComponentOptions, useSubcategories } from '@/hooks/useMasterData'
 import { ArrowLeft } from 'lucide-react'
-import type { ApiResponse, ExpenseItem, PlantationUnit } from '@/types'
+import type { ApiResponse, ExpenseItem, ExternalBlockScope, PlantationUnit } from '@/types'
 
 const schema = z.object({
   subcategory_id:               z.string().uuid('Pilih sub-kategori'),
@@ -33,7 +35,13 @@ const schema = z.object({
     'additional_wages_total',
     'additional_wage_type_total',
   ]).nullable().optional(),
-  external_component_key:       z.string().nullable().optional(),
+  external_component_keys:      z.array(z.string()).nullable().optional(),
+  external_role:                z.string().nullable().optional(),
+  external_block_keys:          z.array(z.string()).nullable().optional(),
+  external_block_scopes:        z.array(z.object({
+    plantation_unit_id: z.string().uuid('Kebun wajib dipilih'),
+    block_keys: z.array(z.string()),
+  })).nullable().optional(),
   split_transfer:                      z.boolean(),
   split_transfer_plantation_unit_ids:  z.array(z.string().uuid()).nullable().optional(),
   is_routine:                          z.boolean(),
@@ -42,16 +50,21 @@ const schema = z.object({
   is_deduction:                 z.boolean(),
   notes:                        z.string().nullable().optional(),
 }).superRefine((values, ctx) => {
-  if (values.mode_input === 'auto_external' && values.external_component === 'additional_wage_type_total' && !values.external_component_key) {
+  if (
+    values.mode_input === 'auto_external'
+    && values.external_component === 'additional_wage_type_total'
+    && (!values.external_component_keys || values.external_component_keys.length === 0)
+  ) {
     ctx.addIssue({
-      path: ['external_component_key'],
+      path: ['external_component_keys'],
       code: z.ZodIssueCode.custom,
-      message: 'external_component_key wajib diisi untuk component additional_wage_type_total.',
+      message: 'Pilih minimal satu Component Key untuk component additional_wage_type_total.',
     })
   }
 })
 
 type Form = z.infer<typeof schema>
+type SelectOption = { value: string; label: string }
 
 const payrollComponents = [
   { value: 'harvest_tbs_total', label: 'Harvest TBS Total' },
@@ -82,9 +95,11 @@ function isPayrollComponent(value: unknown): value is PayrollComponent {
 export function ItemFormPage() {
   const { id }   = useParams<{ id: string }>()
   const navigate = useNavigate()
+  const [searchParams] = useSearchParams()
   const toast    = useToastStore((s) => s.push)
   const qc       = useQueryClient()
   const isEdit   = !!id
+  const returnTo = resolveMasterDataReturnTo(searchParams.get('returnTo'))
 
   const { data: subcategories } = useSubcategories({ is_active: true })
 
@@ -103,6 +118,8 @@ export function ItemFormPage() {
       return res.data.data
     },
     enabled: isEdit,
+    staleTime: 0,
+    refetchOnMount: 'always',
   })
 
   const { register, handleSubmit, reset, setError, control, getValues, setValue, formState: { errors } } = useForm<Form>({
@@ -111,7 +128,10 @@ export function ItemFormPage() {
       mode_input: 'manual',
       external_source_system: null,
       external_component: null,
-      external_component_key: null,
+      external_component_keys: null,
+      external_role: null,
+      external_block_keys: null,
+      external_block_scopes: null,
       split_transfer: false,
       split_transfer_plantation_unit_ids: null,
       is_routine: true,
@@ -125,16 +145,46 @@ export function ItemFormPage() {
   const isSplit        = useWatch({ control, name: 'split_transfer' })
   const modeInput      = useWatch({ control, name: 'mode_input' })
   const extComponent   = useWatch({ control, name: 'external_component' })
+  const selectedComponentKeys = useWatch({ control, name: 'external_component_keys' })
+  const selectedExternalRole = useWatch({ control, name: 'external_role' })
+  const blockScopes    = useWatch({ control, name: 'external_block_scopes' })
   const routineUnitIds = useWatch({ control, name: 'routine_plantation_unit_ids' })
   const splitUnitIds   = useWatch({ control, name: 'split_transfer_plantation_unit_ids' })
   const isAutoExternal = modeInput === 'auto_external'
   const componentNeedsOptions = extComponent ? payrollComponentsWithOptions.has(extComponent as PayrollComponentWithOptions) : false
-  const externalComponentOptionsQuery = usePayrollComponentOptions(extComponent && isAutoExternal ? extComponent : null)
+  const externalComponentOptionsQuery = usePayrollComponentOptions(
+    extComponent && isAutoExternal && componentNeedsOptions ? extComponent : null,
+  )
+  const externalRoleOptionsQuery = usePayrollComponentOptions(extComponent && isAutoExternal ? extComponent : null, { filter: 'roles' })
   const componentOptions = externalComponentOptionsQuery.data?.options ?? []
+  const roleOptions = externalRoleOptionsQuery.data?.options ?? []
   const optionsLoaded = componentNeedsOptions
     ? componentOptions.length > 0 || externalComponentOptionsQuery.isSuccess
     : true
-  const componentAllowsEmptyOption = extComponent === 'base_payroll_total' || extComponent === 'maintenance_total'
+  const componentAllowsEmptySelection = extComponent === 'base_payroll_total' || extComponent === 'maintenance_total'
+  const blockMappingEnabled = extComponent === 'maintenance_total' && isAutoExternal
+  const blockScopeRows = blockScopes ?? []
+  const selectableBlockUnits = useMemo(
+    () => (units ?? []).filter((unit) => Boolean(unit.payroll_estate_external_id)),
+    [units],
+  )
+  const blockUnitOptions = useMemo<SelectOption[]>(
+    () => selectableBlockUnits.map((unit) => ({ value: unit.id, label: `${unit.code} — ${unit.name}` })),
+    [selectableBlockUnits],
+  )
+  const selectedBlockUnitOptions = useMemo<SelectOption[]>(
+    () => blockScopeRows
+      .map((scope) => {
+        const unit = selectableBlockUnits.find((candidate) => candidate.id === scope.plantation_unit_id)
+        return unit ? { value: unit.id, label: `${unit.code} — ${unit.name}` } : null
+      })
+      .filter((option): option is SelectOption => option !== null),
+    [blockScopeRows, selectableBlockUnits],
+  )
+  const unitsWithoutPayrollMapping = useMemo(
+    () => (units ?? []).filter((unit) => !unit.payroll_estate_external_id),
+    [units],
+  )
 
   const componentWatchInitialized = useRef(false)
   const previousComponent = useRef<string | null>(null)
@@ -152,7 +202,10 @@ export function ItemFormPage() {
     }
 
     if (previousComponent.current !== extComponent) {
-      setValue('external_component_key', null)
+      setValue('external_component_keys', null)
+      setValue('external_role', null)
+      setValue('external_block_keys', null)
+      setValue('external_block_scopes', null)
     }
 
     previousComponent.current = extComponent ?? null
@@ -161,14 +214,26 @@ export function ItemFormPage() {
   const availableComponentKeys = useMemo(() => new Set(
     componentOptions.map((option) => option.component_key),
   ), [componentOptions])
+  const availableRoles = useMemo(() => new Set(
+    roleOptions.map((option) => option.component_key),
+  ), [roleOptions])
 
   useEffect(() => {
     if (!componentNeedsOptions || !optionsLoaded) return
-    const currentKey = getValues('external_component_key')
-    if (currentKey && !availableComponentKeys.has(currentKey)) {
-      setValue('external_component_key', null)
+    const currentKeys = getValues('external_component_keys') ?? []
+    const nextKeys = currentKeys.filter((key) => availableComponentKeys.has(key))
+    if (nextKeys.length !== currentKeys.length) {
+      setValue('external_component_keys', nextKeys.length > 0 ? nextKeys : null)
     }
   }, [componentNeedsOptions, optionsLoaded, availableComponentKeys, getValues, setValue])
+
+  useEffect(() => {
+    if (!isAutoExternal || !extComponent || !externalRoleOptionsQuery.isSuccess) return
+    const currentRole = getValues('external_role')
+    if (currentRole && !availableRoles.has(currentRole)) {
+      setValue('external_role', null)
+    }
+  }, [isAutoExternal, extComponent, externalRoleOptionsQuery.isSuccess, availableRoles, getValues, setValue])
 
   useEffect(() => {
     if (existing) {
@@ -176,29 +241,32 @@ export function ItemFormPage() {
         external_source_system?: string | null
         external_component?: string | null
         external_component_key?: string | null
+        external_component_keys?: string[] | null
+        external_block_keys?: string[] | null
+        external_block_scopes?: ExternalBlockScope[] | null
         external_role?: string | null
         split_transfer?: boolean
         split_transfer_plantation_unit_ids?: string[] | null
         routine_plantation_unit_ids?: string[] | null
       }
-      const legacyRole = ext.external_component === 'base_payroll_total' && !ext.external_component_key ? ext.external_role : null
-      const normalizedExternalRole = legacyRole ? legacyRole : null
+      const normalizedComponentKeys = ext.external_component_keys && ext.external_component_keys.length > 0
+        ? ext.external_component_keys
+        : (ext.external_component_key ? [ext.external_component_key] : null)
       reset({
         ...existing,
         notes: existing.notes ?? '',
         external_source_system: ext.external_source_system === 'payroll' ? 'payroll' : null,
         external_component: isPayrollComponent(ext.external_component) ? ext.external_component : null,
-        external_component_key: ext.external_component_key ?? normalizedExternalRole ?? null,
+        external_component_keys: normalizedComponentKeys,
+        external_role: ext.external_role ?? null,
+        external_block_keys: ext.external_block_keys ?? null,
+        external_block_scopes: ext.external_block_scopes ?? null,
         split_transfer:                     ext.split_transfer ?? false,
         split_transfer_plantation_unit_ids: ext.split_transfer_plantation_unit_ids ?? null,
         routine_plantation_unit_ids:        ext.routine_plantation_unit_ids ?? null,
       })
-
-      if (normalizedExternalRole && ext.external_component === 'base_payroll_total' && !ext.external_component_key) {
-        setValue('external_component_key', normalizedExternalRole)
-      }
     }
-  }, [existing, reset, setValue])
+  }, [existing, reset])
 
   useEffect(() => {
     if (isAutoExternal) {
@@ -208,8 +276,48 @@ export function ItemFormPage() {
 
     setValue('external_source_system', null)
     setValue('external_component', null)
-    setValue('external_component_key', null)
+    setValue('external_component_keys', null)
+    setValue('external_role', null)
+    setValue('external_block_keys', null)
+    setValue('external_block_scopes', null)
   }, [isAutoExternal, setValue])
+
+  const componentKeyOptions = useMemo<SelectOption[]>(
+    () => componentOptions.map((option) => ({
+      value: option.component_key,
+      label: option.label,
+    })),
+    [componentOptions],
+  )
+  const roleSelectOptions = useMemo<SelectOption[]>(
+    () => roleOptions.map((option) => ({
+      value: option.component_key,
+      label: option.label,
+    })),
+    [roleOptions],
+  )
+  const selectedRoleOption = useMemo<SelectOption | null>(() => {
+    if (!selectedExternalRole) return null
+    return roleSelectOptions.find((option) => option.value === selectedExternalRole)
+      ?? { value: selectedExternalRole, label: selectedExternalRole }
+  }, [roleSelectOptions, selectedExternalRole])
+  const selectedComponentKeyOptions = useMemo<SelectOption[]>(
+    () => (selectedComponentKeys ?? []).map((key) => (
+      componentKeyOptions.find((option) => option.value === key)
+      ?? { value: key, label: key }
+    )),
+    [componentKeyOptions, selectedComponentKeys],
+  )
+
+  const syncSelectedComponentKeys = (options: readonly SelectOption[]) => {
+    const nextKeys = options.map((option) => option.value)
+    setValue('external_component_keys', nextKeys.length > 0 ? nextKeys : null)
+  }
+
+  const loadComponentKeyOptions = async (inputValue: string) => {
+    const query = inputValue.trim().toLowerCase()
+    return componentKeyOptions.filter((option) => option.label.toLowerCase().includes(query))
+  }
 
   const toggleSplitUnit = (id: string) => {
     const current = splitUnitIds ?? []
@@ -227,6 +335,44 @@ export function ItemFormPage() {
     setValue('routine_plantation_unit_ids', next.length > 0 ? next : null)
   }
 
+  const syncSelectedBlockUnits = (options: readonly SelectOption[]) => {
+    const currentScopes = getValues('external_block_scopes') ?? []
+    const nextScopes = options.map((option) => (
+      currentScopes.find((scope) => scope.plantation_unit_id === option.value)
+      ?? { plantation_unit_id: option.value, block_keys: [] }
+    ))
+    setValue('external_block_scopes', nextScopes.length > 0 ? nextScopes : null)
+  }
+
+  const setBlockScopeKeys = (plantationUnitId: string, keys: string[]) => {
+    const currentScopes = getValues('external_block_scopes') ?? []
+    const nextScopes = currentScopes.map((scope) => (
+      scope.plantation_unit_id === plantationUnitId
+        ? { ...scope, block_keys: keys }
+        : scope
+    ))
+    setValue('external_block_scopes', nextScopes.length > 0 ? nextScopes : null)
+  }
+
+  const loadBlockUnitOptions = async (inputValue: string) => {
+    const query = inputValue.trim().toLowerCase()
+    return blockUnitOptions.filter((option) => option.label.toLowerCase().includes(query))
+  }
+
+  const loadBlockOptions = async (unit: PlantationUnit, inputValue: string) => {
+    const response = await fetchPayrollComponentOptions('maintenance_total', {
+      filter: 'blocks',
+      estateExternalId: unit.payroll_estate_external_id ?? null,
+      q: inputValue.trim() || undefined,
+      limit: 50,
+    })
+
+    return response.options.map((option) => ({
+      value: option.component_key,
+      label: option.label,
+    }))
+  }
+
   const save = useMutation({
     mutationFn: (data: Form) => {
       const payload: Form = data.mode_input === 'manual'
@@ -234,13 +380,21 @@ export function ItemFormPage() {
           ...data,
           external_source_system: undefined,
           external_component: undefined,
-          external_component_key: undefined,
+          external_component_keys: undefined,
+          external_role: undefined,
+          external_block_keys: undefined,
+          external_block_scopes: undefined,
         }
         : {
           ...data,
           external_source_system: data.external_source_system ?? 'payroll',
-          external_component_key: payrollComponentsWithOptions.has(data.external_component as PayrollComponentWithOptions)
-            ? data.external_component_key ?? null
+          external_component_keys: payrollComponentsWithOptions.has(data.external_component as PayrollComponentWithOptions)
+            ? data.external_component_keys ?? null
+            : null,
+          external_role: data.external_role ?? null,
+          external_block_keys: null,
+          external_block_scopes: data.external_component === 'maintenance_total'
+            ? data.external_block_scopes ?? null
             : null,
         }
 
@@ -251,7 +405,10 @@ export function ItemFormPage() {
     onSuccess: () => {
       toast(isEdit ? 'Item berhasil diperbarui' : 'Item berhasil dibuat')
       qc.invalidateQueries({ queryKey: ['items'] })
-      navigate('/master')
+      if (id) {
+        qc.invalidateQueries({ queryKey: ['item', id] })
+      }
+      navigate(returnTo)
     },
     onError: (err: unknown) => {
       type ApiErr = { response?: { data?: { error?: { details?: { field: string; message: string }[] } } } }
@@ -267,7 +424,10 @@ export function ItemFormPage() {
           'mode_input',
           'external_source_system',
           'external_component',
-          'external_component_key',
+          'external_component_keys',
+          'external_role',
+          'external_block_keys',
+          'external_block_scopes',
           'split_transfer',
           'is_routine',
           'is_active',
@@ -275,8 +435,11 @@ export function ItemFormPage() {
         ])
         let handled = false
         for (const { field, message } of details) {
-          if (validFields.has(field)) {
-            setError(field as keyof Form, { message })
+          const normalizedField = field === 'external_component_key'
+            ? 'external_component_keys'
+            : (field.startsWith('external_block_scopes.') ? 'external_block_scopes' : field)
+          if (validFields.has(normalizedField)) {
+            setError(normalizedField as keyof Form, { message })
             handled = true
           }
         }
@@ -294,11 +457,14 @@ export function ItemFormPage() {
   const componentOptionsErrorMessage = componentNeedsOptions && externalComponentOptionsQuery.isError
     ? `Gagal memuat opsi Payroll: ${getApiErrorMessage(externalComponentOptionsQuery.error)}`
     : ''
+  const roleOptionsErrorMessage = externalRoleOptionsQuery.isError
+    ? `Gagal memuat role Payroll: ${getApiErrorMessage(externalRoleOptionsQuery.error)}`
+    : ''
 
   return (
     <div className="form-container-narrow">
       <div className="flex items-center gap-3 mb-6">
-        <Button variant="secondary" size="sm" onClick={() => navigate('/master')}>
+        <Button variant="secondary" size="sm" onClick={() => navigate(returnTo)}>
           <ArrowLeft className="w-4 h-4" />
         </Button>
         <h2 className="text-[28px] font-[950] text-ink">
@@ -379,29 +545,135 @@ export function ItemFormPage() {
 
             {componentNeedsOptions && (
               <div>
-                <label className="label" htmlFor="item-external-component-key">Component Key</label>
-                <select
-                  id="item-external-component-key"
-                  aria-label="Component Key"
-                  {...register('external_component_key')}
-                  className="input-base"
-                  disabled={componentNeedsOptions && externalComponentOptionsQuery.isLoading}
-                >
-                  {componentAllowsEmptyOption && <option value="">Semua</option>}
-                  {!optionsLoaded ? (
-                    <option value="" disabled>Memuat opsi payroll...</option>
-                  ) : (
-                    componentOptions.map((option) => (
-                      <option key={option.component_key} value={option.component_key}>
-                        {option.label}
-                      </option>
-                    ))
+                <div className="flex items-center justify-between gap-3">
+                  <label className="label">Component Keys</label>
+                  {componentAllowsEmptySelection && (
+                    <button type="button" className="text-xs text-muted hover:text-ink" onClick={() => setValue('external_component_keys', null)}>
+                      Semua
+                    </button>
                   )}
-                </select>
+                </div>
+                <div className="mt-2 rounded-card border border-line bg-white">
+                  {!optionsLoaded ? (
+                    <p className="px-3 py-2 text-sm text-muted">Memuat opsi payroll...</p>
+                  ) : (
+                    <div className="p-3">
+                      <AsyncSelect
+                        inputId="component-keys-payroll"
+                        aria-label="Component Keys Payroll"
+                        isMulti
+                        cacheOptions
+                        defaultOptions={componentKeyOptions}
+                        value={selectedComponentKeyOptions}
+                        loadOptions={loadComponentKeyOptions}
+                        onChange={(nextValue) => syncSelectedComponentKeys([...(nextValue ?? [])] as SelectOption[])}
+                        placeholder="Pilih component key payroll..."
+                        classNamePrefix="react-select"
+                        isDisabled={componentKeyOptions.length === 0}
+                      />
+                    </div>
+                  )}
+                </div>
                 {componentNeedsOptions && componentOptionsErrorMessage && (
                   <p className="field-error">{componentOptionsErrorMessage}</p>
                 )}
-                {errors.external_component_key && <p className="field-error">{errors.external_component_key.message}</p>}
+                {errors.external_component_keys && <p className="field-error">{errors.external_component_keys.message}</p>}
+              </div>
+            )}
+
+            {extComponent && (
+              <div>
+                <div className="flex items-center justify-between gap-3">
+                  <label className="label">Role Payroll</label>
+                  <button type="button" className="text-xs text-muted hover:text-ink" onClick={() => setValue('external_role', null)}>
+                    Semua Role
+                  </button>
+                </div>
+                <div className="mt-2 rounded-card border border-line bg-white">
+                  {externalRoleOptionsQuery.isLoading ? (
+                    <p className="px-3 py-2 text-sm text-muted">Memuat role payroll...</p>
+                  ) : (
+                    <div className="p-3">
+                      <AsyncSelect
+                        inputId="role-payroll"
+                        aria-label="Role Payroll"
+                        cacheOptions
+                        isClearable
+                        defaultOptions={roleSelectOptions}
+                        value={selectedRoleOption}
+                        loadOptions={async (inputValue) => {
+                          const query = inputValue.trim().toLowerCase()
+                          return roleSelectOptions.filter((option) => option.label.toLowerCase().includes(query))
+                        }}
+                        onChange={(nextValue) => setValue('external_role', (nextValue as SelectOption | null)?.value ?? null)}
+                        placeholder="Pilih role payroll..."
+                        classNamePrefix="react-select"
+                        isDisabled={roleSelectOptions.length === 0}
+                      />
+                    </div>
+                  )}
+                </div>
+                {roleOptionsErrorMessage && <p className="field-error">{roleOptionsErrorMessage}</p>}
+                {errors.external_role && <p className="field-error">{errors.external_role.message}</p>}
+              </div>
+            )}
+
+            {blockMappingEnabled && (
+              <div>
+                <label className="label">Block Mapping Kebun</label>
+                <div className="mt-2 rounded-card border border-line bg-white p-3">
+                  <AsyncSelect
+                    inputId="block-mapping-units"
+                    aria-label="Kebun Block Mapping"
+                    isMulti
+                    cacheOptions
+                    defaultOptions={blockUnitOptions}
+                    value={selectedBlockUnitOptions}
+                    loadOptions={loadBlockUnitOptions}
+                    onChange={(nextValue) => syncSelectedBlockUnits([...(nextValue ?? [])] as SelectOption[])}
+                    placeholder="Pilih kebun yang ingin dibatasi bloknya..."
+                    classNamePrefix="react-select"
+                    isDisabled={blockUnitOptions.length === 0}
+                  />
+                  {unitsWithoutPayrollMapping.length > 0 && (
+                    <p className="mt-2 text-xs text-muted">
+                      {`${unitsWithoutPayrollMapping.length} kebun belum punya Payroll Estate Mapping, jadi tidak muncul di selector ini.`}
+                    </p>
+                  )}
+                </div>
+
+                <div className="mt-3 flex flex-col gap-3">
+                  {blockScopeRows.map((scope) => {
+                    const unit = selectableBlockUnits.find((candidate) => candidate.id === scope.plantation_unit_id)
+                    if (!unit) return null
+
+                    return (
+                      <div key={scope.plantation_unit_id} className="rounded-card border border-line bg-white p-3">
+                        <p className="text-sm font-[800] text-ink">{`${unit.code} — ${unit.name}`}</p>
+                        <p className="mt-1 text-xs text-muted">Pilih blok payroll untuk kebun ini.</p>
+                        <div className="mt-3">
+                          <AsyncSelect
+                            inputId={`block-scope-${unit.id}`}
+                            aria-label={`Block ${unit.code}`}
+                            isMulti
+                            cacheOptions
+                            defaultOptions
+                            value={(scope.block_keys ?? []).map((key) => ({ value: key, label: key }))}
+                            loadOptions={(inputValue) => loadBlockOptions(unit, inputValue)}
+                            onChange={(nextValue) => setBlockScopeKeys(
+                              unit.id,
+                              ([...(nextValue ?? [])] as SelectOption[]).map((option) => option.value),
+                            )}
+                            placeholder="Cari block payroll..."
+                            classNamePrefix="react-select"
+                          />
+                        </div>
+                      </div>
+                    )
+                  })}
+                </div>
+
+                {errors.external_block_scopes && <p className="field-error">{errors.external_block_scopes.message}</p>}
               </div>
             )}
           </div>
@@ -506,7 +778,7 @@ export function ItemFormPage() {
 
         <div className="flex gap-2 pt-2">
           <Button type="submit" loading={save.isPending} disabled={isSubmitDisabled}>Simpan</Button>
-          <Button type="button" variant="secondary" onClick={() => navigate('/master')}>Batal</Button>
+          <Button type="button" variant="secondary" onClick={() => navigate(returnTo)}>Batal</Button>
         </div>
       </form>
     </div>

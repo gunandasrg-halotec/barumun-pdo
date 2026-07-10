@@ -1,5 +1,5 @@
 import { useEffect } from 'react'
-import { useNavigate, useParams } from 'react-router-dom'
+import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
@@ -8,6 +8,7 @@ import { api } from '@/lib/api'
 import { Button } from '@/components/ui/Button'
 import { PasswordInput } from '@/components/ui/PasswordInput'
 import { useToastStore } from '@/store/toast.store'
+import { resolveMasterDataReturnTo } from '@/lib/masterDataState'
 import { ArrowLeft } from 'lucide-react'
 import type { ApiResponse, AuthUser, Role, PlantationUnit } from '@/types'
 
@@ -35,9 +36,11 @@ type FormEdit = z.infer<typeof schemaEdit>
 export function UserFormPage() {
   const { id }   = useParams<{ id: string }>()
   const navigate = useNavigate()
+  const [searchParams] = useSearchParams()
   const toast    = useToastStore((s) => s.push)
   const qc       = useQueryClient()
   const isEdit   = !!id
+  const returnTo = resolveMasterDataReturnTo(searchParams.get('returnTo'))
 
   const { data: roles } = useQuery({
     queryKey: ['roles'],
@@ -97,7 +100,7 @@ export function UserFormPage() {
     onSuccess: () => {
       toast(isEdit ? 'User berhasil diperbarui' : 'User berhasil dibuat')
       qc.invalidateQueries({ queryKey: ['users'] })
-      navigate('/master')
+      navigate(returnTo)
     },
     onError: (err: unknown) => {
       type ApiErr = { response?: { data?: { error?: { details?: { field: string; message: string }[] } } } }
@@ -128,7 +131,7 @@ export function UserFormPage() {
   return (
     <div className="form-container-narrow">
       <div className="flex items-center gap-3 mb-6">
-        <Button variant="secondary" size="sm" onClick={() => navigate('/master')}>
+        <Button variant="secondary" size="sm" onClick={() => navigate(returnTo)}>
           <ArrowLeft className="w-4 h-4" />
         </Button>
         <h2 className="text-[28px] font-[950] text-ink">
@@ -201,7 +204,7 @@ export function UserFormPage() {
 
         <div className="flex gap-2 pt-2">
           <Button type="submit" loading={save.isPending}>Simpan</Button>
-          <Button type="button" variant="secondary" onClick={() => navigate('/master')}>Batal</Button>
+          <Button type="button" variant="secondary" onClick={() => navigate(returnTo)}>Batal</Button>
         </div>
       </form>
     </div>

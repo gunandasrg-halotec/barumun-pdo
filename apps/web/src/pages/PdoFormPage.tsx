@@ -11,9 +11,9 @@ import { useAuthStore } from '@/store/auth.store'
 import { ExternalCostPullPanel } from '@/components/pdo/ExternalCostPullPanel'
 import { AttachmentSection } from '@/components/pdo/DetailAttachmentPanel'
 import { useItems, useSubcategories, useCategories } from '@/hooks/useMasterData'
-import { usePdo, usePullExternalCost } from '@/hooks/usePdo'
+import { useBulkPullExternalCost, usePdo, usePullExternalCost } from '@/hooks/usePdo'
 import { fmt } from '@/lib/format'
-import { ArrowLeft, Plus, Trash2, LayoutList, Paperclip } from 'lucide-react'
+import { ArrowLeft, Plus, Trash2, LayoutList, Paperclip, CloudDownload } from 'lucide-react'
 import type { ApiResponse, PdoDetail, PdoHeader, PlantationUnit } from '@/types'
 
 const detailSchema = z.object({
@@ -79,6 +79,7 @@ export function PdoFormPage() {
 
   const { data: existing } = usePdo(id)
   const pullExternalCost   = usePullExternalCost(id ?? '')
+  const bulkPullExternalCost = useBulkPullExternalCost(id ?? '')
 
   const now = new Date()
   const {
@@ -94,7 +95,7 @@ export function PdoFormPage() {
     },
   })
 
-  const { fields, append, prepend, remove } = useFieldArray({ control, name: 'details' })
+  const { fields, prepend, remove } = useFieldArray({ control, name: 'details' })
 
   const detailValues = watch('details')
   const totalAmount  = detailValues?.reduce((sum, d) => sum + (Number(d.amount) || 0), 0) ?? 0
@@ -108,6 +109,78 @@ export function PdoFormPage() {
     }
   }
 
+  const mapDetailToForm = (detail: PdoDetail) => ({
+    id:              detail.id,
+    expense_item_id: detail.expense_item_id,
+    description:     detail.description,
+    quantity:        detail.quantity,
+    unit:            detail.unit,
+    rate:            detail.rate,
+    amount:          detail.amount,
+    notes:           detail.notes,
+    display_order:   detail.display_order,
+  })
+
+  const syncLoadedDetails = (details: PdoDetail[], options?: { preserveUnsaved?: boolean }) => {
+    const currentDetails = getValues('details') ?? []
+    const preserveUnsaved = options?.preserveUnsaved === true
+
+    const unsavedEntries = preserveUnsaved
+      ? currentDetails.flatMap((detail, idx) => {
+          if (detailSnapshots[idx]?.id) {
+            return []
+          }
+
+          return [{
+            detail,
+            snapshot: detailSnapshots[idx] ?? { _isNew: true },
+            selection: rowSelections[idx] ?? { categoryId: '', subcategoryId: '' },
+          }]
+        })
+      : []
+
+    const nextDetails = [
+      ...unsavedEntries.map((entry) => entry.detail),
+      ...details.map(mapDetailToForm),
+    ]
+
+    reset({
+      plantation_unit_id: getValues('plantation_unit_id'),
+      period_month: getValues('period_month'),
+      period_year: getValues('period_year'),
+      notes: getValues('notes') ?? '',
+      details: nextDetails,
+    })
+
+    setDetailSnapshots([
+      ...unsavedEntries.map((entry) => entry.snapshot),
+      ...details,
+    ])
+
+    setPullErrors({})
+
+    const nextSelections = [
+      ...unsavedEntries.map((entry) => entry.selection),
+      ...details.map((detail) => resolveRowSelection(detail.expense_item_id)),
+    ]
+
+    setRowSelections(nextSelections)
+
+    const keys = new Set<string>()
+    nextSelections.forEach((selection) => {
+      if (selection.categoryId) {
+        keys.add(`cat_${selection.categoryId}`)
+        if (selection.subcategoryId) keys.add(`sub_${selection.categoryId}_${selection.subcategoryId}`)
+      }
+    })
+    setCollapsedGroups(keys)
+  }
+
+  const fetchPdoDetails = async () => {
+    const res = await api.get<ApiResponse<PdoDetail[]>>(`/pdo/${id}/details`)
+    return res.data.data
+  }
+
   // Load existing PDO details when editing
   useEffect(() => {
     if (!existing) return
@@ -118,37 +191,8 @@ export function PdoFormPage() {
       notes:              existing.notes ?? '',
       details: [],
     })
-    api.get<ApiResponse<PdoDetail[]>>(`/pdo/${id}/details`).then((res) => {
-      const details = res.data.data
-      // Use append loop (not replace) — replace + remove has inconsistent behaviour in RHF
-      details.forEach((d) => append({
-        id:              d.id,
-        expense_item_id: d.expense_item_id,
-        description:     d.description,
-        quantity:        d.quantity,
-        unit:            d.unit,
-        rate:            d.rate,
-        amount:          d.amount,
-        notes:           d.notes,
-        display_order:   d.display_order,
-      }))
-      setDetailSnapshots(details)
-      setPullErrors({})
-
-      const selections = details.map((d) => resolveRowSelection(d.expense_item_id))
-      setRowSelections(selections)
-
-      // Default all groups collapsed
-      const keys = new Set<string>()
-      selections.forEach((s) => {
-        if (s.categoryId) {
-          keys.add(`cat_${s.categoryId}`)
-          if (s.subcategoryId) keys.add(`sub_${s.categoryId}_${s.subcategoryId}`)
-        }
-      })
-      setCollapsedGroups(keys)
-
-      // Auto-scroll to top after items load
+    fetchPdoDetails().then((details) => {
+      syncLoadedDetails(details)
       setTimeout(() => window.scrollTo({ top: 0, behavior: 'smooth' }), 200)
     })
   }, [existing])
@@ -265,6 +309,55 @@ export function PdoFormPage() {
       toast(message, 'error')
     } finally {
       setPullingDetailId(null)
+    }
+  }
+
+  const eligiblePersistedAutoExternalCount = detailSnapshots.filter((snapshot) =>
+    !!snapshot?.id && snapshot?.is_auto_external_active && snapshot?.needs_pull
+  ).length
+
+  const hasUnsavedAutoExternalRows = detailSnapshots.some((snapshot, idx) => {
+    if (snapshot?.id) return false
+
+    const itemId = detailValues?.[idx]?.expense_item_id
+    const item = items?.find((entry) => entry.id === itemId)
+
+    return item?.mode_input === 'auto_external'
+  })
+
+  const bulkPullLabel = eligiblePersistedAutoExternalCount === 0 ? 'Semua Data Sudah Fresh' : 'Ambil Semua Data'
+
+  const handleBulkPullExternalCost = async () => {
+    if (eligiblePersistedAutoExternalCount === 0) {
+      return
+    }
+
+    try {
+      const unsavedCount = detailSnapshots.filter((snapshot) => !snapshot?.id).length
+      const result = await bulkPullExternalCost.mutateAsync()
+      const refreshedDetails = await fetchPdoDetails()
+      const failedByDetailId = new Map(result.failed.map((failure) => [failure.detail_id, failure.message]))
+
+      syncLoadedDetails(refreshedDetails, { preserveUnsaved: true })
+
+      setPullErrors(() => {
+        const next: Record<number, string> = {}
+
+        refreshedDetails.forEach((detail, idx) => {
+          const failedMessage = failedByDetailId.get(detail.id)
+
+          if (!failedMessage) return
+
+          next[idx + unsavedCount] = failedMessage
+        })
+
+        return next
+      })
+
+      const summary = `${result.succeeded_count} berhasil, ${result.failed_count} gagal`
+      toast(summary, result.failed_count > 0 ? 'error' : 'success')
+    } catch (error) {
+      toast(getApiErrorMessage(error), 'error')
     }
   }
 
@@ -628,6 +721,15 @@ export function PdoFormPage() {
             <div className="flex items-center justify-between mb-4">
               <h3 className="text-[17px] font-[850]">Rencana Biaya</h3>
               <div className="flex gap-2">
+                <Button
+                  type="button"
+                  size="sm"
+                  onClick={handleBulkPullExternalCost}
+                  disabled={eligiblePersistedAutoExternalCount === 0}
+                  loading={bulkPullExternalCost.isPending}
+                >
+                  <CloudDownload className="w-4 h-4" /> {bulkPullExternalCost.isPending ? 'Mengambil...' : bulkPullLabel}
+                </Button>
                 {fields.length > 0 && (
                   <Button type="button" size="sm" variant="secondary" onClick={handleRegroup}>
                     <LayoutList className="w-4 h-4" /> Atur Grup Item
@@ -638,6 +740,12 @@ export function PdoFormPage() {
                 </Button>
               </div>
             </div>
+
+            {hasUnsavedAutoExternalRows && (
+              <p className="mb-4 text-sm font-semibold text-[#b45309]">
+                Ada item Auto External baru belum disimpan. Simpan draft dulu untuk ikut Ambil Semua Data.
+              </p>
+            )}
 
             {fields.length === 0 ? (
               <p className="text-muted text-sm text-center py-6">

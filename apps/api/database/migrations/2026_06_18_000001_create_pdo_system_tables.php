@@ -7,16 +7,39 @@ use Illuminate\Support\Facades\Schema;
 
 return new class extends Migration
 {
+    private function uuidPrimary(Blueprint $table): void
+    {
+        $column = $table->uuid('id')->primary();
+
+        if (! $this->isSqlite()) {
+            $column->default(DB::raw('gen_random_uuid()'));
+        }
+    }
+
+    private function postgresOnlyStatement(string $sql): void
+    {
+        if ($this->isSqlite()) {
+            return;
+        }
+
+        DB::statement($sql);
+    }
+
+    private function isSqlite(): bool
+    {
+        return DB::getDriverName() === 'sqlite';
+    }
+
     public function up(): void
     {
         // Aktifkan ekstensi UUID
-        DB::statement('CREATE EXTENSION IF NOT EXISTS "pgcrypto"');
+        $this->postgresOnlyStatement('CREATE EXTENSION IF NOT EXISTS "pgcrypto"');
 
         // ─────────────────────────────────────────
         // 1. COMPANIES
         // ─────────────────────────────────────────
         Schema::create('companies', function (Blueprint $table) {
-            $table->uuid('id')->primary()->default(DB::raw('gen_random_uuid()'));
+            $this->uuidPrimary($table);
             $table->string('code', 20)->unique();
             $table->string('name', 255);
             $table->boolean('is_active')->default(true);
@@ -29,7 +52,7 @@ return new class extends Migration
         // 2. PLANTATION_UNITS
         // ─────────────────────────────────────────
         Schema::create('plantation_units', function (Blueprint $table) {
-            $table->uuid('id')->primary()->default(DB::raw('gen_random_uuid()'));
+            $this->uuidPrimary($table);
             $table->foreignUuid('company_id')->constrained('companies')->restrictOnDelete();
             $table->string('code', 10)->unique();  // KP, BN, JM, SS
             $table->string('name', 255);
@@ -43,7 +66,7 @@ return new class extends Migration
         // 3. ROLES
         // ─────────────────────────────────────────
         Schema::create('roles', function (Blueprint $table) {
-            $table->uuid('id')->primary()->default(DB::raw('gen_random_uuid()'));
+            $this->uuidPrimary($table);
             $table->string('name', 100)->unique();
             $table->string('code', 50)->unique();  // KERANI, ASISTEN_KEBUN, dst.
             $table->text('description')->nullable();
@@ -56,7 +79,7 @@ return new class extends Migration
         // 4. USERS
         // ─────────────────────────────────────────
         Schema::create('users', function (Blueprint $table) {
-            $table->uuid('id')->primary()->default(DB::raw('gen_random_uuid()'));
+            $this->uuidPrimary($table);
             $table->foreignUuid('role_id')->constrained('roles')->restrictOnDelete();
             $table->foreignUuid('plantation_unit_id')->nullable()->constrained('plantation_units')->restrictOnDelete();
             $table->string('full_name', 255);
@@ -89,7 +112,7 @@ return new class extends Migration
         // 5. EXPENSE_CATEGORIES
         // ─────────────────────────────────────────
         Schema::create('expense_categories', function (Blueprint $table) {
-            $table->uuid('id')->primary()->default(DB::raw('gen_random_uuid()'));
+            $this->uuidPrimary($table);
             $table->foreignUuid('company_id')->constrained('companies')->restrictOnDelete();
             $table->string('code', 20);
             $table->string('name', 255);
@@ -104,13 +127,13 @@ return new class extends Migration
             $table->comment('Kategori Biaya level 1 (A, B, C, ...).');
         });
 
-        DB::statement("CREATE INDEX idx_expense_categories_company_active ON expense_categories(company_id, display_order) WHERE is_active = TRUE AND deleted_at IS NULL");
+        $this->postgresOnlyStatement("CREATE INDEX idx_expense_categories_company_active ON expense_categories(company_id, display_order) WHERE is_active = TRUE AND deleted_at IS NULL");
 
         // ─────────────────────────────────────────
         // 6. EXPENSE_SUBCATEGORIES
         // ─────────────────────────────────────────
         Schema::create('expense_subcategories', function (Blueprint $table) {
-            $table->uuid('id')->primary()->default(DB::raw('gen_random_uuid()'));
+            $this->uuidPrimary($table);
             $table->foreignUuid('category_id')->constrained('expense_categories')->restrictOnDelete();
             $table->string('code', 20);
             $table->string('name', 255);
@@ -124,13 +147,13 @@ return new class extends Migration
             $table->comment('Sub-Kategori Biaya level 2.');
         });
 
-        DB::statement("CREATE INDEX idx_expense_subcategories_category_active ON expense_subcategories(category_id, display_order) WHERE is_active = TRUE AND deleted_at IS NULL");
+        $this->postgresOnlyStatement("CREATE INDEX idx_expense_subcategories_category_active ON expense_subcategories(category_id, display_order) WHERE is_active = TRUE AND deleted_at IS NULL");
 
         // ─────────────────────────────────────────
         // 7. EXPENSE_ITEMS
         // ─────────────────────────────────────────
         Schema::create('expense_items', function (Blueprint $table) {
-            $table->uuid('id')->primary()->default(DB::raw('gen_random_uuid()'));
+            $this->uuidPrimary($table);
             $table->foreignUuid('subcategory_id')->constrained('expense_subcategories')->restrictOnDelete();
             $table->string('code', 30);
             $table->string('name', 255);
@@ -149,16 +172,16 @@ return new class extends Migration
             $table->comment('Item Biaya level 3. Snapshot ke pdo_details saat digunakan.');
         });
 
-        DB::statement("ALTER TABLE expense_items ADD CONSTRAINT chk_expense_items_mode_input CHECK (mode_input IN ('manual', 'auto_external'))");
-        DB::statement("ALTER TABLE expense_items ADD CONSTRAINT chk_expense_items_default_rate CHECK (default_rate >= 0)");
-        DB::statement("CREATE INDEX idx_expense_items_subcategory_active ON expense_items(subcategory_id, display_order) WHERE is_active = TRUE AND deleted_at IS NULL");
-        DB::statement("CREATE INDEX idx_expense_items_routine ON expense_items(subcategory_id) WHERE is_routine = TRUE AND is_active = TRUE AND deleted_at IS NULL");
+        $this->postgresOnlyStatement("ALTER TABLE expense_items ADD CONSTRAINT chk_expense_items_mode_input CHECK (mode_input IN ('manual', 'auto_external'))");
+        $this->postgresOnlyStatement("ALTER TABLE expense_items ADD CONSTRAINT chk_expense_items_default_rate CHECK (default_rate >= 0)");
+        $this->postgresOnlyStatement("CREATE INDEX idx_expense_items_subcategory_active ON expense_items(subcategory_id, display_order) WHERE is_active = TRUE AND deleted_at IS NULL");
+        $this->postgresOnlyStatement("CREATE INDEX idx_expense_items_routine ON expense_items(subcategory_id) WHERE is_routine = TRUE AND is_active = TRUE AND deleted_at IS NULL");
 
         // ─────────────────────────────────────────
         // 8. SYSTEM_SETTINGS
         // ─────────────────────────────────────────
         Schema::create('system_settings', function (Blueprint $table) {
-            $table->uuid('id')->primary()->default(DB::raw('gen_random_uuid()'));
+            $this->uuidPrimary($table);
             $table->foreignUuid('company_id')->constrained('companies')->cascadeOnDelete();
             $table->string('key', 100);
             $table->text('value');
@@ -174,7 +197,7 @@ return new class extends Migration
         // 9. PDO_HEADERS
         // ─────────────────────────────────────────
         Schema::create('pdo_headers', function (Blueprint $table) {
-            $table->uuid('id')->primary()->default(DB::raw('gen_random_uuid()'));
+            $this->uuidPrimary($table);
             $table->foreignUuid('company_id')->constrained('companies')->restrictOnDelete();
             $table->foreignUuid('plantation_unit_id')->constrained('plantation_units')->restrictOnDelete();
             $table->foreignUuid('created_by')->constrained('users')->restrictOnDelete();
@@ -195,21 +218,21 @@ return new class extends Migration
             $table->comment('Header PDO Bulanan. UNIQUE per unit+periode.');
         });
 
-        DB::statement("ALTER TABLE pdo_headers ADD CONSTRAINT chk_pdo_headers_period_month CHECK (period_month BETWEEN 1 AND 12)");
-        DB::statement("ALTER TABLE pdo_headers ADD CONSTRAINT chk_pdo_headers_period_year CHECK (period_year BETWEEN 2020 AND 2099)");
-        DB::statement("ALTER TABLE pdo_headers ADD CONSTRAINT chk_pdo_headers_status CHECK (status IN ('draft','submitted','reviewed_asisten','in_review_manager','in_review_direktur','final','closed'))");
-        DB::statement("ALTER TABLE pdo_headers ADD CONSTRAINT chk_pdo_headers_closure_type CHECK (closure_type IN ('system','manual'))");
-        DB::statement("CREATE INDEX idx_pdo_headers_unit_period ON pdo_headers(plantation_unit_id, period_year DESC, period_month DESC)");
-        DB::statement("CREATE INDEX idx_pdo_headers_status_unit ON pdo_headers(status, plantation_unit_id)");
-        DB::statement("CREATE INDEX idx_pdo_headers_company_period ON pdo_headers(company_id, period_year DESC, period_month DESC, status)");
-        DB::statement("CREATE INDEX idx_pdo_headers_final_for_close ON pdo_headers(period_year, period_month) WHERE status = 'final'");
-        DB::statement("CREATE INDEX idx_pdo_headers_created_by ON pdo_headers(created_by)");
+        $this->postgresOnlyStatement("ALTER TABLE pdo_headers ADD CONSTRAINT chk_pdo_headers_period_month CHECK (period_month BETWEEN 1 AND 12)");
+        $this->postgresOnlyStatement("ALTER TABLE pdo_headers ADD CONSTRAINT chk_pdo_headers_period_year CHECK (period_year BETWEEN 2020 AND 2099)");
+        $this->postgresOnlyStatement("ALTER TABLE pdo_headers ADD CONSTRAINT chk_pdo_headers_status CHECK (status IN ('draft','submitted','reviewed_asisten','in_review_manager','in_review_direktur','final','closed'))");
+        $this->postgresOnlyStatement("ALTER TABLE pdo_headers ADD CONSTRAINT chk_pdo_headers_closure_type CHECK (closure_type IN ('system','manual'))");
+        $this->postgresOnlyStatement("CREATE INDEX idx_pdo_headers_unit_period ON pdo_headers(plantation_unit_id, period_year DESC, period_month DESC)");
+        $this->postgresOnlyStatement("CREATE INDEX idx_pdo_headers_status_unit ON pdo_headers(status, plantation_unit_id)");
+        $this->postgresOnlyStatement("CREATE INDEX idx_pdo_headers_company_period ON pdo_headers(company_id, period_year DESC, period_month DESC, status)");
+        $this->postgresOnlyStatement("CREATE INDEX idx_pdo_headers_final_for_close ON pdo_headers(period_year, period_month) WHERE status = 'final'");
+        $this->postgresOnlyStatement("CREATE INDEX idx_pdo_headers_created_by ON pdo_headers(created_by)");
 
         // ─────────────────────────────────────────
         // 10. PDO_SUPPLEMENTARY_HEADERS
         // ─────────────────────────────────────────
         Schema::create('pdo_supplementary_headers', function (Blueprint $table) {
-            $table->uuid('id')->primary()->default(DB::raw('gen_random_uuid()'));
+            $this->uuidPrimary($table);
             $table->foreignUuid('parent_pdo_header_id')->constrained('pdo_headers')->restrictOnDelete();
             $table->foreignUuid('company_id')->constrained('companies')->restrictOnDelete();
             $table->foreignUuid('plantation_unit_id')->constrained('plantation_units')->restrictOnDelete();
@@ -226,16 +249,16 @@ return new class extends Migration
             $table->comment('Header PDO Tambahan. Setelah approved Direktur, item masuk ke pdo_details PDO Bulanan.');
         });
 
-        DB::statement("ALTER TABLE pdo_supplementary_headers ADD CONSTRAINT chk_pdot_status CHECK (status IN ('draft','submitted','reviewed_asisten','in_review_manager','in_review_direktur','final_merged','rejected'))");
-        DB::statement("CREATE INDEX idx_pdo_supplementary_parent ON pdo_supplementary_headers(parent_pdo_header_id)");
-        DB::statement("CREATE INDEX idx_pdo_supplementary_unit_period ON pdo_supplementary_headers(plantation_unit_id, period_year DESC, period_month DESC)");
-        DB::statement("CREATE INDEX idx_pdo_supplementary_status ON pdo_supplementary_headers(status, plantation_unit_id) WHERE status NOT IN ('final_merged')");
+        $this->postgresOnlyStatement("ALTER TABLE pdo_supplementary_headers ADD CONSTRAINT chk_pdot_status CHECK (status IN ('draft','submitted','reviewed_asisten','in_review_manager','in_review_direktur','final_merged','rejected'))");
+        $this->postgresOnlyStatement("CREATE INDEX idx_pdo_supplementary_parent ON pdo_supplementary_headers(parent_pdo_header_id)");
+        $this->postgresOnlyStatement("CREATE INDEX idx_pdo_supplementary_unit_period ON pdo_supplementary_headers(plantation_unit_id, period_year DESC, period_month DESC)");
+        $this->postgresOnlyStatement("CREATE INDEX idx_pdo_supplementary_status ON pdo_supplementary_headers(status, plantation_unit_id) WHERE status NOT IN ('final_merged')");
 
         // ─────────────────────────────────────────
         // 11. PDO_DETAILS
         // ─────────────────────────────────────────
         Schema::create('pdo_details', function (Blueprint $table) {
-            $table->uuid('id')->primary()->default(DB::raw('gen_random_uuid()'));
+            $this->uuidPrimary($table);
             $table->foreignUuid('pdo_header_id')->constrained('pdo_headers')->cascadeOnDelete();
             $table->foreignUuid('expense_item_id')->constrained('expense_items')->restrictOnDelete();
             $table->foreignUuid('source_pdo_supplementary_id')->nullable()->constrained('pdo_supplementary_headers')->restrictOnDelete();
@@ -252,19 +275,19 @@ return new class extends Migration
             $table->comment('Baris item dalam PDO. Tarif, akun, satuan di-snapshot saat insert.');
         });
 
-        DB::statement("ALTER TABLE pdo_details ADD CONSTRAINT chk_pdo_details_quantity CHECK (quantity >= 0)");
-        DB::statement("ALTER TABLE pdo_details ADD CONSTRAINT chk_pdo_details_rate CHECK (rate >= 0)");
-        DB::statement("ALTER TABLE pdo_details ADD CONSTRAINT chk_pdo_details_amount CHECK (amount >= 0)");
-        DB::statement("CREATE INDEX idx_pdo_details_header_order ON pdo_details(pdo_header_id, display_order)");
-        DB::statement("CREATE INDEX idx_pdo_details_header_item ON pdo_details(pdo_header_id, expense_item_id)");
-        DB::statement("CREATE INDEX idx_pdo_details_supplementary_source ON pdo_details(source_pdo_supplementary_id) WHERE source_pdo_supplementary_id IS NOT NULL");
-        DB::statement("CREATE INDEX idx_pdo_details_expense_item ON pdo_details(expense_item_id)");
+        $this->postgresOnlyStatement("ALTER TABLE pdo_details ADD CONSTRAINT chk_pdo_details_quantity CHECK (quantity >= 0)");
+        $this->postgresOnlyStatement("ALTER TABLE pdo_details ADD CONSTRAINT chk_pdo_details_rate CHECK (rate >= 0)");
+        $this->postgresOnlyStatement("ALTER TABLE pdo_details ADD CONSTRAINT chk_pdo_details_amount CHECK (amount >= 0)");
+        $this->postgresOnlyStatement("CREATE INDEX idx_pdo_details_header_order ON pdo_details(pdo_header_id, display_order)");
+        $this->postgresOnlyStatement("CREATE INDEX idx_pdo_details_header_item ON pdo_details(pdo_header_id, expense_item_id)");
+        $this->postgresOnlyStatement("CREATE INDEX idx_pdo_details_supplementary_source ON pdo_details(source_pdo_supplementary_id) WHERE source_pdo_supplementary_id IS NOT NULL");
+        $this->postgresOnlyStatement("CREATE INDEX idx_pdo_details_expense_item ON pdo_details(expense_item_id)");
 
         // ─────────────────────────────────────────
         // 12. PDO_SUPPLEMENTARY_DETAILS
         // ─────────────────────────────────────────
         Schema::create('pdo_supplementary_details', function (Blueprint $table) {
-            $table->uuid('id')->primary()->default(DB::raw('gen_random_uuid()'));
+            $this->uuidPrimary($table);
             $table->foreignUuid('pdo_supplementary_header_id')->constrained('pdo_supplementary_headers')->cascadeOnDelete();
             $table->foreignUuid('expense_item_id')->constrained('expense_items')->restrictOnDelete();
             $table->string('account_number', 50)->nullable();
@@ -280,13 +303,13 @@ return new class extends Migration
             $table->comment('Item PDO Tambahan selama proses approval. Setelah merge, disalin ke pdo_details.');
         });
 
-        DB::statement("ALTER TABLE pdo_supplementary_details ADD CONSTRAINT chk_pdot_details_amount CHECK (amount >= 0)");
+        $this->postgresOnlyStatement("ALTER TABLE pdo_supplementary_details ADD CONSTRAINT chk_pdot_details_amount CHECK (amount >= 0)");
 
         // ─────────────────────────────────────────
         // 13. PDO_APPROVAL_LOGS
         // ─────────────────────────────────────────
         Schema::create('pdo_approval_logs', function (Blueprint $table) {
-            $table->uuid('id')->primary()->default(DB::raw('gen_random_uuid()'));
+            $this->uuidPrimary($table);
             $table->foreignUuid('pdo_header_id')->constrained('pdo_headers')->cascadeOnDelete();
             $table->foreignUuid('actor_user_id')->constrained('users')->restrictOnDelete();
             $table->string('approval_stage', 50);
@@ -298,16 +321,16 @@ return new class extends Migration
             $table->comment('Immutable approval log PDO Bulanan. Append-only.');
         });
 
-        DB::statement("ALTER TABLE pdo_approval_logs ADD CONSTRAINT chk_pdo_approval_action CHECK (action IN ('submit','approve','reject','resubmit','close'))");
-        DB::statement("CREATE INDEX idx_pdo_approval_logs_pdo_sequence ON pdo_approval_logs(pdo_header_id, sequence_number ASC)");
-        DB::statement("CREATE INDEX idx_pdo_approval_logs_actor_date ON pdo_approval_logs(actor_user_id, created_at DESC)");
-        DB::statement("CREATE INDEX idx_pdo_approval_logs_action ON pdo_approval_logs(pdo_header_id, action)");
+        $this->postgresOnlyStatement("ALTER TABLE pdo_approval_logs ADD CONSTRAINT chk_pdo_approval_action CHECK (action IN ('submit','approve','reject','resubmit','close'))");
+        $this->postgresOnlyStatement("CREATE INDEX idx_pdo_approval_logs_pdo_sequence ON pdo_approval_logs(pdo_header_id, sequence_number ASC)");
+        $this->postgresOnlyStatement("CREATE INDEX idx_pdo_approval_logs_actor_date ON pdo_approval_logs(actor_user_id, created_at DESC)");
+        $this->postgresOnlyStatement("CREATE INDEX idx_pdo_approval_logs_action ON pdo_approval_logs(pdo_header_id, action)");
 
         // ─────────────────────────────────────────
         // 14. PDO_SUPPLEMENTARY_APPROVAL_LOGS
         // ─────────────────────────────────────────
         Schema::create('pdo_supplementary_approval_logs', function (Blueprint $table) {
-            $table->uuid('id')->primary()->default(DB::raw('gen_random_uuid()'));
+            $this->uuidPrimary($table);
             $table->foreignUuid('pdo_supplementary_header_id')->constrained('pdo_supplementary_headers')->cascadeOnDelete();
             $table->foreignUuid('actor_user_id')->constrained('users')->restrictOnDelete();
             $table->string('approval_stage', 50);
@@ -319,15 +342,15 @@ return new class extends Migration
             $table->comment('Approval log PDO Tambahan. Struktur identik dengan pdo_approval_logs.');
         });
 
-        DB::statement("ALTER TABLE pdo_supplementary_approval_logs ADD CONSTRAINT chk_pdot_approval_action CHECK (action IN ('submit','approve','reject','resubmit'))");
-        DB::statement("CREATE INDEX idx_pdo_supp_approval_logs_pdo ON pdo_supplementary_approval_logs(pdo_supplementary_header_id, sequence_number ASC)");
-        DB::statement("CREATE INDEX idx_pdo_supp_approval_logs_actor ON pdo_supplementary_approval_logs(actor_user_id, created_at DESC)");
+        $this->postgresOnlyStatement("ALTER TABLE pdo_supplementary_approval_logs ADD CONSTRAINT chk_pdot_approval_action CHECK (action IN ('submit','approve','reject','resubmit'))");
+        $this->postgresOnlyStatement("CREATE INDEX idx_pdo_supp_approval_logs_pdo ON pdo_supplementary_approval_logs(pdo_supplementary_header_id, sequence_number ASC)");
+        $this->postgresOnlyStatement("CREATE INDEX idx_pdo_supp_approval_logs_actor ON pdo_supplementary_approval_logs(actor_user_id, created_at DESC)");
 
         // ─────────────────────────────────────────
         // 15. TRANSFER_ENTRIES (ERD v1.2 — recorded_by nullable)
         // ─────────────────────────────────────────
         Schema::create('transfer_entries', function (Blueprint $table) {
-            $table->uuid('id')->primary()->default(DB::raw('gen_random_uuid()'));
+            $this->uuidPrimary($table);
             $table->foreignUuid('pdo_detail_id')->constrained('pdo_details')->restrictOnDelete();
             $table->foreignUuid('recorded_by')->nullable()->constrained('users')->nullOnDelete(); // NULL = entri sistem
             $table->string('entry_source', 10)->default('manual');
@@ -341,18 +364,18 @@ return new class extends Migration
             $table->comment('Entri transfer per item. recorded_by NULL untuk entri otomatis sistem saat PDO Final.');
         });
 
-        DB::statement("ALTER TABLE transfer_entries ADD CONSTRAINT chk_transfer_entries_source CHECK (entry_source IN ('system','manual'))");
-        DB::statement("ALTER TABLE transfer_entries ADD CONSTRAINT chk_transfer_entries_amount CHECK (amount > 0)");
-        DB::statement("CREATE INDEX idx_transfer_entries_pdo_detail_date ON transfer_entries(pdo_detail_id, transfer_date ASC)");
-        DB::statement("CREATE INDEX idx_transfer_entries_auto_generated ON transfer_entries(pdo_detail_id, is_auto_generated)");
-        DB::statement("CREATE INDEX idx_transfer_entries_source ON transfer_entries(entry_source) WHERE entry_source = 'system'");
-        DB::statement("CREATE INDEX idx_transfer_entries_recorded_by ON transfer_entries(recorded_by) WHERE recorded_by IS NOT NULL");
+        $this->postgresOnlyStatement("ALTER TABLE transfer_entries ADD CONSTRAINT chk_transfer_entries_source CHECK (entry_source IN ('system','manual'))");
+        $this->postgresOnlyStatement("ALTER TABLE transfer_entries ADD CONSTRAINT chk_transfer_entries_amount CHECK (amount > 0)");
+        $this->postgresOnlyStatement("CREATE INDEX idx_transfer_entries_pdo_detail_date ON transfer_entries(pdo_detail_id, transfer_date ASC)");
+        $this->postgresOnlyStatement("CREATE INDEX idx_transfer_entries_auto_generated ON transfer_entries(pdo_detail_id, is_auto_generated)");
+        $this->postgresOnlyStatement("CREATE INDEX idx_transfer_entries_source ON transfer_entries(entry_source) WHERE entry_source = 'system'");
+        $this->postgresOnlyStatement("CREATE INDEX idx_transfer_entries_recorded_by ON transfer_entries(recorded_by) WHERE recorded_by IS NOT NULL");
 
         // ─────────────────────────────────────────
         // 16. REALIZATION_ENTRIES
         // ─────────────────────────────────────────
         Schema::create('realization_entries', function (Blueprint $table) {
-            $table->uuid('id')->primary()->default(DB::raw('gen_random_uuid()'));
+            $this->uuidPrimary($table);
             $table->foreignUuid('pdo_detail_id')->constrained('pdo_details')->restrictOnDelete();
             $table->foreignUuid('recorded_by')->constrained('users')->restrictOnDelete();
             $table->date('transaction_date');
@@ -366,18 +389,18 @@ return new class extends Migration
             $table->comment('Entri realisasi per item. Validasi kumulatif PDO dilakukan di aplikasi sebelum INSERT.');
         });
 
-        DB::statement("ALTER TABLE realization_entries ADD CONSTRAINT chk_realization_amount CHECK (amount > 0)");
-        DB::statement("ALTER TABLE realization_entries ADD CONSTRAINT chk_realization_payment_method CHECK (payment_method IN ('tunai','transfer','kas_kecil'))");
-        DB::statement("ALTER TABLE realization_entries ADD CONSTRAINT chk_realization_funding_source CHECK (funding_source IN ('kas_kebun','rekening_kebun','rekening_utama'))");
-        DB::statement("CREATE INDEX idx_realization_entries_pdo_detail_date ON realization_entries(pdo_detail_id, transaction_date ASC)");
-        DB::statement("CREATE INDEX idx_realization_entries_funding_source ON realization_entries(pdo_detail_id, funding_source)");
-        DB::statement("CREATE INDEX idx_realization_entries_recorded_by ON realization_entries(recorded_by)");
+        $this->postgresOnlyStatement("ALTER TABLE realization_entries ADD CONSTRAINT chk_realization_amount CHECK (amount > 0)");
+        $this->postgresOnlyStatement("ALTER TABLE realization_entries ADD CONSTRAINT chk_realization_payment_method CHECK (payment_method IN ('tunai','transfer','kas_kecil'))");
+        $this->postgresOnlyStatement("ALTER TABLE realization_entries ADD CONSTRAINT chk_realization_funding_source CHECK (funding_source IN ('kas_kebun','rekening_kebun','rekening_utama'))");
+        $this->postgresOnlyStatement("CREATE INDEX idx_realization_entries_pdo_detail_date ON realization_entries(pdo_detail_id, transaction_date ASC)");
+        $this->postgresOnlyStatement("CREATE INDEX idx_realization_entries_funding_source ON realization_entries(pdo_detail_id, funding_source)");
+        $this->postgresOnlyStatement("CREATE INDEX idx_realization_entries_recorded_by ON realization_entries(recorded_by)");
 
         // ─────────────────────────────────────────
         // 17. REALIZATION_ATTACHMENTS
         // ─────────────────────────────────────────
         Schema::create('realization_attachments', function (Blueprint $table) {
-            $table->uuid('id')->primary()->default(DB::raw('gen_random_uuid()'));
+            $this->uuidPrimary($table);
             $table->foreignUuid('realization_entry_id')->constrained('realization_entries')->cascadeOnDelete();
             $table->foreignUuid('uploaded_by')->constrained('users')->restrictOnDelete();
             $table->string('file_name', 255);
@@ -389,15 +412,15 @@ return new class extends Migration
             $table->comment('Metadata file bukti transaksi. File fisik di AWS S3.');
         });
 
-        DB::statement("ALTER TABLE realization_attachments ADD CONSTRAINT chk_attachment_file_size CHECK (file_size_bytes > 0)");
-        DB::statement("CREATE INDEX idx_realization_attachments_entry ON realization_attachments(realization_entry_id)");
-        DB::statement("CREATE INDEX idx_realization_attachments_uploader ON realization_attachments(uploaded_by)");
+        $this->postgresOnlyStatement("ALTER TABLE realization_attachments ADD CONSTRAINT chk_attachment_file_size CHECK (file_size_bytes > 0)");
+        $this->postgresOnlyStatement("CREATE INDEX idx_realization_attachments_entry ON realization_attachments(realization_entry_id)");
+        $this->postgresOnlyStatement("CREATE INDEX idx_realization_attachments_uploader ON realization_attachments(uploaded_by)");
 
         // ─────────────────────────────────────────
         // 18. AUDIT_LOGS
         // ─────────────────────────────────────────
         Schema::create('audit_logs', function (Blueprint $table) {
-            $table->uuid('id')->primary()->default(DB::raw('gen_random_uuid()'));
+            $this->uuidPrimary($table);
             $table->foreignUuid('actor_user_id')->nullable()->constrained('users')->nullOnDelete();
             $table->string('entity_type', 100);
             $table->uuid('entity_id');
@@ -411,15 +434,15 @@ return new class extends Migration
             $table->comment('Audit trail system-wide. Append-only — tidak ada UPDATE atau DELETE.');
         });
 
-        DB::statement("CREATE INDEX idx_audit_logs_entity_date ON audit_logs(entity_type, entity_id, created_at DESC)");
-        DB::statement("CREATE INDEX idx_audit_logs_actor_date ON audit_logs(actor_user_id, created_at DESC) WHERE actor_user_id IS NOT NULL");
-        DB::statement("CREATE INDEX idx_audit_logs_action ON audit_logs(action, entity_type, created_at DESC)");
+        $this->postgresOnlyStatement("CREATE INDEX idx_audit_logs_entity_date ON audit_logs(entity_type, entity_id, created_at DESC)");
+        $this->postgresOnlyStatement("CREATE INDEX idx_audit_logs_actor_date ON audit_logs(actor_user_id, created_at DESC) WHERE actor_user_id IS NOT NULL");
+        $this->postgresOnlyStatement("CREATE INDEX idx_audit_logs_action ON audit_logs(action, entity_type, created_at DESC)");
 
         // ─────────────────────────────────────────
         // 19. NOTIFICATION_TEMPLATES
         // ─────────────────────────────────────────
         Schema::create('notification_templates', function (Blueprint $table) {
-            $table->uuid('id')->primary()->default(DB::raw('gen_random_uuid()'));
+            $this->uuidPrimary($table);
             $table->foreignUuid('company_id')->constrained('companies')->cascadeOnDelete();
             $table->string('event_type', 100);
             $table->string('channel', 20);
@@ -431,8 +454,8 @@ return new class extends Migration
             $table->comment('Template pesan notifikasi per event per channel.');
         });
 
-        DB::statement("ALTER TABLE notification_templates ADD CONSTRAINT chk_notif_channel CHECK (channel IN ('whatsapp','in_system'))");
-        DB::statement("CREATE INDEX idx_notification_templates_active ON notification_templates(company_id, is_active) WHERE is_active = TRUE");
+        $this->postgresOnlyStatement("ALTER TABLE notification_templates ADD CONSTRAINT chk_notif_channel CHECK (channel IN ('whatsapp','in_system'))");
+        $this->postgresOnlyStatement("CREATE INDEX idx_notification_templates_active ON notification_templates(company_id, is_active) WHERE is_active = TRUE");
     }
 
     public function down(): void

@@ -70,6 +70,7 @@ Route::prefix('v1')->middleware(['auth:sanctum', 'ensure.unit.access'])->group(f
         Route::put('details/{detail}', [PdoDetailController::class, 'update'])->middleware('check.pdo.status');
         Route::delete('details/{detail}', [PdoDetailController::class, 'destroy'])->middleware('check.pdo.status');
         Route::post('details/{detail}/pull-external-cost', [PdoDetailController::class, 'pullExternalCost'])->middleware('check.pdo.status');
+        Route::post('pull-external-costs', [PdoDetailController::class, 'bulkPullExternalCost'])->middleware('check.pdo.status');
 
         // Approval workflow
         Route::post('submit', [PdoApprovalController::class, 'submit'])->middleware('check.pdo.status');

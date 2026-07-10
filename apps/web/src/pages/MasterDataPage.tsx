@@ -1,5 +1,5 @@
-import { useEffect, useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { Fragment, useEffect, useState } from 'react'
+import { useLocation, useNavigate, useSearchParams } from 'react-router-dom'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useCategories, useSubcategories, useItems, useUsers } from '@/hooks/useMasterData'
 import { useAuthStore } from '@/store/auth.store'
@@ -10,6 +10,7 @@ import { Button } from '@/components/ui/Button'
 import { EmptyState } from '@/components/ui/EmptyState'
 import { fmt } from '@/lib/format'
 import { isAdmin, canEditMasterData } from '@/lib/auth'
+import { buildMasterDataReturnTo, buildMasterDataSearchParams, buildMasterDataUrl, parseMasterDataViewState } from '@/lib/masterDataState'
 import type { ApiResponse, PlantationUnit, RoleCode } from '@/types'
 import { ChevronDown, ChevronRight } from 'lucide-react'
 
@@ -17,12 +18,15 @@ type Tab = 'hierarki' | 'items' | 'kebun' | 'users'
 
 export function MasterDataPage() {
   const user     = useAuthStore((s) => s.user)
+  const location = useLocation()
   const navigate = useNavigate()
+  const [, setSearchParams] = useSearchParams()
   const toast    = useToastStore((s) => s.push)
   const qc       = useQueryClient()
   const role     = user?.role.code as RoleCode | undefined
   const admin    = role ? isAdmin(role) : false
   const canEdit  = role ? canEditMasterData(role) : false
+  const allowedTabs: readonly Tab[] = admin ? ['hierarki', 'items', 'kebun', 'users'] : ['hierarki', 'items', 'users']
 
   const [tab, setTab]                   = useState<Tab>('hierarki')
   const [expandedCats, setExpandedCats] = useState<Set<string>>(new Set())
@@ -49,6 +53,21 @@ export function MasterDataPage() {
     ))
   }, [units])
 
+  useEffect(() => {
+    const next = parseMasterDataViewState(new URLSearchParams(location.search), allowedTabs)
+    setTab(next.tab)
+    setExpandedCats((current) => {
+      const nextKey = next.expandedCatIds.join(',')
+      const currentKey = Array.from(current).join(',')
+      return currentKey === nextKey ? current : new Set(next.expandedCatIds)
+    })
+    setExpandedSubs((current) => {
+      const nextKey = next.expandedSubIds.join(',')
+      const currentKey = Array.from(current).join(',')
+      return currentKey === nextKey ? current : new Set(next.expandedSubIds)
+    })
+  }, [admin, location.search])
+
   const updatePayrollMapping = useMutation({
     mutationFn: async (unit: PlantationUnit) => {
       const res = await api.put<ApiResponse<PlantationUnit>>(`/plantation-units/${unit.id}`, {
@@ -63,12 +82,46 @@ export function MasterDataPage() {
     onError: () => toast('Gagal menyimpan Payroll Estate Mapping', 'error'),
   })
 
-  const toggleCat = (id: string) => setExpandedCats((s) => {
-    const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n
+  const currentMasterDataUrl = buildMasterDataUrl({
+    tab,
+    expandedCatIds: Array.from(expandedCats),
+    expandedSubIds: Array.from(expandedSubs),
   })
-  const toggleSub = (id: string) => setExpandedSubs((s) => {
-    const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n
-  })
+  const returnTo = `${location.pathname}${location.search}` === '/master'
+    ? currentMasterDataUrl
+    : `${location.pathname}${location.search}`
+
+  const syncViewState = (next: {
+    tab?: Tab
+    expandedCatIds?: string[]
+    expandedSubIds?: string[]
+  }) => {
+    setSearchParams(
+      buildMasterDataSearchParams({
+        tab: next.tab ?? tab,
+        expandedCatIds: next.expandedCatIds ?? Array.from(expandedCats),
+        expandedSubIds: next.expandedSubIds ?? Array.from(expandedSubs),
+      }),
+      { replace: true },
+    )
+  }
+
+  const openForm = (path: string) => {
+    navigate(`${path}?returnTo=${buildMasterDataReturnTo(returnTo)}`)
+  }
+
+  const toggleCat = (id: string) => {
+    const next = new Set(expandedCats)
+    next.has(id) ? next.delete(id) : next.add(id)
+    setExpandedCats(next)
+    syncViewState({ expandedCatIds: Array.from(next) })
+  }
+  const toggleSub = (id: string) => {
+    const next = new Set(expandedSubs)
+    next.has(id) ? next.delete(id) : next.add(id)
+    setExpandedSubs(next)
+    syncViewState({ expandedSubIds: Array.from(next) })
+  }
 
   const subsByCat  = (catId: string) => subcategories?.filter((s) => s.category_id === catId) ?? []
   const itemsBySub = (subId: string) => items?.filter((i) => i.subcategory_id === subId) ?? []
@@ -82,9 +135,9 @@ export function MasterDataPage() {
         </div>
         {canEdit && (
           <div className="flex gap-2">
-            <Button onClick={() => navigate('/master/kategori/buat')}>+ Kategori</Button>
-            <Button variant="secondary" onClick={() => navigate('/master/sub-kategori/buat')}>+ Sub-Kategori</Button>
-            <Button variant="secondary" onClick={() => navigate('/master/item/buat')}>+ Item Biaya</Button>
+            <Button onClick={() => openForm('/master/kategori/buat')}>+ Kategori</Button>
+            <Button variant="secondary" onClick={() => openForm('/master/sub-kategori/buat')}>+ Sub-Kategori</Button>
+            <Button variant="secondary" onClick={() => openForm('/master/item/buat')}>+ Item Biaya</Button>
           </div>
         )}
       </div>
@@ -94,7 +147,10 @@ export function MasterDataPage() {
         {(['hierarki', 'items', ...(admin ? ['kebun'] as const : []), 'users'] as Tab[]).map((t) => (
           <button
             key={t}
-            onClick={() => setTab(t)}
+            onClick={() => {
+              setTab(t)
+              syncViewState({ tab: t })
+            }}
             className={`px-4 py-2.5 text-sm font-bold capitalize border-b-2 transition-colors ${
               tab === t ? 'border-green text-green' : 'border-transparent text-muted hover:text-ink'
             }`}
@@ -117,7 +173,7 @@ export function MasterDataPage() {
             <table className="w-full border-collapse">
               <thead>
                 <tr>
-                  {['Kategori / Sub / Item', 'Induk', 'Status', 'Aksi'].map((h) => (
+                  {['Kategori / Sub / Item', 'Induk', 'Rutin', 'Mode Input', 'Status', 'Aksi'].map((h) => (
                     <th key={h} className="px-4 py-3 text-left text-[11px] font-bold uppercase tracking-wider text-[#526257] bg-[#f7faf7] sticky top-0">
                       {h}
                     </th>
@@ -126,9 +182,9 @@ export function MasterDataPage() {
               </thead>
               <tbody>
                 {!categories?.length ? (
-                  <tr><td colSpan={4} className="p-6"><EmptyState /></td></tr>
+                  <tr><td colSpan={6} className="p-6"><EmptyState /></td></tr>
                 ) : categories.map((cat) => (
-                  <>
+                  <Fragment key={cat.id}>
                     {/* Kategori row */}
                     <tr key={cat.id} className="group-row">
                       <td className="px-4 py-3 font-[950]">
@@ -141,6 +197,8 @@ export function MasterDataPage() {
                         </div>
                       </td>
                       <td className="px-4 py-3">—</td>
+                      <td className="px-4 py-3">—</td>
+                      <td className="px-4 py-3">—</td>
                       <td className="px-4 py-3">
                         <Badge variant={cat.is_active ? 'approved' : 'draft'}>
                           {cat.is_active ? 'Aktif' : 'Nonaktif'}
@@ -149,7 +207,7 @@ export function MasterDataPage() {
                       <td className="px-4 py-3">
                         {canEdit && (
                           <button className="text-sm text-green hover:underline font-bold"
-                            onClick={() => navigate(`/master/kategori/${cat.id}/edit`)}>
+                            onClick={() => openForm(`/master/kategori/${cat.id}/edit`)}>
                             Edit
                           </button>
                         )}
@@ -158,7 +216,7 @@ export function MasterDataPage() {
 
                     {/* Sub-kategori rows */}
                     {expandedCats.has(cat.id) && subsByCat(cat.id).map((sub) => (
-                      <>
+                      <Fragment key={sub.id}>
                         <tr key={sub.id} className="subgroup-row">
                           <td className="px-4 py-3 pl-10 font-[900]">
                             <div className="flex items-center gap-2">
@@ -170,6 +228,8 @@ export function MasterDataPage() {
                             </div>
                           </td>
                           <td className="px-4 py-3 text-sm">{cat.name}</td>
+                          <td className="px-4 py-3">—</td>
+                          <td className="px-4 py-3">—</td>
                           <td className="px-4 py-3">
                             <Badge variant={sub.is_active ? 'approved' : 'draft'}>
                               {sub.is_active ? 'Aktif' : 'Nonaktif'}
@@ -178,7 +238,7 @@ export function MasterDataPage() {
                           <td className="px-4 py-3">
                             {canEdit && (
                               <button className="text-sm text-green hover:underline font-bold"
-                                onClick={() => navigate(`/master/sub-kategori/${sub.id}/edit`)}>
+                                onClick={() => openForm(`/master/sub-kategori/${sub.id}/edit`)}>
                                 Edit
                               </button>
                             )}
@@ -191,6 +251,16 @@ export function MasterDataPage() {
                             <td className="px-4 py-2.5 pl-16 text-sm">{item.code} — {item.name}</td>
                             <td className="px-4 py-2.5 text-sm text-muted">{sub.name}</td>
                             <td className="px-4 py-2.5">
+                              <Badge variant={item.is_routine ? 'approved' : 'draft'}>
+                                {item.is_routine ? 'Ya' : 'Tidak'}
+                              </Badge>
+                            </td>
+                            <td className="px-4 py-2.5">
+                              <Badge variant={item.mode_input === 'auto_external' ? 'purple' : 'draft'}>
+                                {item.mode_input === 'auto_external' ? 'Auto External' : 'Manual'}
+                              </Badge>
+                            </td>
+                            <td className="px-4 py-2.5">
                               <Badge variant={item.is_active ? 'approved' : 'draft'}>
                                 {item.is_active ? 'Aktif' : 'Nonaktif'}
                               </Badge>
@@ -198,16 +268,16 @@ export function MasterDataPage() {
                             <td className="px-4 py-2.5">
                               {canEdit && (
                                 <button className="text-sm text-green hover:underline font-bold"
-                                  onClick={() => navigate(`/master/item/${item.id}/edit`)}>
+                                  onClick={() => openForm(`/master/item/${item.id}/edit`)}>
                                   Edit
                                 </button>
                               )}
                             </td>
                           </tr>
                         ))}
-                      </>
+                      </Fragment>
                     ))}
-                  </>
+                  </Fragment>
                 ))}
               </tbody>
             </table>
@@ -232,7 +302,7 @@ export function MasterDataPage() {
                     {canEdit && (
                       <button
                         className="text-xs text-green hover:underline font-bold mt-1"
-                        onClick={() => navigate(step.to)}
+                        onClick={() => openForm(step.to)}
                       >
                         Buka Halaman →
                       </button>
@@ -290,7 +360,7 @@ export function MasterDataPage() {
                     <td className="px-4 py-3">
                       {canEdit && (
                         <button className="text-sm text-green hover:underline font-bold"
-                          onClick={() => navigate(`/master/item/${item.id}/edit`)}>
+                          onClick={() => openForm(`/master/item/${item.id}/edit`)}>
                           Edit
                         </button>
                       )}
@@ -355,7 +425,7 @@ export function MasterDataPage() {
         <div>
           {admin && (
             <div className="mb-4">
-              <Button onClick={() => navigate('/master/user/buat')}>+ Tambah User</Button>
+              <Button onClick={() => openForm('/master/user/buat')}>+ Tambah User</Button>
             </div>
           )}
           <div className="overflow-auto border border-line rounded-drawer bg-white">
@@ -387,7 +457,7 @@ export function MasterDataPage() {
                     <td className="px-4 py-3">
                       {admin && (
                         <button className="text-sm text-green hover:underline font-bold"
-                          onClick={() => navigate(`/master/user/${u.id}/edit`)}>
+                          onClick={() => openForm(`/master/user/${u.id}/edit`)}>
                           Edit
                         </button>
                       )}

@@ -28,6 +28,25 @@ export interface PdoGroupedResponse {
   grand_total: number
 }
 
+export interface BulkExternalCostPullResult {
+  total: number
+  succeeded_count: number
+  failed_count: number
+  succeeded: Array<{
+    detail_id: string
+    expense_item_id: string
+    description: string
+    amount: number
+  }>
+  failed: Array<{
+    detail_id: string
+    expense_item_id: string
+    description: string
+    message: string
+  }>
+  grand_total: number
+}
+
 // ─── List ────────────────────────────────────────────────────────────────────
 
 export function usePdoList(params?: Record<string, string | number | undefined>) {
@@ -154,6 +173,22 @@ export function usePullExternalCost(pdoId: string) {
         detail: res.data.data,
         grandTotal: res.data.grand_total,
       }
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['pdo', pdoId] })
+      qc.invalidateQueries({ queryKey: ['pdo', pdoId, 'details'] })
+    },
+  })
+}
+
+export function useBulkPullExternalCost(pdoId: string) {
+  const qc = useQueryClient()
+
+  return useMutation({
+    mutationFn: async () => {
+      const res = await api.post<ApiResponse<BulkExternalCostPullResult>>(`/pdo/${pdoId}/pull-external-costs`)
+
+      return res.data.data
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['pdo', pdoId] })

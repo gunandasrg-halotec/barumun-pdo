@@ -10,6 +10,7 @@ use App\Models\PlantationUnit;
 use App\Models\User;
 use Illuminate\Http\Client\ConnectionException;
 use Illuminate\Http\Client\Response;
+use Illuminate\Http\Exceptions\HttpResponseException;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
@@ -399,6 +400,8 @@ class PdoService
             'external_source_system' => $item->mode_input === ExpenseItem::MODE_AUTO_EXTERNAL ? $item->external_source_system : null,
             'external_component' => $item->mode_input === ExpenseItem::MODE_AUTO_EXTERNAL ? $item->external_component : null,
             'external_component_key' => $item->mode_input === ExpenseItem::MODE_AUTO_EXTERNAL ? $item->external_component_key : null,
+            'external_component_keys' => $item->mode_input === ExpenseItem::MODE_AUTO_EXTERNAL ? $this->resolveCanonicalExternalComponentKeysFromItem($item) : null,
+            'external_block_keys' => $item->mode_input === ExpenseItem::MODE_AUTO_EXTERNAL ? $item->resolveExternalBlockKeysForPlantationUnit($pdo->plantation_unit_id) : null,
             'notes'          => $data['notes'] ?? null,
             'display_order'  => $data['display_order'] ?? $this->nextDisplayOrder($pdo),
         ]);
@@ -503,10 +506,15 @@ class PdoService
             ]);
         }
 
-        $componentKey = ExpenseItem::supportsExternalOption($item->external_component)
-            ? $this->resolveCanonicalExternalComponentKeyFromItem($item)
+        $componentKeys = ExpenseItem::supportsExternalOption($item->external_component)
+            ? ($this->normalizeStringList($detail->external_component_keys) ?? $this->resolveCanonicalExternalComponentKeysFromItem($item))
             : null;
-        $storedComponentKey = $item->external_component_key;
+        $role = ExpenseItem::supportsPayrollRole($item->external_component)
+            ? $this->normalizeExternalComponentKey($item->external_role)
+            : null;
+        $blockKeys = ExpenseItem::supportsMaintenanceBlockSelectors($item->external_component)
+            ? $this->normalizeStringList($detail->external_block_keys)
+            : null;
 
         $payrollPeriod = Carbon::create($pdo->period_year, $pdo->period_month, 1)->subMonth();
 
@@ -515,22 +523,31 @@ class PdoService
             month: $payrollPeriod->month,
             estateExternalId: $pdo->plantationUnit->payroll_estate_external_id,
             component: $item->external_component,
-            componentKey: $componentKey,
-            role: null,
+            componentKeys: $componentKeys,
+            role: $role,
+            blockKeys: $blockKeys,
         );
 
         if ($response->successful()) {
-            return DB::transaction(function () use ($actor, $detail, $item, $pdo, $response, $componentKey, $storedComponentKey) {
+            return DB::transaction(function () use ($actor, $detail, $item, $pdo, $response, $componentKeys, $role, $blockKeys) {
                 $old = $detail->toArray();
                 $payload = array_merge($response->json(), $detail->currentExternalMappingFingerprint());
+                $payload['component_key'] = $componentKeys !== null && count($componentKeys) === 1 ? $componentKeys[0] : null;
+                $payload['role'] = $role;
+                $usesSelectorSets = ($componentKeys !== null && count($componentKeys) > 1)
+                    || ($blockKeys !== null && count($blockKeys) > 0);
 
                 $detail->update([
                     'amount' => (int) data_get($payload, 'amount', 0),
-                    'quantity' => (float) data_get($payload, 'volume', 0),
-                    'unit' => data_get($payload, 'unit'),
+                    'quantity' => $usesSelectorSets ? 1.0 : (float) data_get($payload, 'volume', 0),
+                    'unit' => $usesSelectorSets ? 'lot' : data_get($payload, 'unit'),
                     'external_source_system' => $item->external_source_system,
                     'external_component' => $item->external_component,
-                    'external_component_key' => $componentKey ?? $storedComponentKey,
+                    'external_component_key' => ExpenseItem::supportsExternalOption($item->external_component)
+                        ? ($componentKeys !== null && count($componentKeys) === 1 ? $componentKeys[0] : null)
+                        : $item->external_component_key,
+                    'external_component_keys' => $componentKeys,
+                    'external_block_keys' => $blockKeys,
                     'external_amount_pulled_at' => Carbon::now(),
                     'external_payload' => $payload,
                 ]);
@@ -553,8 +570,8 @@ class PdoService
                     $item,
                     [
                         'amount' => (int) data_get($payload, 'amount', 0),
-                        'quantity' => (float) data_get($payload, 'volume', 0),
-                        'unit' => data_get($payload, 'unit'),
+                        'quantity' => $usesSelectorSets ? 1.0 : (float) data_get($payload, 'volume', 0),
+                        'unit' => $usesSelectorSets ? 'lot' : data_get($payload, 'unit'),
                         'payroll_status' => data_get($payload, 'status'),
                         'http_status' => $response->status(),
                     ]
@@ -592,6 +609,47 @@ class PdoService
         ], 503));
     }
 
+    public function bulkPullExternalCost(PdoHeader $pdo, User $actor): array
+    {
+        $this->assertDraft($pdo);
+
+        $eligibleDetails = $this->eligibleBulkExternalCostDetails($pdo);
+        $succeeded = [];
+        $failed = [];
+
+        foreach ($eligibleDetails as $detail) {
+            try {
+                $updated = $this->pullExternalCost($pdo, $detail, $actor);
+
+                $succeeded[] = [
+                    'detail_id' => $updated->id,
+                    'expense_item_id' => $updated->expense_item_id,
+                    'description' => $updated->description,
+                    'amount' => $updated->amount,
+                ];
+            } catch (ValidationException $exception) {
+                $failed[] = $this->formatBulkExternalPullFailure(
+                    $detail,
+                    $this->validationExceptionMessage($exception)
+                );
+            } catch (HttpResponseException $exception) {
+                $failed[] = $this->formatBulkExternalPullFailure(
+                    $detail,
+                    $this->httpResponseExceptionMessage($exception)
+                );
+            }
+        }
+
+        return [
+            'total' => $eligibleDetails->count(),
+            'succeeded_count' => count($succeeded),
+            'failed_count' => count($failed),
+            'succeeded' => $succeeded,
+            'failed' => $failed,
+            'grand_total' => $pdo->fresh()->grand_total_amount,
+        ];
+    }
+
     // ─────────────────────────────────────────────────────
     // PRIVATE HELPERS
     // ─────────────────────────────────────────────────────
@@ -610,8 +668,13 @@ class PdoService
             ->whereNull('deleted_at')
             ->where(function ($q) use ($unitId) {
                 // NULL = berlaku untuk semua kebun; atau unit ada di dalam array
-                $q->whereNull('routine_plantation_unit_ids')
-                  ->orWhereRaw("routine_plantation_unit_ids @> ARRAY[?]::uuid[]", [$unitId]);
+                $q->whereNull('routine_plantation_unit_ids');
+
+                if (DB::getDriverName() === 'sqlite') {
+                    $q->orWhereJsonContains('routine_plantation_unit_ids', $unitId);
+                } else {
+                    $q->orWhereRaw("routine_plantation_unit_ids @> ARRAY[?]::uuid[]", [$unitId]);
+                }
             })
             ->orderBy('code')
             ->get();
@@ -628,6 +691,8 @@ class PdoService
                 'external_source_system' => $item->mode_input === ExpenseItem::MODE_AUTO_EXTERNAL ? $item->external_source_system : null,
                 'external_component' => $item->mode_input === ExpenseItem::MODE_AUTO_EXTERNAL ? $item->external_component : null,
                 'external_component_key' => $item->mode_input === ExpenseItem::MODE_AUTO_EXTERNAL ? $item->external_component_key : null,
+                'external_component_keys' => $item->mode_input === ExpenseItem::MODE_AUTO_EXTERNAL ? $this->resolveCanonicalExternalComponentKeysFromItem($item) : null,
+                'external_block_keys' => $item->mode_input === ExpenseItem::MODE_AUTO_EXTERNAL ? $item->resolveExternalBlockKeysForPlantationUnit($pdo->plantation_unit_id) : null,
                 'display_order'  => $order + 1,
             ]);
         }
@@ -649,6 +714,14 @@ class PdoService
         return ($pdo->details()->max('display_order') ?? 0) + 1;
     }
 
+    private function eligibleBulkExternalCostDetails(PdoHeader $pdo)
+    {
+        $details = $pdo->details()->with('expenseItem')->get();
+        $this->hydrateDetailsExternalState($details, $pdo);
+
+        return $details->filter(fn (PdoDetail $detail): bool => $detail->is_auto_external_active && $detail->needs_pull)->values();
+    }
+
     private function assertDetailBelongsToPdo(PdoHeader $pdo, PdoDetail $detail): void
     {
         if ($detail->pdo_header_id !== $pdo->id) {
@@ -656,17 +729,30 @@ class PdoService
         }
     }
 
-    private function resolveCanonicalExternalComponentKeyFromItem(ExpenseItem $item): ?string
+    private function resolveCanonicalExternalComponentKeysFromItem(ExpenseItem $item): ?array
     {
-        if (filled($item->external_component_key)) {
-            return $item->external_component_key;
+        $keys = $this->normalizeStringList($item->external_component_keys);
+
+        if ($keys !== null) {
+            return $keys;
         }
 
-        if (ExpenseItem::supportsPayrollRole($item->external_component) && filled($item->external_role)) {
-            return $item->external_role;
+        if (filled($item->external_component_key)) {
+            return [$item->external_component_key];
         }
 
         return null;
+    }
+
+    private function normalizeExternalComponentKey(mixed $value): ?string
+    {
+        if (! is_string($value)) {
+            return null;
+        }
+
+        $trimmed = trim($value);
+
+        return $trimmed === '' ? null : $trimmed;
     }
 
     private function requestPayrollCost(
@@ -674,8 +760,9 @@ class PdoService
         int $month,
         string $estateExternalId,
         string $component,
-        ?string $componentKey,
+        ?array $componentKeys,
         ?string $role,
+        ?array $blockKeys,
     ): Response {
         $baseUrl = rtrim((string) config('services.payroll_internal_api.base_url', ''), '/');
         $token = (string) config('services.payroll_internal_api.token', '');
@@ -686,8 +773,10 @@ class PdoService
                 'month' => $month,
                 'estate_external_id' => $estateExternalId,
                 'component' => $component,
-                'component_key' => $componentKey,
+                'component_key' => $componentKeys !== null && count($componentKeys) === 1 ? $componentKeys[0] : null,
+                'component_keys' => $componentKeys,
                 'role' => $role,
+                'block_keys' => $blockKeys,
             ]);
 
             abort(response()->json([
@@ -700,7 +789,7 @@ class PdoService
         }
 
         try {
-        return Http::acceptJson()
+            return Http::acceptJson()
                 ->asJson()
                 ->withToken($token)
                 ->timeout(15)
@@ -709,17 +798,20 @@ class PdoService
                     'month' => $month,
                     'estate_external_id' => $estateExternalId,
                     'component' => $component,
-                    'component_key' => $componentKey,
+                    'component_keys' => $componentKeys,
                     'role' => $role,
-                ], static fn (mixed $value): bool => $value !== null && $value !== ''));
+                    'block_keys' => $blockKeys,
+                ], static fn (mixed $value): bool => $value !== null && $value !== '' && $value !== []));
         } catch (ConnectionException) {
             Log::error('PDO external pull connection failed', [
                 'year' => $year,
                 'month' => $month,
                 'estate_external_id' => $estateExternalId,
                 'component' => $component,
-                'component_key' => $componentKey,
+                'component_key' => $componentKeys !== null && count($componentKeys) === 1 ? $componentKeys[0] : null,
+                'component_keys' => $componentKeys,
                 'role' => $role,
+                'block_keys' => $blockKeys,
             ]);
 
             abort(response()->json([
@@ -759,7 +851,10 @@ class PdoService
             'external_source_system' => $item?->external_source_system,
             'external_component' => $item?->external_component,
             'external_component_key' => $item?->external_component_key,
-            'external_role' => ExpenseItem::supportsPayrollRole($item?->external_component) ? $item?->external_role : null,
+            'external_component_key_canonical' => (($keys = $this->resolveCanonicalExternalComponentKeysFromItem($item)) !== null && count($keys) === 1) ? $keys[0] : null,
+            'external_component_keys' => $this->normalizeStringList($item?->external_component_keys),
+            'external_role' => $item?->external_role,
+            'external_block_keys' => $item?->resolveExternalBlockKeysForPlantationUnit($pdo->plantation_unit_id),
         ], $extra);
     }
 
@@ -777,5 +872,69 @@ class PdoService
         $detail->setRelation('pdoHeader', $pdo);
 
         return $detail;
+    }
+
+    private function normalizeStringList(mixed $values): ?array
+    {
+        if (! is_array($values)) {
+            return null;
+        }
+
+        $normalized = [];
+
+        foreach ($values as $value) {
+            if (! is_string($value)) {
+                continue;
+            }
+
+            $trimmed = trim($value);
+
+            if ($trimmed === '' || in_array($trimmed, $normalized, true)) {
+                continue;
+            }
+
+            $normalized[] = $trimmed;
+        }
+
+        return $normalized === [] ? null : $normalized;
+    }
+
+    private function validationExceptionMessage(ValidationException $exception): string
+    {
+        foreach ($exception->errors() as $messages) {
+            if (is_array($messages) && isset($messages[0]) && is_string($messages[0])) {
+                return $messages[0];
+            }
+        }
+
+        return 'Terjadi kesalahan saat Ambil Data.';
+    }
+
+    private function httpResponseExceptionMessage(HttpResponseException $exception): string
+    {
+        $response = $exception->getResponse();
+
+        if (method_exists($response, 'getData')) {
+            $payload = $response->getData(true);
+
+            $message = data_get($payload, 'error.message')
+                ?? data_get($payload, 'message');
+
+            if (is_string($message) && $message !== '') {
+                return $message;
+            }
+        }
+
+        return 'Payroll tidak dapat dihubungi saat ini.';
+    }
+
+    private function formatBulkExternalPullFailure(PdoDetail $detail, string $message): array
+    {
+        return [
+            'detail_id' => $detail->id,
+            'expense_item_id' => $detail->expense_item_id,
+            'description' => $detail->description,
+            'message' => $message,
+        ];
     }
 }

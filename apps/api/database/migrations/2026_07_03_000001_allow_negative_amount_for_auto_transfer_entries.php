@@ -13,12 +13,20 @@ return new class extends Migration
      */
     public function up(): void
     {
+        if (DB::getDriverName() === 'sqlite') {
+            return;
+        }
+
         DB::statement('ALTER TABLE transfer_entries DROP CONSTRAINT IF EXISTS chk_transfer_entries_amount');
         DB::statement('ALTER TABLE transfer_entries ADD CONSTRAINT chk_transfer_entries_amount CHECK (amount <> 0 AND (is_auto_generated OR amount > 0))');
     }
 
     public function down(): void
     {
+        if (DB::getDriverName() === 'sqlite') {
+            return;
+        }
+
         DB::statement('ALTER TABLE transfer_entries DROP CONSTRAINT IF EXISTS chk_transfer_entries_amount');
         // Catatan: rollback akan gagal bila ada entri negatif; hapus dulu entri auto-generated negatif bila perlu.
         DB::statement('ALTER TABLE transfer_entries ADD CONSTRAINT chk_transfer_entries_amount CHECK (amount > 0)');

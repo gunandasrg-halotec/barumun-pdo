@@ -14,6 +14,17 @@ class RecapQueryService
         $categoryId = $filters['category_id'] ?? null;
         $startDate  = $filters['start_date']  ?? null;
         $endDate    = $filters['end_date']    ?? null;
+        $isSqlite   = DB::getDriverName() === 'sqlite';
+
+        $dateFilterSql = $isSqlite
+            ? 'AND (:start_date IS NULL OR re.transaction_date >= :start_date2)
+                AND (:end_date IS NULL OR re.transaction_date <= :end_date2)'
+            : 'AND (CAST(:start_date AS date) IS NULL OR re.transaction_date >= CAST(:start_date2 AS date))
+                AND (CAST(:end_date AS date) IS NULL OR re.transaction_date <= CAST(:end_date2 AS date))';
+
+        $categoryFilterSql = $isSqlite
+            ? 'AND (:category_id IS NULL OR ec.id = :category_id2)'
+            : 'AND (CAST(:category_id AS uuid) IS NULL OR ec.id = CAST(:category_id2 AS uuid))';
 
         // ── Kantong split (PDO-level) ─────────────────────────────────────────
         $kantong = DB::selectOne('
@@ -26,17 +37,16 @@ class RecapQueryService
             WHERE ph.period_year = :year AND ph.period_month = :month AND ph.plantation_unit_id = :unit_id
         ', ['year' => $year, 'month' => $month, 'unit_id' => $unitId]);
 
-        $realisasi = DB::selectOne('
+        $realisasi = DB::selectOne("
             SELECT
-                COALESCE(SUM(CASE WHEN re.funding_source IN (\'kas_kebun\', \'rekening_kebun\') THEN re.amount ELSE 0 END), 0) AS realisasi_kebun,
-                COALESCE(SUM(CASE WHEN re.funding_source = \'rekening_utama\' THEN re.amount ELSE 0 END), 0)                    AS realisasi_pribadi
+                COALESCE(SUM(CASE WHEN re.funding_source IN ('kas_kebun', 'rekening_kebun') THEN re.amount ELSE 0 END), 0) AS realisasi_kebun,
+                COALESCE(SUM(CASE WHEN re.funding_source = 'rekening_utama' THEN re.amount ELSE 0 END), 0)                    AS realisasi_pribadi
             FROM realization_entries re
             JOIN pdo_details pd ON pd.id = re.pdo_detail_id
             JOIN pdo_headers ph ON ph.id = pd.pdo_header_id
             WHERE ph.period_year = :year AND ph.period_month = :month AND ph.plantation_unit_id = :unit_id
-                AND (CAST(:start_date AS date) IS NULL OR re.transaction_date >= CAST(:start_date2 AS date))
-                AND (CAST(:end_date   AS date) IS NULL OR re.transaction_date <= CAST(:end_date2   AS date))
-        ', [
+                {$dateFilterSql}
+        ", [
             'year'       => $year,
             'month'      => $month,
             'unit_id'    => $unitId,
@@ -46,7 +56,7 @@ class RecapQueryService
             'end_date2'   => $endDate,
         ]);
 
-        $rows = DB::select('
+        $rows = DB::select("
             SELECT
                 ec.id            AS category_id,
                 ec.code          AS category_code,
@@ -73,20 +83,19 @@ class RecapQueryService
             JOIN expense_categories ec      ON ec.id = es.category_id
             LEFT JOIN transfer_entries te   ON te.pdo_detail_id = pd.id
             LEFT JOIN realization_entries re ON re.pdo_detail_id = pd.id
-                AND (CAST(:start_date AS date) IS NULL OR re.transaction_date >= CAST(:start_date2 AS date))
-                AND (CAST(:end_date   AS date) IS NULL OR re.transaction_date <= CAST(:end_date2   AS date))
+                {$dateFilterSql}
             WHERE ph.period_year  = :year
               AND ph.period_month = :month
               AND ph.plantation_unit_id = :unit_id
               AND ec.include_in_recap = TRUE
-              AND (CAST(:category_id AS uuid) IS NULL OR ec.id = CAST(:category_id2 AS uuid))
+              {$categoryFilterSql}
             GROUP BY
                 ec.id, ec.code, ec.name, ec.display_order,
                 es.id, es.code, es.name, es.display_order,
                 ei.id, ei.code, ei.name, ei.is_deduction,
                 pd.id, pd.account_number, pd.description, pd.amount
             ORDER BY ec.display_order, es.display_order, ei.id
-        ', [
+        ", [
             'year'        => $year,
             'month'       => $month,
             'unit_id'     => $unitId,

@@ -16,8 +16,9 @@ class PdoDetail extends Model
     private const EXTERNAL_FINGERPRINT_FIELDS = [
         'source_system',
         'component',
-        'component_key',
+        'component_keys',
         'role',
+        'block_keys',
     ];
 
     protected $primaryKey = 'id';
@@ -46,6 +47,8 @@ class PdoDetail extends Model
         'external_source_system',
         'external_component',
         'external_component_key',
+        'external_component_keys',
+        'external_block_keys',
         'external_amount_pulled_at',
         'external_payload',
         'notes',
@@ -60,6 +63,8 @@ class PdoDetail extends Model
             'amount'        => 'integer',
             'external_amount_pulled_at' => 'datetime',
             'external_payload' => 'array',
+            'external_component_keys' => 'array',
+            'external_block_keys' => 'array',
             'display_order' => 'integer',
         ];
     }
@@ -166,10 +171,6 @@ class PdoDetail extends Model
     {
         $item = $this->currentExpenseItem();
 
-        $componentKey = $this->resolveCanonicalExternalComponentKey($item);
-
-        $hasCanonicalComponentKey = filled($componentKey);
-
         if (! $item instanceof ExpenseItem) {
             return [];
         }
@@ -177,25 +178,26 @@ class PdoDetail extends Model
         return [
             'source_system' => $item->external_source_system,
             'component' => $item->external_component,
-            'component_key' => $componentKey,
-            'role' => (! $hasCanonicalComponentKey && ExpenseItem::supportsPayrollRole($item->external_component)
-                ? $item->external_role
-                : null),
+            'component_keys' => $this->resolveCanonicalExternalComponentKeys($item),
+            'role' => ExpenseItem::supportsPayrollRole($item->external_component) ? $this->normalizeExternalComponentKey($item->external_role) : null,
+            'block_keys' => $item->resolveExternalBlockKeysForPlantationUnit($this->currentPdoHeader()?->plantation_unit_id),
         ];
     }
 
-    private function resolveCanonicalExternalComponentKey(?ExpenseItem $item): ?string
+    private function resolveCanonicalExternalComponentKeys(?ExpenseItem $item): ?array
     {
         if (! $item instanceof ExpenseItem) {
             return null;
         }
 
-        if (filled($item->external_component_key)) {
-            return $item->external_component_key;
+        $keys = $this->normalizeStringList($item->external_component_keys);
+
+        if ($keys !== null) {
+            return $keys;
         }
 
-        if (ExpenseItem::supportsPayrollRole($item->external_component) && filled($item->external_role)) {
-            return $item->external_role;
+        if (filled($item->external_component_key)) {
+            return [$item->external_component_key];
         }
 
         return null;
@@ -205,13 +207,16 @@ class PdoDetail extends Model
     {
         $payload = is_array($this->external_payload) ? $this->external_payload : [];
 
-        $fingerprint = [];
-
-        foreach (self::EXTERNAL_FINGERPRINT_FIELDS as $field) {
-            $fingerprint[$field] = $payload[$field] ?? null;
-        }
-
-        return $fingerprint;
+        return [
+            'source_system' => $payload['source_system'] ?? null,
+            'component' => $payload['component'] ?? null,
+            'component_keys' => $this->normalizeStringList(
+                $payload['component_keys']
+                    ?? (filled($payload['component_key'] ?? null) ? [$payload['component_key']] : null)
+            ),
+            'role' => $this->normalizeExternalComponentKey($payload['role'] ?? null),
+            'block_keys' => $this->normalizeStringList($payload['block_keys'] ?? null),
+        ];
     }
 
     public function hasSuccessfulExternalSnapshot(): bool
@@ -229,6 +234,42 @@ class PdoDetail extends Model
         }
 
         return true;
+    }
+
+    private function normalizeStringList(mixed $values): ?array
+    {
+        if (! is_array($values)) {
+            return null;
+        }
+
+        $normalized = [];
+
+        foreach ($values as $value) {
+            if (! is_string($value)) {
+                continue;
+            }
+
+            $trimmed = trim($value);
+
+            if ($trimmed === '' || in_array($trimmed, $normalized, true)) {
+                continue;
+            }
+
+            $normalized[] = $trimmed;
+        }
+
+        return $normalized === [] ? null : $normalized;
+    }
+
+    private function normalizeExternalComponentKey(mixed $value): ?string
+    {
+        if (! is_string($value)) {
+            return null;
+        }
+
+        $trimmed = trim($value);
+
+        return $trimmed === '' ? null : $trimmed;
     }
 
     private function currentExpenseItem(): ?ExpenseItem
