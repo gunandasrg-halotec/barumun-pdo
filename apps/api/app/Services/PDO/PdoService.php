@@ -824,7 +824,13 @@ class PdoService
         }
     }
 
-    private function syncGrandTotal(PdoHeader $pdo): void
+    /**
+     * Sinkronkan grand_total_amount (kolom tersimpan) dengan SUM aktual pdo_details,
+     * memperhitungkan is_deduction. Public karena juga dipanggil dari luar PdoService,
+     * mis. PdoSupplementaryApprovalService setelah merge PDO Tambahan menambah pdo_details
+     * langsung (bypass PdoService) sehingga grand_total_amount butuh re-sync manual.
+     */
+    public function syncGrandTotal(PdoHeader $pdo): void
     {
         $total = $pdo->details()->with('expenseItem')->get()
             ->sum(fn ($d) => ($d->expenseItem?->is_deduction ?? false) ? -$d->amount : $d->amount);

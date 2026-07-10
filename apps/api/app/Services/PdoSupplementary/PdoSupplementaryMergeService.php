@@ -7,10 +7,15 @@ use App\Models\PdoDetail;
 use App\Models\PdoSupplementaryHeader;
 use App\Models\Role;
 use App\Models\User;
+use App\Services\PDO\PdoService;
 use Illuminate\Support\Facades\DB;
 
 class PdoSupplementaryMergeService
 {
+    public function __construct(
+        private readonly PdoService $pdoService = new PdoService()
+    ) {}
+
     /**
      * Merge PDO Tambahan ke PDO Bulanan induk.
      *
@@ -71,6 +76,10 @@ class PdoSupplementaryMergeService
 
             // BR-MERGE-004: tandai sudah merged
             $supp->update(['merged_at' => now()]);
+
+            // Detail baru di-insert langsung (bypass PdoService), jadi grand_total_amount
+            // yang tersimpan di parent harus di-resync manual.
+            $this->pdoService->syncGrandTotal($parentPdo);
 
             AuditLog::record(
                 actor: $actor,

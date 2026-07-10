@@ -177,6 +177,21 @@ class PdoSupplementaryServiceTest extends TestCase
         $this->assertEquals(PdoSupplementaryHeader::STATUS_FINAL_MERGED, $supp->status);
     }
 
+    public function test_direktur_approval_auto_merge_resyncs_parent_grand_total_amount(): void
+    {
+        $parentPdo = $this->makeParentPdo(PdoHeader::STATUS_FINAL);
+        $supp      = $this->makeSupplementaryWithDetail(PdoSupplementaryHeader::STATUS_SUBMITTED, $parentPdo);
+
+        $supp = $this->approvalService->approve($supp, null, $this->asisten);
+        $supp = $this->approvalService->approve($supp, null, $this->manajerKebun);
+        $supp = $this->approvalService->approve($supp, null, $this->manajerKeuangan);
+        $this->approvalService->approve($supp, 'Disetujui', $this->direktur);
+
+        // Direktur approve men-trigger auto-merge (mergeIntoParent) — grand_total_amount
+        // parent harus ikut ter-update, bukan hanya via endpoint merge manual.
+        $this->assertEquals(500000, $parentPdo->fresh()->grand_total_amount);
+    }
+
     public function test_reject_returns_status_to_draft(): void
     {
         $supp    = $this->makeSupplementaryWithDetail(PdoSupplementaryHeader::STATUS_SUBMITTED);
@@ -206,6 +221,18 @@ class PdoSupplementaryServiceTest extends TestCase
 
         // merged_at harus ter-set
         $this->assertNotNull($supp->fresh()->merged_at);
+    }
+
+    public function test_merge_resyncs_parent_grand_total_amount(): void
+    {
+        $parentPdo = $this->makeParentPdo(PdoHeader::STATUS_FINAL);
+        $supp      = $this->makeSupplementaryWithDetail(PdoSupplementaryHeader::STATUS_FINAL_MERGED, $parentPdo);
+
+        $this->mergeService->merge($supp, $this->manajerKeuangan);
+
+        // grand_total_amount tersimpan di parent harus ikut bertambah 500.000 (amount detail
+        // supplementary) setelah merge — bukan tetap 0/stale seperti sebelum fix.
+        $this->assertEquals(500000, $parentPdo->fresh()->grand_total_amount);
     }
 
     public function test_cannot_merge_if_not_final_merged(): void

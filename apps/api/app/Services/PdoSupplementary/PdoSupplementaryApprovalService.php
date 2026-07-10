@@ -9,6 +9,7 @@ use App\Models\PdoSupplementaryHeader;
 use App\Models\Role;
 use App\Models\User;
 use App\Services\Notification\WhatsAppNotificationService;
+use App\Services\PDO\PdoService;
 use Illuminate\Support\Facades\DB;
 
 class PdoSupplementaryApprovalService
@@ -30,7 +31,8 @@ class PdoSupplementaryApprovalService
     ];
 
     public function __construct(
-        private readonly WhatsAppNotificationService $wa = new WhatsAppNotificationService()
+        private readonly WhatsAppNotificationService $wa = new WhatsAppNotificationService(),
+        private readonly PdoService $pdoService = new PdoService()
     ) {}
 
     /** Submit PDO Tambahan: draft/rejected → submitted */
@@ -266,6 +268,11 @@ class PdoSupplementaryApprovalService
         }
 
         $supp->update(['merged_at' => now()]);
+
+        // Detail baru di-insert langsung (bypass PdoService), jadi grand_total_amount
+        // yang tersimpan di parent harus di-resync manual agar Total Pengajuan tidak
+        // lebih kecil dari Total Transfer setelah merge.
+        $this->pdoService->syncGrandTotal($parentPdo);
 
         AuditLog::record(
             actor: $actor,
