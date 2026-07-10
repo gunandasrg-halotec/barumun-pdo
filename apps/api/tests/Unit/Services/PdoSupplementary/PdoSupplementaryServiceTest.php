@@ -177,12 +177,14 @@ class PdoSupplementaryServiceTest extends TestCase
         $this->assertEquals(PdoSupplementaryHeader::STATUS_FINAL_MERGED, $supp->status);
     }
 
-    public function test_reject_returns_status_to_rejected(): void
+    public function test_reject_returns_status_to_draft(): void
     {
         $supp    = $this->makeSupplementaryWithDetail(PdoSupplementaryHeader::STATUS_SUBMITTED);
         $updated = $this->approvalService->reject($supp, 'Anggaran tidak wajar', $this->asisten);
 
-        $this->assertEquals(PdoSupplementaryHeader::STATUS_REJECTED, $updated->status);
+        // Sama seperti PDO Bulanan: reject kembali ke draft (bukan status rejected terpisah)
+        // agar KERANI bisa langsung edit dan resubmit.
+        $this->assertEquals(PdoSupplementaryHeader::STATUS_DRAFT, $updated->status);
     }
 
     // ─────────────────────────────────────────────────────
