@@ -8,6 +8,7 @@ use App\Models\ExpenseItem;
 use App\Models\ExpenseSubcategory;
 use App\Models\PdoDetail;
 use App\Models\PdoHeader;
+use App\Models\PdoSupplementaryHeader;
 use App\Models\PlantationUnit;
 use App\Models\RealizationEntry;
 use App\Models\Role;
@@ -253,6 +254,55 @@ class PdoServiceTest extends TestCase
         $this->assertEquals(700000, (int) $row->total_transferred);
         $this->assertEquals(250000, (int) $row->total_realized);
         $this->assertEquals(450000, (int) $row->balance);
+    }
+
+    // ─────────────────────────────────────────────────────
+    // Pengajuan breakdown — modal drill-down Daftar PDO
+    // ─────────────────────────────────────────────────────
+
+    public function test_pengajuan_breakdown_splits_bulanan_and_merged_tambahan(): void
+    {
+        $pdo = $this->makeDraftPdo();
+
+        // Baris Bulanan asli (tanpa source_pdo_supplementary_id)
+        PdoDetail::factory()->create(['pdo_header_id' => $pdo->id, 'amount' => 280_000_000]);
+
+        $supp = PdoSupplementaryHeader::factory()->create([
+            'parent_pdo_header_id' => $pdo->id,
+            'company_id'           => $this->companyId,
+            'plantation_unit_id'   => $this->unit->id,
+            'created_by'           => $this->kerani->id,
+            'pdo_number'           => 'PDOT-2026-06-XX-0001',
+            'merged_at'            => now(),
+        ]);
+
+        // Baris hasil merge PDO Tambahan
+        PdoDetail::factory()->create([
+            'pdo_header_id'                => $pdo->id,
+            'source_pdo_supplementary_id'  => $supp->id,
+            'amount'                       => 20_943_365,
+        ]);
+
+        $result = $this->service->pengajuanBreakdown($pdo->id);
+
+        $this->assertEquals(300_943_365, $result['total_amount']);
+        $this->assertCount(2, $result['breakdown']);
+        $this->assertEquals('bulanan', $result['breakdown'][0]['type']);
+        $this->assertEquals(280_000_000, $result['breakdown'][0]['amount']);
+        $this->assertEquals('tambahan', $result['breakdown'][1]['type']);
+        $this->assertEquals('PDOT-2026-06-XX-0001', $result['breakdown'][1]['pdo_number']);
+        $this->assertEquals(20_943_365, $result['breakdown'][1]['amount']);
+    }
+
+    public function test_pengajuan_breakdown_total_matches_grand_total_amount(): void
+    {
+        $pdo = $this->makeDraftPdo();
+        PdoDetail::factory()->create(['pdo_header_id' => $pdo->id, 'amount' => 500_000]);
+        $this->service->syncGrandTotal($pdo);
+
+        $result = $this->service->pengajuanBreakdown($pdo->id);
+
+        $this->assertEquals($pdo->fresh()->grand_total_amount, $result['total_amount']);
     }
 
     // ─────────────────────────────────────────────────────

@@ -54,7 +54,7 @@ class TransferEntryService
     {
         // Relasi transferEntries auto-scoped ke committed (global scope).
         $details = $pdo->details()
-            ->with(['expenseItem.subcategory.category', 'transferEntries.recorder'])
+            ->with(['expenseItem.subcategory.category', 'transferEntries.recorder', 'sourceSupplementary'])
             ->get();
 
         // Muat semua draft PDO ini sekaligus, dikelompokkan per pdo_detail_id.
@@ -73,6 +73,7 @@ class TransferEntryService
 
             return [
                 'pdo_detail_id'    => $detail->id,
+                'source_pdo_number' => $detail->sourceSupplementary?->pdo_number,
                 'expense_item'     => $detail->expenseItem
                     ? array_merge(
                         $detail->expenseItem->only(['id', 'code', 'name']),

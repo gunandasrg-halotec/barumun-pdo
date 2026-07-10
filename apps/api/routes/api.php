@@ -61,6 +61,7 @@ Route::prefix('v1')->middleware(['auth:sanctum', 'ensure.unit.access'])->group(f
 
     // ── PDO Bulanan ───────────────────────────────────
     Route::get('pdo/{pdo}/export', [PdoHeaderController::class, 'export']);
+    Route::get('pdo/{pdo}/pengajuan-breakdown', [PdoHeaderController::class, 'pengajuanBreakdown']);
     Route::apiResource('pdo', PdoHeaderController::class);
 
     // PDO Details (baris item)

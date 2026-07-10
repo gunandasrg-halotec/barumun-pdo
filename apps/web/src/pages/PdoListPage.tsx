@@ -31,17 +31,33 @@ interface CategoryInfo {
 }
 
 interface TransferDetailItem {
-  pdo_detail_id: string
-  description:   string
-  expense_item:  { id: string; code: string; name: string } | null
-  category:      CategoryInfo | null
-  subcategory:   CategoryInfo | null
-  entries:       TransferEntry[]
+  pdo_detail_id:      string
+  source_pdo_number:  string | null
+  description:        string
+  expense_item:       { id: string; code: string; name: string } | null
+  category:           CategoryInfo | null
+  subcategory:        CategoryInfo | null
+  entries:            TransferEntry[]
 }
 
 interface TransferDetailResponse {
   pdo_number:      string
   details:         TransferDetailItem[]
+}
+
+// ─── types untuk modal detail pengajuan ────────────────────────────────────
+
+interface PengajuanBreakdownRow {
+  pdo_number: string
+  type:       'bulanan' | 'tambahan'
+  merged_at:  string | null
+  amount:     number
+}
+
+interface PengajuanBreakdownResponse {
+  pdo_number:   string
+  total_amount: number
+  breakdown:    PengajuanBreakdownRow[]
 }
 
 const DEST_LABEL: Record<string, string> = {
@@ -69,6 +85,8 @@ export function PdoListPage() {
   const [closeDate, setCloseDate]         = useState('')
   const [closeNotes, setCloseNotes]       = useState('')
   const [transferDetailPdo, setTransferDetailPdo] = useState<PdoHeader | null>(null)
+  const [pengajuanDetailPdo, setPengajuanDetailPdo] = useState<PdoHeader | null>(null)
+  const [collapsedGroups, setCollapsedGroups] = useState<Record<string, boolean>>({})
 
   const { data: units } = useQuery({
     queryKey: ['plantation-units'],
@@ -107,14 +125,39 @@ export function PdoListPage() {
     enabled: !!transferDetailPdo,
   })
 
+  const { data: pengajuanDetail, isLoading: pengajuanLoading } = useQuery({
+    queryKey: ['pdo-pengajuan-breakdown', pengajuanDetailPdo?.id],
+    queryFn: async () => {
+      const res = await api.get<ApiResponse<PengajuanBreakdownResponse>>(`/pdo/${pengajuanDetailPdo!.id}/pengajuan-breakdown`)
+      return res.data.data
+    },
+    enabled: !!pengajuanDetailPdo,
+  })
+
   const flatEntries = transferDetail?.details.flatMap((d) =>
     d.entries.map((e) => ({
       ...e,
-      item_name:        d.expense_item?.name ?? d.description,
-      category_name:    d.category ? `${d.category.code} — ${d.category.name}` : '—',
-      subcategory_name: d.subcategory ? `${d.subcategory.code} — ${d.subcategory.name}` : '—',
+      item_name:         d.expense_item?.name ?? d.description,
+      category_name:     d.category ? `${d.category.code} — ${d.category.name}` : '—',
+      subcategory_name:  d.subcategory ? `${d.subcategory.code} — ${d.subcategory.name}` : '—',
+      source_pdo_number: d.source_pdo_number,
     }))
   ) ?? []
+
+  // Grup transaksi berdasarkan PDO asal: baris tanpa source_pdo_number berasal
+  // dari PDO Bulanan itu sendiri, sisanya dari PDO Tambahan yang sudah digabung.
+  const transferGroups = Object.values(
+    flatEntries.reduce<Record<string, { pdoNumber: string; type: 'bulanan' | 'tambahan'; entries: typeof flatEntries; total: number }>>((acc, e) => {
+      const isBulanan = !e.source_pdo_number
+      const pdoNumber = e.source_pdo_number ?? transferDetail?.pdo_number ?? ''
+      if (!acc[pdoNumber]) {
+        acc[pdoNumber] = { pdoNumber, type: isBulanan ? 'bulanan' : 'tambahan', entries: [], total: 0 }
+      }
+      acc[pdoNumber].entries.push(e)
+      acc[pdoNumber].total += e.amount
+      return acc
+    }, {})
+  ).sort((a, b) => (a.type === b.type ? 0 : a.type === 'bulanan' ? -1 : 1))
 
   const destTotals = flatEntries.reduce<Record<string, number>>((acc, e) => {
     acc[e.transfer_destination] = (acc[e.transfer_destination] ?? 0) + e.amount
@@ -230,12 +273,19 @@ export function PdoListPage() {
                   <td className="px-4 py-3 font-bold text-ink text-sm">{pdo.pdo_number}</td>
                   <td className="px-4 py-3 text-sm">{pdo.plantation_unit?.code ?? '—'}</td>
                   <td className="px-4 py-3 text-sm">{fmtPeriode(pdo.period_month, pdo.period_year)}</td>
-                  <td className="px-4 py-3 text-sm">{fmt(pdo.total_amount)}</td>
+                  <td className="px-4 py-3 text-sm">
+                    <button
+                      className="font-bold text-green hover:underline"
+                      onClick={() => setPengajuanDetailPdo(pdo)}
+                    >
+                      {fmt(pdo.total_amount)}
+                    </button>
+                  </td>
                   <td className="px-4 py-3 text-sm">
                     {pdo.status === 'final' && (pdo.total_transferred ?? 0) > 0 ? (
                       <button
                         className="font-bold text-green hover:underline"
-                        onClick={() => setTransferDetailPdo(pdo)}
+                        onClick={() => { setTransferDetailPdo(pdo); setCollapsedGroups({}) }}
                       >
                         {fmt(pdo.total_transferred)}
                       </button>
@@ -304,7 +354,7 @@ export function PdoListPage() {
         open={!!transferDetailPdo}
         onClose={() => setTransferDetailPdo(null)}
         title={`Riwayat Transfer — ${transferDetailPdo?.pdo_number}`}
-        width="w-[820px]"
+        width="w-[1180px]"
       >
         {transferLoading ? (
           <div className="flex justify-center py-8 text-muted text-sm">Memuat data...</div>
@@ -320,41 +370,125 @@ export function PdoListPage() {
               ))}
             </div>
 
-            {/* Tabel riwayat flat */}
-            <div className="overflow-auto border border-line rounded-card">
-              <table className="w-full border-collapse text-sm">
-                <thead>
-                  <tr>
-                    {['Tanggal', 'Kategori', 'Sub-Kategori', 'Item', 'Tujuan Transfer', 'Jumlah'].map((h) => (
-                      <th key={h} className="px-3 py-2 text-left text-[11px] font-bold uppercase tracking-wider text-muted bg-[#f7faf7]">
-                        {h}
-                      </th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {flatEntries.length === 0 ? (
-                    <tr><td colSpan={6} className="px-3 py-6 text-center text-muted">Belum ada data transfer</td></tr>
-                  ) : (
-                    flatEntries
-                      .sort((a, b) => a.transfer_date.localeCompare(b.transfer_date))
-                      .map((e) => (
-                        <tr key={e.id} className="border-t border-line hover:bg-[#fbfdfb]">
-                          <td className="px-3 py-2 whitespace-nowrap">{fmtDate(e.transfer_date)}</td>
-                          <td className="px-3 py-2 whitespace-nowrap">{e.category_name}</td>
-                          <td className="px-3 py-2 whitespace-nowrap">{e.subcategory_name}</td>
-                          <td className="px-3 py-2">{e.item_name}</td>
-                          <td className="px-3 py-2 whitespace-nowrap">{DEST_LABEL[e.transfer_destination] ?? e.transfer_destination}</td>
-                          <td className="px-3 py-2 text-right font-bold whitespace-nowrap">{fmt(e.amount)}</td>
-                        </tr>
-                      ))
-                  )}
-                </tbody>
-              </table>
-            </div>
+            {/* Riwayat dikelompokkan per PDO asal (Bulanan / Tambahan), collapsible */}
+            {flatEntries.length === 0 ? (
+              <div className="border border-line rounded-card px-3 py-6 text-center text-muted text-sm">Belum ada data transfer</div>
+            ) : (
+              <div className="flex flex-col gap-2">
+                {transferGroups.map((group) => {
+                  const isCollapsed = collapsedGroups[group.pdoNumber] ?? false
+                  return (
+                    <div key={group.pdoNumber} className="border border-line rounded-card overflow-hidden">
+                      <button
+                        className="w-full flex items-center justify-between px-3 py-2.5 bg-[#f7faf7] hover:bg-[#f0f4f0]"
+                        onClick={() => setCollapsedGroups((prev) => ({ ...prev, [group.pdoNumber]: !isCollapsed }))}
+                      >
+                        <div className="flex items-center gap-2">
+                          <span className="text-muted text-xs">{isCollapsed ? '▸' : '▾'}</span>
+                          <span className="text-sm font-bold text-ink">{group.pdoNumber}</span>
+                          <span className={`badge ${group.type === 'bulanan' ? 'badge-draft' : 'badge-approved'}`}>
+                            {group.type === 'bulanan' ? 'Bulanan' : 'Tambahan'}
+                          </span>
+                        </div>
+                        <span className="text-sm font-[850] text-ink">{fmt(group.total)}</span>
+                      </button>
+                      {!isCollapsed && (
+                        <div className="overflow-x-auto">
+                          <table className="w-full border-collapse text-sm" style={{ minWidth: 900 }}>
+                            <thead>
+                              <tr>
+                                {['Tanggal', 'Kategori', 'Sub-Kategori', 'Item', 'Tujuan Transfer', 'Jumlah'].map((h) => (
+                                  <th key={h} className="px-3 py-2 text-left text-[11px] font-bold uppercase tracking-wider text-muted">
+                                    {h}
+                                  </th>
+                                ))}
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {group.entries
+                                .sort((a, b) => a.transfer_date.localeCompare(b.transfer_date))
+                                .map((e) => (
+                                  <tr key={e.id} className="border-t border-line hover:bg-[#fbfdfb]">
+                                    <td className="px-3 py-2 whitespace-nowrap">{fmtDate(e.transfer_date)}</td>
+                                    <td className="px-3 py-2 whitespace-nowrap">{e.category_name}</td>
+                                    <td className="px-3 py-2 whitespace-nowrap">{e.subcategory_name}</td>
+                                    <td className="px-3 py-2">{e.item_name}</td>
+                                    <td className="px-3 py-2 whitespace-nowrap">{DEST_LABEL[e.transfer_destination] ?? e.transfer_destination}</td>
+                                    <td className="px-3 py-2 text-right font-bold whitespace-nowrap">{fmt(e.amount)}</td>
+                                  </tr>
+                                ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      )}
+                    </div>
+                  )
+                })}
+              </div>
+            )}
 
             <div className="flex justify-end">
               <Button variant="secondary" onClick={() => setTransferDetailPdo(null)}>Tutup</Button>
+            </div>
+          </div>
+        )}
+      </Modal>
+
+      {/* Modal Detail Total Pengajuan */}
+      <Modal
+        open={!!pengajuanDetailPdo}
+        onClose={() => setPengajuanDetailPdo(null)}
+        title={`Detail Total Pengajuan — ${pengajuanDetailPdo?.pdo_number}`}
+        width="w-[620px]"
+      >
+        {pengajuanLoading ? (
+          <div className="flex justify-center py-8 text-muted text-sm">Memuat data...</div>
+        ) : (
+          <div className="flex flex-col gap-5">
+            {/* Summary Bulanan vs Tambahan */}
+            <div className="grid grid-cols-2 gap-3">
+              <div className="border border-line rounded-card p-3 bg-[#f7faf7]">
+                <p className="text-[11px] font-bold uppercase tracking-wider text-muted mb-1">Bulanan</p>
+                <p className="text-base font-[850] text-ink">
+                  {fmt(pengajuanDetail?.breakdown.filter((r) => r.type === 'bulanan').reduce((s, r) => s + r.amount, 0) ?? 0)}
+                </p>
+              </div>
+              <div className="border border-line rounded-card p-3 bg-[#f7faf7]">
+                <p className="text-[11px] font-bold uppercase tracking-wider text-muted mb-1">Tambahan</p>
+                <p className="text-base font-[850] text-ink">
+                  {fmt(pengajuanDetail?.breakdown.filter((r) => r.type === 'tambahan').reduce((s, r) => s + r.amount, 0) ?? 0)}
+                </p>
+              </div>
+            </div>
+
+            {/* Kartu per PDO */}
+            <div className="flex flex-col gap-2">
+              {pengajuanDetail?.breakdown.map((row) => (
+                <div key={row.pdo_number} className="flex items-center justify-between px-3 py-2.5 border border-line rounded-card bg-[#fbfdfb]">
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <span className="text-sm font-bold text-ink">{row.pdo_number}</span>
+                      <span className={`badge ${row.type === 'bulanan' ? 'badge-draft' : 'badge-approved'}`}>
+                        {row.type === 'bulanan' ? 'Bulanan' : 'Tambahan'}
+                      </span>
+                    </div>
+                    {row.merged_at && (
+                      <p className="text-xs text-muted mt-0.5">Ditambahkan {fmtDate(row.merged_at)}</p>
+                    )}
+                  </div>
+                  <span className="text-sm font-[850] text-ink">{fmt(row.amount)}</span>
+                </div>
+              ))}
+            </div>
+
+            {/* Total */}
+            <div className="flex items-center justify-between px-3 py-2.5 bg-[#f7faf7] rounded-card">
+              <span className="text-sm font-[850] text-ink">Total Pengajuan</span>
+              <span className="text-sm font-[850] text-ink">{fmt(pengajuanDetail?.total_amount ?? 0)}</span>
+            </div>
+
+            <div className="flex justify-end">
+              <Button variant="secondary" onClick={() => setPengajuanDetailPdo(null)}>Tutup</Button>
             </div>
           </div>
         )}

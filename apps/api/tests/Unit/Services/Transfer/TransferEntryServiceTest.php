@@ -5,6 +5,7 @@ namespace Tests\Unit\Services\Transfer;
 use App\Models\Company;
 use App\Models\PdoDetail;
 use App\Models\PdoHeader;
+use App\Models\PdoSupplementaryHeader;
 use App\Models\PlantationUnit;
 use App\Models\Role;
 use App\Models\TransferEntry;
@@ -163,6 +164,44 @@ class TransferEntryServiceTest extends TestCase
             'action'      => 'INSERT',
             'actor_user_id'    => $this->manajerKeuangan->id,
         ]);
+    }
+
+    // ─────────────────────────────────────────────────────
+    // summaryByPdo — sumber PDO per baris (Bulanan vs Tambahan)
+    // ─────────────────────────────────────────────────────
+
+    public function test_summary_by_pdo_marks_source_pdo_number_for_merged_tambahan_rows(): void
+    {
+        $pdo = PdoHeader::factory()->create([
+            'company_id'         => $this->companyId,
+            'plantation_unit_id' => $this->unit->id,
+            'created_by'         => $this->manajerKeuangan->id,
+            'status'             => PdoHeader::STATUS_FINAL,
+        ]);
+
+        $bulananDetail = PdoDetail::factory()->create(['pdo_header_id' => $pdo->id, 'amount' => 1_000_000]);
+
+        $supp = PdoSupplementaryHeader::factory()->create([
+            'parent_pdo_header_id' => $pdo->id,
+            'company_id'           => $this->companyId,
+            'plantation_unit_id'   => $this->unit->id,
+            'created_by'           => $this->manajerKeuangan->id,
+            'pdo_number'           => 'PDOT-2026-06-XX-0001',
+            'merged_at'            => now(),
+        ]);
+        $tambahanDetail = PdoDetail::factory()->create([
+            'pdo_header_id'               => $pdo->id,
+            'source_pdo_supplementary_id' => $supp->id,
+            'amount'                      => 500_000,
+        ]);
+
+        $summary = $this->service->summaryByPdo($pdo);
+
+        $bulananRow  = $summary->firstWhere('pdo_detail_id', $bulananDetail->id);
+        $tambahanRow = $summary->firstWhere('pdo_detail_id', $tambahanDetail->id);
+
+        $this->assertNull($bulananRow['source_pdo_number']);
+        $this->assertEquals('PDOT-2026-06-XX-0001', $tambahanRow['source_pdo_number']);
     }
 
     // ─────────────────────────────────────────────────────

@@ -49,6 +49,11 @@ class PdoHeaderController extends Controller
         return response()->json(['success' => true, 'data' => $data]);
     }
 
+    public function pengajuanBreakdown(string $id): JsonResponse
+    {
+        return response()->json(['success' => true, 'data' => $this->service->pengajuanBreakdown($id)]);
+    }
+
     public function update(UpdatePdoRequest $request, string $id): JsonResponse
     {
         $pdo     = $this->service->findPdo($id);

@@ -167,6 +167,55 @@ class PdoService
     }
 
     /**
+     * Rincian Total Pengajuan per PDO asal (Bulanan sendiri + tiap PDO Tambahan
+     * yang sudah digabung), untuk modal drill-down di Daftar PDO. Total seluruh
+     * baris harus selalu sama dengan grand_total_amount yang tampil di list.
+     */
+    public function pengajuanBreakdown(string $id): array
+    {
+        $pdo = PdoHeader::with(['details.expenseItem', 'details.sourceSupplementary'])->findOrFail($id);
+
+        $signedAmount = fn ($d) => ($d->expenseItem?->is_deduction ?? false) ? -$d->amount : $d->amount;
+
+        $bulananTotal = $pdo->details
+            ->filter(fn ($d) => $d->source_pdo_supplementary_id === null)
+            ->sum($signedAmount);
+
+        $breakdown = [[
+            'pdo_number' => $pdo->pdo_number,
+            'type'       => 'bulanan',
+            'merged_at'  => null,
+            'amount'     => $bulananTotal,
+        ]];
+
+        $suppGroups = [];
+        foreach ($pdo->details->filter(fn ($d) => $d->source_pdo_supplementary_id !== null) as $detail) {
+            $suppId = $detail->source_pdo_supplementary_id;
+            if (! isset($suppGroups[$suppId])) {
+                $supp = $detail->sourceSupplementary;
+                $suppGroups[$suppId] = [
+                    'pdo_number' => $supp?->pdo_number ?? $suppId,
+                    'type'       => 'tambahan',
+                    'merged_at'  => $supp?->merged_at,
+                    'amount'     => 0,
+                ];
+            }
+            $suppGroups[$suppId]['amount'] += $signedAmount($detail);
+        }
+
+        $breakdown = array_merge(
+            $breakdown,
+            collect($suppGroups)->sortBy('merged_at')->values()->all()
+        );
+
+        return [
+            'pdo_number'   => $pdo->pdo_number,
+            'total_amount' => (int) array_sum(array_column($breakdown, 'amount')),
+            'breakdown'    => $breakdown,
+        ];
+    }
+
+    /**
      * Buat PDO Bulanan baru + otomatis isi baris dari item rutin.
      * BR-PDO-001: Satu PDO per unit per bulan/tahun.
      * BR-PDO-002: Template otomatis dari expense_items is_routine=true.
