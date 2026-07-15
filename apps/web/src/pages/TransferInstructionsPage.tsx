@@ -27,11 +27,10 @@ export function TransferInstructionsPage() {
   const qc     = useQueryClient()
   const canToggle = !!role && canMarkTransferExecuted(role)
 
-  const [search,         setSearch]         = useState('')
-  const [startDate,      setStartDate]      = useState('')
-  const [endDate,        setEndDate]        = useState('')
-  const [showTransferred, setShowTransferred] = useState(false)
-  const [collapsed,      setCollapsed]      = useState<Record<string, boolean>>({})
+  const [search,    setSearch]    = useState('')
+  const [startDate, setStartDate] = useState('')
+  const [endDate,   setEndDate]   = useState('')
+  const [collapsed, setCollapsed] = useState<Record<string, boolean>>({})
 
   const { data: entries, isLoading } = useQuery({
     queryKey: ['transfer-instructions'],
@@ -44,6 +43,7 @@ export function TransferInstructionsPage() {
   const filtered = useMemo(() => {
     if (!entries) return []
     const q = search.trim().toLowerCase()
+    const hasFilter = !!q || !!startDate || !!endDate
     return entries.filter((t) => {
       const code = t.pdo_detail?.expense_item?.code ?? ''
       const name = t.pdo_detail?.expense_item?.name ?? ''
@@ -53,10 +53,10 @@ export function TransferInstructionsPage() {
       const matchDate =
         (!startDate || t.transfer_date >= startDate) &&
         (!endDate   || t.transfer_date <= endDate)
-      const matchTransferred = showTransferred || !t.is_transferred
+      const matchTransferred = hasFilter || !t.is_transferred
       return matchSearch && matchDate && matchTransferred
     })
-  }, [entries, search, startDate, endDate, showTransferred])
+  }, [entries, search, startDate, endDate])
 
   const groups = useMemo<PdoGroup[]>(() => {
     const pdoMap = new Map<string, { pdoNumber: string; entries: TransferEntry[] }>()
@@ -128,15 +128,6 @@ export function TransferInstructionsPage() {
             />
           </div>
         </div>
-        <label className="flex items-center gap-2 cursor-pointer select-none pb-[1px]">
-          <input
-            type="checkbox"
-            checked={showTransferred}
-            onChange={(e) => setShowTransferred(e.target.checked)}
-            className="w-4 h-4 accent-green"
-          />
-          <span className="text-sm text-muted">Tampilkan sudah ditransfer</span>
-        </label>
       </div>
 
       {/* Content */}
