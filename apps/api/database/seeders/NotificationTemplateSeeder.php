@@ -26,12 +26,12 @@ class NotificationTemplateSeeder extends Seeder
             [
                 'event_type'    => 'pdo_approved_asisten',
                 'channel'       => 'whatsapp',
-                'template_body' => "Halo {{nama_user}},\n\nPDO *{{nomor_pdo}}* telah disetujui Asisten Kebun dan kini menunggu persetujuan Anda (Manajer).\n\nSilakan buka sistem PDO untuk melakukan review.",
+                'template_body' => "Halo {{nama_user}},\n\nPDO *{{nomor_pdo}}* telah disetujui Asisten Kebun dan kini menunggu persetujuan Anda (Manajer).{{catatan_approval}}\n\nSilakan buka sistem PDO untuk melakukan review.",
             ],
             [
                 'event_type'    => 'pdo_approved_manager',
                 'channel'       => 'whatsapp',
-                'template_body' => "Halo {{nama_user}},\n\nPDO *{{nomor_pdo}}* periode *{{periode}}* telah disetujui kedua Manajer dan menunggu persetujuan akhir Anda.\n\nSilakan buka sistem PDO untuk approval final.",
+                'template_body' => "Halo {{nama_user}},\n\nPDO *{{nomor_pdo}}* periode *{{periode}}* telah disetujui kedua Manajer dan menunggu persetujuan akhir Anda.{{catatan_approval}}\n\nSilakan buka sistem PDO untuk approval final.",
             ],
             [
                 'event_type'    => 'pdo_rejected',
@@ -41,7 +41,7 @@ class NotificationTemplateSeeder extends Seeder
             [
                 'event_type'    => 'pdo_final',
                 'channel'       => 'whatsapp',
-                'template_body' => "Halo {{nama_user}},\n\nPDO *{{nomor_pdo}}* periode *{{periode}}* telah *disetujui* oleh Direktur Keuangan dan kini berstatus *Final*.\n\nAnda sudah dapat mulai mencatat realisasi dana operasional.",
+                'template_body' => "Halo {{nama_user}},\n\nPDO *{{nomor_pdo}}* periode *{{periode}}* telah *disetujui* oleh Direktur Keuangan dan kini berstatus *Final*.{{catatan_approval}}\n\nAnda sudah dapat mulai mencatat realisasi dana operasional.",
             ],
 
             // ── SLA Reminder ───────────────────────────────────────────────

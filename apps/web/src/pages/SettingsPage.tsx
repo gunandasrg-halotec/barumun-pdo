@@ -251,7 +251,7 @@ export function SettingsPage() {
                 onChange={(e) => setTemplateBodies((b) => ({ ...b, [tmpl.id]: e.target.value }))}
               />
               <p className="text-[11px] text-muted mt-1">
-                Variabel: {'{{nama_user}}'} {'{{nomor_pdo}}'} {'{{periode}}'} {'{{unit_kebun}}'} {'{{alasan_reject}}'}
+                Variabel: {'{{nama_user}}'} {'{{nomor_pdo}}'} {'{{periode}}'} {'{{unit_kebun}}'} {'{{alasan_reject}}'} {'{{catatan_approval}}'}
               </p>
               <div className="mt-2">
                 <Button

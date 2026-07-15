@@ -109,8 +109,8 @@ class PdoSupplementaryApprovalService
         }
 
         match ($nextStatus) {
-            PdoSupplementaryHeader::STATUS_REVIEWED_ASISTEN => $this->wa->notifySupplementaryApprovedByAsisten($fresh),
-            PdoSupplementaryHeader::STATUS_FINAL_MERGED     => $this->wa->notifySupplementaryFinal($fresh),
+            PdoSupplementaryHeader::STATUS_REVIEWED_ASISTEN => $this->wa->notifySupplementaryApprovedByAsisten($fresh, $reason),
+            PdoSupplementaryHeader::STATUS_FINAL_MERGED     => $this->wa->notifySupplementaryFinal($fresh, $reason),
             default                                          => null,
         };
 
@@ -156,7 +156,7 @@ class PdoSupplementaryApprovalService
 
         if ($supp->manager_kebun_approved === true && $supp->manager_keuangan_approved === true) {
             $supp->update(['status' => PdoSupplementaryHeader::STATUS_IN_REVIEW_DIREKTUR]);
-            $this->wa->notifySupplementaryApprovedByManager($supp->fresh()->load(['creator', 'plantationUnit']));
+            $this->wa->notifySupplementaryApprovedByManager($supp->fresh()->load(['creator', 'plantationUnit']), $reason);
         }
 
         return $supp->fresh()->load(['creator', 'plantationUnit']);

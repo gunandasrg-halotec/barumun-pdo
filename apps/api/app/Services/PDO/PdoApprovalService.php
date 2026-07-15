@@ -223,9 +223,9 @@ class PdoApprovalService
         $fresh = $pdo->fresh()->load(['creator', 'plantationUnit']);
         if ($nextStatus === PdoHeader::STATUS_FINAL) {
             $this->generateSystemTransfers($fresh, $actor);
-            $this->wa->notifyFinal($fresh);
+            $this->wa->notifyFinal($fresh, $reason);
         } elseif ($nextStatus === PdoHeader::STATUS_REVIEWED_ASISTEN) {
-            $this->wa->notifyApprovedByAsisten($fresh);
+            $this->wa->notifyApprovedByAsisten($fresh, $reason);
         }
 
         return $pdo->fresh();
@@ -281,7 +281,7 @@ class PdoApprovalService
         // Cek apakah keduanya sudah approve
         if ($pdo->manager_kebun_approved === true && $pdo->manager_keuangan_approved === true) {
             $pdo->update(['status' => PdoHeader::STATUS_IN_REVIEW_DIREKTUR]);
-            $this->wa->notifyApprovedByManager($pdo->fresh()->load(['creator', 'plantationUnit']));
+            $this->wa->notifyApprovedByManager($pdo->fresh()->load(['creator', 'plantationUnit']), $reason);
         }
 
         return $pdo->fresh();

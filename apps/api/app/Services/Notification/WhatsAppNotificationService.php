@@ -41,7 +41,7 @@ class WhatsAppNotificationService
     }
 
     /** Asisten approve → Kerani (creator) + Manajer Kebun + Manajer Keuangan */
-    public function notifyApprovedByAsisten(PdoHeader $pdo): void
+    public function notifyApprovedByAsisten(PdoHeader $pdo, ?string $comment = null): void
     {
         $recipients = $this->creator($pdo)
             ->merge($this->byRole($pdo, Role::MANAJER_KEBUN))
@@ -51,7 +51,7 @@ class WhatsAppNotificationService
             $pdo->company_id,
             NotificationTemplate::EVENT_PDO_APPROVED_ASISTEN,
             $recipients,
-            $this->baseVars($pdo)
+            array_merge($this->baseVars($pdo), ['catatan_approval' => $this->formatApprovalComment($comment)])
         );
     }
 
@@ -72,7 +72,7 @@ class WhatsAppNotificationService
      * Kedua Manajer approve (status → in_review_direktur)
      * → Kerani (creator) + Asisten Kebun (unit kebun sama) + Direktur Keuangan
      */
-    public function notifyApprovedByManager(PdoHeader $pdo): void
+    public function notifyApprovedByManager(PdoHeader $pdo, ?string $comment = null): void
     {
         $recipients = $this->creator($pdo)
             ->merge($this->asistenByUnit($pdo))
@@ -82,7 +82,7 @@ class WhatsAppNotificationService
             $pdo->company_id,
             NotificationTemplate::EVENT_PDO_APPROVED_MANAGER,
             $recipients,
-            $this->baseVars($pdo)
+            array_merge($this->baseVars($pdo), ['catatan_approval' => $this->formatApprovalComment($comment)])
         );
     }
 
@@ -103,7 +103,7 @@ class WhatsAppNotificationService
     }
 
     /** Direktur approve (→ Final) → Manajer Keuangan + Manajer Kebun + Asisten Kebun (unit sama) + Kerani (creator) */
-    public function notifyFinal(PdoHeader $pdo): void
+    public function notifyFinal(PdoHeader $pdo, ?string $comment = null): void
     {
         $recipients = $this->byRole($pdo, Role::MANAJER_KEUANGAN)
             ->merge($this->byRole($pdo, Role::MANAJER_KEBUN))
@@ -114,7 +114,7 @@ class WhatsAppNotificationService
             $pdo->company_id,
             NotificationTemplate::EVENT_PDO_FINAL,
             $recipients,
-            $this->baseVars($pdo)
+            array_merge($this->baseVars($pdo), ['catatan_approval' => $this->formatApprovalComment($comment)])
         );
     }
 
@@ -205,29 +205,39 @@ class WhatsAppNotificationService
     }
 
     /** Asisten approve PDO Tambahan → Kerani + Manajer Kebun + Manajer Keuangan */
-    public function notifySupplementaryApprovedByAsisten(PdoSupplementaryHeader $supp): void
+    public function notifySupplementaryApprovedByAsisten(PdoSupplementaryHeader $supp, ?string $comment = null): void
     {
         $supp->loadMissing(['creator', 'plantationUnit']);
         $recipients = $this->suppCreator($supp)
             ->merge($this->suppByRole($supp, Role::MANAJER_KEBUN))
             ->merge($this->suppByRole($supp, Role::MANAJER_KEUANGAN));
 
-        $this->send($supp->company_id, NotificationTemplate::EVENT_PDO_APPROVED_ASISTEN, $recipients, $this->suppBaseVars($supp));
+        $this->send(
+            $supp->company_id,
+            NotificationTemplate::EVENT_PDO_APPROVED_ASISTEN,
+            $recipients,
+            array_merge($this->suppBaseVars($supp), ['catatan_approval' => $this->formatApprovalComment($comment)])
+        );
     }
 
     /** Kedua Manajer approve PDO Tambahan (paralel, status → in_review_direktur) → Direktur + Asisten + Kerani */
-    public function notifySupplementaryApprovedByManager(PdoSupplementaryHeader $supp): void
+    public function notifySupplementaryApprovedByManager(PdoSupplementaryHeader $supp, ?string $comment = null): void
     {
         $supp->loadMissing(['creator', 'plantationUnit']);
         $recipients = $this->suppByRole($supp, Role::DIREKTUR_KEUANGAN)
             ->merge($this->suppAsistenByUnit($supp))
             ->merge($this->suppCreator($supp));
 
-        $this->send($supp->company_id, NotificationTemplate::EVENT_PDO_APPROVED_MANAGER, $recipients, $this->suppBaseVars($supp));
+        $this->send(
+            $supp->company_id,
+            NotificationTemplate::EVENT_PDO_APPROVED_MANAGER,
+            $recipients,
+            array_merge($this->suppBaseVars($supp), ['catatan_approval' => $this->formatApprovalComment($comment)])
+        );
     }
 
     /** Direktur approve PDO Tambahan (final_merged) → Manajer Kebun + Manajer Keuangan + Asisten + Kerani */
-    public function notifySupplementaryFinal(PdoSupplementaryHeader $supp): void
+    public function notifySupplementaryFinal(PdoSupplementaryHeader $supp, ?string $comment = null): void
     {
         $supp->loadMissing(['creator', 'plantationUnit']);
         $recipients = $this->suppByRole($supp, Role::MANAJER_KEBUN)
@@ -235,7 +245,12 @@ class WhatsAppNotificationService
             ->merge($this->suppAsistenByUnit($supp))
             ->merge($this->suppCreator($supp));
 
-        $this->send($supp->company_id, NotificationTemplate::EVENT_PDO_FINAL, $recipients, $this->suppBaseVars($supp));
+        $this->send(
+            $supp->company_id,
+            NotificationTemplate::EVENT_PDO_FINAL,
+            $recipients,
+            array_merge($this->suppBaseVars($supp), ['catatan_approval' => $this->formatApprovalComment($comment)])
+        );
     }
 
     /** Asisten reject PDO Tambahan → Kerani (creator) */
@@ -383,6 +398,13 @@ class WhatsAppNotificationService
             'periode'    => $this->formatPeriod($pdo),
             'unit_kebun' => $pdo->plantationUnit?->name ?? '',
         ];
+    }
+
+    /** Bangun blok catatan approval — string kosong jika tidak ada komentar, agar tidak menyisakan baris kosong di pesan. */
+    private function formatApprovalComment(?string $comment): string
+    {
+        $trimmed = trim((string) $comment);
+        return $trimmed === '' ? '' : "\n\n*Catatan:*\n{$trimmed}";
     }
 
     // ─────────────────────────────────────────────────────
