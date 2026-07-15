@@ -16,6 +16,9 @@ return new class extends Migration
                 $table->foreignUuid('transferred_by')->nullable()->constrained('users');
             });
 
+            // Backfill: semua entry committed yang sudah ada sebelum fitur ini dianggap sudah ditransfer.
+            DB::statement("UPDATE transfer_entries SET is_transferred = 1, transferred_at = datetime('now') WHERE status = 'committed'");
+
             return;
         }
 
@@ -25,6 +28,9 @@ return new class extends Migration
 
         // Index agar filter is_transferred cepat pada halaman Daftar Perintah Transfer.
         DB::statement('CREATE INDEX IF NOT EXISTS transfer_entries_is_transferred_idx ON transfer_entries (is_transferred)');
+
+        // Backfill: semua entry committed yang sudah ada sebelum fitur ini dianggap sudah ditransfer.
+        DB::statement("UPDATE transfer_entries SET is_transferred = true, transferred_at = NOW() WHERE status = 'committed'");
     }
 
     public function down(): void
