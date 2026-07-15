@@ -16,6 +16,7 @@ import { PdoDetailPage }                from '@/pages/PdoDetailPage'
 import { ApprovalTimelinePage }         from '@/pages/ApprovalTimelinePage'
 import { TransferPage }                 from '@/pages/TransferPage'
 import { TransferBulkPage }             from '@/pages/TransferBulkPage'
+import { TransferInstructionsPage }     from '@/pages/TransferInstructionsPage'
 import { RealizationPage }              from '@/pages/RealizationPage'
 import { PdoSupplementaryListPage }     from '@/pages/PdoSupplementaryListPage'
 import { PdoSupplementaryFormPage }     from '@/pages/PdoSupplementaryFormPage'
@@ -67,6 +68,7 @@ export default function App() {
           {/* Transfer & Realisasi */}
           <Route path="transfer"           element={<TransferPage />} />
           <Route path="transfer/:pdoId"  element={<TransferBulkPage />} />
+          <Route path="perintah-transfer" element={<TransferInstructionsPage />} />
           <Route path="realisasi"        element={<RealizationPage />} />
 
           {/* PDO Tambahan */}

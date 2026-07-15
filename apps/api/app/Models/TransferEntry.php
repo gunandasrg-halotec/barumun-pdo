@@ -42,6 +42,9 @@ class TransferEntry extends Model
         'status',
         'committed_at',
         'committed_by',
+        'is_transferred',
+        'transferred_at',
+        'transferred_by',
     ];
 
     protected function casts(): array
@@ -51,6 +54,8 @@ class TransferEntry extends Model
             'amount'           => 'integer',
             'is_auto_generated'=> 'boolean',
             'committed_at'     => 'datetime',
+            'is_transferred'   => 'boolean',
+            'transferred_at'   => 'datetime',
         ];
     }
 
@@ -92,5 +97,10 @@ class TransferEntry extends Model
     public function recorder(): BelongsTo
     {
         return $this->belongsTo(User::class, 'recorded_by');
+    }
+
+    public function transferredByUser(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'transferred_by');
     }
 }

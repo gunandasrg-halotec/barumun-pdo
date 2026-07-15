@@ -21,6 +21,8 @@ export const isAsisteKebun    = (role: RoleCode) => role === 'ASISTEN_KEBUN'
 export const canDeleteDraftPdo = (role: RoleCode) => role === 'KERANI' || role === 'ASISTEN_KEBUN'
 export const isMgrKeu         = (role: RoleCode) => role === 'MANAJER_KEUANGAN'
 export const isDirekturKeuangan = (role: RoleCode) => role === 'DIREKTUR_KEUANGAN'
+export const canMarkTransferExecuted = (role: RoleCode) =>
+  role === 'STAFF_PURCHASING' || role === 'MANAJER_KEUANGAN' || role === 'DIREKTUR_KEUANGAN'
 export const isPurchasing     = (role: RoleCode) => role === 'STAFF_PURCHASING'
 export const canEditMasterData = (role: RoleCode) => role === 'ADMIN' || role === 'STAFF_KEUANGAN'
 

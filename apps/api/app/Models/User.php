@@ -119,6 +119,14 @@ class User extends Authenticatable
     }
 
     /**
+     * Role yang bisa menandai instruksi transfer sebagai sudah dieksekusi (dana benar-benar dikirim).
+     */
+    public function canMarkTransferExecuted(): bool
+    {
+        return $this->hasAnyRole(['STAFF_PURCHASING', 'MANAJER_KEUANGAN', 'DIREKTUR_KEUANGAN']);
+    }
+
+    /**
      * Role yang bisa mencatat realisasi.
      */
     public function canRecordRealization(): bool

@@ -27,12 +27,44 @@ class TransferEntryService
                 'pdoDetail.expenseItem.subcategory.category',
                 'pdoDetail.pdoHeader.plantationUnit',
                 'recorder',
+                'transferredByUser',
             ])
+            ->where('is_auto_generated', false)
             ->whereHas('pdoDetail.pdoHeader', fn ($q) => $q->where('company_id', $actor->company_id))
             ->when($actor->plantation_unit_id, fn ($q) => $q->whereHas('pdoDetail.pdoHeader', fn ($qq) => $qq->where('plantation_unit_id', $actor->plantation_unit_id)))
             ->when(!empty($filters['unit_ids']), fn ($q) => $q->whereHas('pdoDetail.pdoHeader', fn ($qq) => $qq->whereIn('plantation_unit_id', $filters['unit_ids'])))
             ->orderByDesc('transfer_date')
             ->get();
+    }
+
+    /**
+     * Tandai satu/lebih instruksi transfer sebagai sudah/belum ditransfer secara fisik.
+     * Scoped by company_id agar user tidak bisa menandai entry milik perusahaan lain.
+     */
+    public function markTransferred(array $entryIds, bool $isTransferred, User $actor): int
+    {
+        $entries = TransferEntry::whereIn('id', $entryIds)
+            ->whereHas('pdoDetail.pdoHeader', fn ($q) => $q->where('company_id', $actor->company_id))
+            ->get();
+
+        foreach ($entries as $entry) {
+            $old = $entry->toArray();
+            $entry->update([
+                'is_transferred' => $isTransferred,
+                'transferred_at' => $isTransferred ? now() : null,
+                'transferred_by' => $isTransferred ? $actor->id : null,
+            ]);
+            AuditLog::record(
+                actor: $actor,
+                entityType: 'transfer_entries',
+                entityId: $entry->id,
+                action: 'UPDATE',
+                oldValues: $old,
+                newValues: $entry->fresh()->toArray()
+            );
+        }
+
+        return $entries->count();
     }
 
     /**

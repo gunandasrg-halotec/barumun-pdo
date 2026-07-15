@@ -113,6 +113,7 @@ Route::prefix('v1')->middleware(['auth:sanctum', 'ensure.unit.access'])->group(f
     Route::delete('pdo-detail-attachments/{attachment}', [PdoDetailAttachmentController::class, 'destroy']);
     Route::get('transfer-entries', [TransferEntryController::class, 'all']);
     Route::get('transfer-entries/pdo-summary', [TransferEntryController::class, 'pdoSummaryList']);
+    Route::patch('transfer-entries/mark-transferred', [TransferEntryController::class, 'markTransferred']);
     Route::put('transfer-entries/{entry}', [TransferEntryController::class, 'update'])->middleware('check.pdo.status');
 
     // ── Realisasi Dana ────────────────────────────────

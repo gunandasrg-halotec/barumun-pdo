@@ -3,7 +3,7 @@ import { useAuthStore } from '@/store/auth.store'
 import { cn } from '@/lib/cn'
 import {
   LayoutDashboard, List, Wallet, ArrowRightLeft,
-  Database, BarChart2, Settings, FilePlus, BarChart3,
+  Database, BarChart2, Settings, FilePlus, BarChart3, ClipboardCheck,
 } from 'lucide-react'
 import type { RoleCode } from '@/types'
 
@@ -11,6 +11,8 @@ const NAV_ITEMS = [
   { to: '/dashboard',    icon: LayoutDashboard, label: 'Dashboard',       roles: null },
   { to: '/pdo',          icon: List,            label: 'Daftar PDO',      roles: null },
   { to: '/transfer',     icon: ArrowRightLeft,  label: 'Rencana Transfer Dana', roles: null },
+  { to: '/perintah-transfer', icon: ClipboardCheck, label: 'Daftar Perintah Transfer',
+    roles: ['MANAJER_KEUANGAN', 'STAFF_KEUANGAN', 'DIREKTUR_KEUANGAN', 'STAFF_PURCHASING'] as RoleCode[] },
   { to: '/rekapitulasi', icon: BarChart3,       label: 'Buku Kas Kebun',  roles: null },
   { to: '/realisasi',    icon: Wallet,          label: 'Realisasi Dana',  roles: null },
   { to: '/pdo-tambahan', icon: FilePlus,        label: 'PDO Tambahan',    roles: null },

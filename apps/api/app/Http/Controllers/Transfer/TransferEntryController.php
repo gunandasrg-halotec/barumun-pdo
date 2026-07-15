@@ -162,4 +162,22 @@ class TransferEntryController extends Controller
 
         return response()->json(['success' => true, 'data' => $data]);
     }
+
+    /** PATCH /transfer-entries/mark-transferred — tandai satu/lebih instruksi sebagai (belum) ditransfer. */
+    public function markTransferred(Request $request): JsonResponse
+    {
+        $validated = $request->validate([
+            'entry_ids'      => ['required', 'array', 'min:1'],
+            'entry_ids.*'    => ['uuid'],
+            'is_transferred' => ['required', 'boolean'],
+        ]);
+
+        if (! $request->user()?->canMarkTransferExecuted()) {
+            abort(response()->json(['success' => false, 'error' => ['code' => 'FORBIDDEN', 'message' => 'Anda tidak berhak menandai status transfer.']], 403));
+        }
+
+        $count = $this->service->markTransferred($validated['entry_ids'], $validated['is_transferred'], $request->user());
+
+        return response()->json(['success' => true, 'data' => ['updated' => $count]]);
+    }
 }

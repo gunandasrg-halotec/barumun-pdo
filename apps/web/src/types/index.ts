@@ -232,6 +232,10 @@ export interface TransferEntry {
   reference_number: string
   notes: string | null
   transfer_destination: TransferDestination
+  is_transferred: boolean
+  transferred_at: string | null
+  transferred_by: string | null
+  transferred_by_user?: AuthUser | null
   created_at: string
 }
 
