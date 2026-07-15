@@ -269,7 +269,11 @@ class TransferEntryService
         });
 
         if (! empty($results)) {
-            $this->wa->notifyTransferDraftSaved($pdo, $actor, collect($results)->load('pdoDetail.expenseItem'));
+            $ids = array_map(fn ($e) => $e->id, $results);
+            $this->wa->notifyTransferDraftSaved(
+                $pdo, $actor,
+                TransferEntry::with('pdoDetail.expenseItem')->whereIn('id', $ids)->get()
+            );
         }
 
         return $results;
