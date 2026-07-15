@@ -7,12 +7,15 @@ use App\Models\PdoDetail;
 use App\Models\PdoHeader;
 use App\Models\TransferEntry;
 use App\Models\User;
+use App\Services\Notification\WhatsAppNotificationService;
 use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Support\Collection as SupportCollection;
 use Illuminate\Support\Facades\DB;
 
 class TransferEntryService
 {
+    public function __construct(private readonly WhatsAppNotificationService $wa = new WhatsAppNotificationService()) {}
+
     /**
      * Daftar semua transfer dalam perusahaan (untuk halaman Transfer Dana).
      * Scoped by company_id; unit-bound roles (KERANI/ASISTEN) juga scoped by unit.
@@ -265,6 +268,10 @@ class TransferEntryService
             }
         });
 
+        if (! empty($results)) {
+            $this->wa->notifyTransferDraftSaved($pdo, $actor, collect($results)->load('pdoDetail.expenseItem'));
+        }
+
         return $results;
     }
 
@@ -416,6 +423,8 @@ class TransferEntryService
             // hanya SEKALI per PDO (di commit pertama). Guard exactly-once.
             // Tujuan default rek_kebun, tapi bisa dipilih user per item ($deductionDests).
             $this->applyDeductionEntries($pdo, $actor, $deductionDests);
+
+            $this->wa->notifyTransferPlanApproved($pdo, $actor, $drafts->fresh(['pdoDetail.expenseItem']));
 
             return $drafts->count();
         });

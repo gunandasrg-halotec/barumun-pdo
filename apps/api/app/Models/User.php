@@ -110,6 +110,15 @@ class User extends Authenticatable
     }
 
     /**
+     * Role yang bisa simpan permanen (commit) rencana transfer — hanya Direktur Keuangan,
+     * sebagai persetujuan akhir sebelum dana benar-benar ditransfer.
+     */
+    public function canCommitTransfer(): bool
+    {
+        return $this->hasAnyRole(['DIREKTUR_KEUANGAN']);
+    }
+
+    /**
      * Role yang bisa mencatat realisasi.
      */
     public function canRecordRealization(): bool

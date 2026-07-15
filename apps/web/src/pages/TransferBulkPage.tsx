@@ -4,9 +4,11 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '@/lib/api'
 import { Button } from '@/components/ui/Button'
 import { useToastStore } from '@/store/toast.store'
+import { useAuthStore } from '@/store/auth.store'
 import { fmt } from '@/lib/format'
+import { isDirekturKeuangan } from '@/lib/auth'
 import { ArrowLeft, ChevronDown, ChevronUp, Download, GitBranch } from 'lucide-react'
-import type { ApiResponse } from '@/types'
+import type { ApiResponse, RoleCode } from '@/types'
 
 // ─── types ────────────────────────────────────────────────────────────────────
 
@@ -417,6 +419,9 @@ export function TransferBulkPage() {
   const navigate     = useNavigate()
   const toast        = useToastStore((s) => s.push)
   const qc           = useQueryClient()
+  const user         = useAuthStore((s) => s.user)
+  const role         = user?.role.code as RoleCode | undefined
+  const canCommit    = !!role && isDirekturKeuangan(role)
   const [rows, setRows]           = useState<RowState[]>([])
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set())
 
@@ -952,14 +957,21 @@ export function TransferBulkPage() {
         </table>
       </div>
 
-      <div className="flex justify-end gap-2">
+      <div className="flex items-center justify-end gap-2">
+        {!canCommit && hasDrafts && (
+          <p className="text-xs text-amber-700 mr-auto">
+            Menunggu persetujuan Direktur Keuangan untuk simpan permanen.
+          </p>
+        )}
         <Button variant="secondary" onClick={() => navigate('/transfer')}>Kembali</Button>
         <Button variant="secondary" onClick={handleSave} loading={save.isPending}>
           Simpan sebagai Draft
         </Button>
-        <Button onClick={handleCommit} loading={commit.isPending} disabled={!hasDrafts}>
-          Simpan Permanen
-        </Button>
+        {canCommit && (
+          <Button onClick={handleCommit} loading={commit.isPending} disabled={!hasDrafts}>
+            Simpan Permanen
+          </Button>
+        )}
       </div>
     </div>
   )

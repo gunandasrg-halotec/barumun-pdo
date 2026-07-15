@@ -26,6 +26,8 @@ class NotificationTemplate extends Model
     const EVENT_PDO_CLOSED              = 'pdo_closed';
     const EVENT_SLA_REMINDER            = 'sla_reminder';
     const EVENT_MONTHLY_REMINDER        = 'monthly_reminder';
+    const EVENT_TRANSFER_DRAFT_SAVED    = 'transfer_draft_saved';   // Draft rencana transfer → Direktur Keuangan
+    const EVENT_TRANSFER_PLAN_APPROVED  = 'transfer_plan_approved'; // Direktur simpan permanen → Manajer Keuangan + Staff Purchasing
 
     const CHANNEL_WHATSAPP = 'whatsapp';
     const CHANNEL_SYSTEM   = 'in_system';

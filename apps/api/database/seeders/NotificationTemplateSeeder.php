@@ -64,6 +64,18 @@ class NotificationTemplateSeeder extends Seeder
                 'channel'       => 'whatsapp',
                 'template_body' => "Informasi: PDO *{{nomor_pdo}}* periode *{{periode}}* telah *ditutup*.\n\nInput realisasi dan transfer baru tidak dapat dilakukan lagi untuk PDO ini.",
             ],
+
+            // ── Transfer Dana (Rencana Transfer) ────────────────────────────
+            [
+                'event_type'    => 'transfer_draft_saved',
+                'channel'       => 'whatsapp',
+                'template_body' => "Halo {{nama_user}},\n\nDraft *Rencana Transfer Dana* untuk PDO *{{nomor_pdo}}* periode *{{periode}}* telah disimpan oleh {{dicatat_oleh}} dan menunggu persetujuan Anda:\n\n{{daftar_item}}\n\nSilakan lakukan *Simpan Permanen* melalui sistem untuk menyetujui rencana transfer ini.",
+            ],
+            [
+                'event_type'    => 'transfer_plan_approved',
+                'channel'       => 'whatsapp',
+                'template_body' => "Halo {{nama_user}},\n\nRencana Transfer Dana untuk PDO *{{nomor_pdo}}* periode *{{periode}}* telah *disetujui* oleh Direktur Keuangan ({{disetujui_oleh}}) untuk item berikut:\n\n{{daftar_item}}\n\nProses transfer dana untuk item-item di atas sudah dapat dilakukan.",
+            ],
         ];
 
         foreach ($templates as $template) {

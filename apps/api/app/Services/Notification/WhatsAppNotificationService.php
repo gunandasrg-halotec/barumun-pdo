@@ -119,6 +119,59 @@ class WhatsAppNotificationService
     }
 
     // ─────────────────────────────────────────────────────
+    // TRANSFER DANA NOTIFICATIONS
+    // ─────────────────────────────────────────────────────
+
+    /** Draft rencana transfer disimpan → Direktur Keuangan (perlu simpan permanen) */
+    public function notifyTransferDraftSaved(PdoHeader $pdo, User $actor, Collection $entries): void
+    {
+        $this->send(
+            $pdo->company_id,
+            NotificationTemplate::EVENT_TRANSFER_DRAFT_SAVED,
+            $this->byRole($pdo, Role::DIREKTUR_KEUANGAN),
+            array_merge($this->baseVars($pdo), [
+                'dicatat_oleh' => $actor->full_name,
+                'daftar_item'  => $this->formatTransferItemList($entries),
+            ])
+        );
+    }
+
+    /** Direktur simpan permanen → Manajer Keuangan + Staff Purchasing (boleh mulai transfer) */
+    public function notifyTransferPlanApproved(PdoHeader $pdo, User $actor, Collection $entries): void
+    {
+        $recipients = $this->byRole($pdo, Role::MANAJER_KEUANGAN)
+            ->merge($this->byRole($pdo, Role::STAFF_PURCHASING));
+
+        $this->send(
+            $pdo->company_id,
+            NotificationTemplate::EVENT_TRANSFER_PLAN_APPROVED,
+            $recipients,
+            array_merge($this->baseVars($pdo), [
+                'disetujui_oleh' => $actor->full_name,
+                'daftar_item'    => $this->formatTransferItemList($entries),
+            ])
+        );
+    }
+
+    /** Render daftar item transfer (kode/nama + jumlah) untuk isi pesan WA. */
+    private function formatTransferItemList(Collection $entries): string
+    {
+        $lines = $entries->map(function ($e) {
+            $item  = $e->pdoDetail?->expenseItem;
+            $label = $item ? "[{$item->code}] {$item->name}" : ($e->pdoDetail?->description ?? '-');
+            return "- {$label}: Rp " . number_format($e->amount, 0, ',', '.');
+        });
+
+        // Pesan WA jadi tidak praktis di atas ~30 baris — potong dan arahkan ke sistem.
+        if ($lines->count() > 30) {
+            return $lines->take(30)->implode("\n")
+                . "\n… dan " . ($lines->count() - 30) . " item lainnya (lihat sistem untuk daftar lengkap).";
+        }
+
+        return $lines->implode("\n");
+    }
+
+    // ─────────────────────────────────────────────────────
     // PDO TAMBAHAN NOTIFICATIONS
     // ─────────────────────────────────────────────────────
 

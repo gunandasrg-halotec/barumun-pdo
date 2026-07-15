@@ -10,7 +10,7 @@ import type { RoleCode } from '@/types'
 const NAV_ITEMS = [
   { to: '/dashboard',    icon: LayoutDashboard, label: 'Dashboard',       roles: null },
   { to: '/pdo',          icon: List,            label: 'Daftar PDO',      roles: null },
-  { to: '/transfer',     icon: ArrowRightLeft,  label: 'Transfer Dana',   roles: null },
+  { to: '/transfer',     icon: ArrowRightLeft,  label: 'Rencana Transfer Dana', roles: null },
   { to: '/rekapitulasi', icon: BarChart3,       label: 'Buku Kas Kebun',  roles: null },
   { to: '/realisasi',    icon: Wallet,          label: 'Realisasi Dana',  roles: null },
   { to: '/pdo-tambahan', icon: FilePlus,        label: 'PDO Tambahan',    roles: null },

@@ -146,8 +146,8 @@ class TransferEntryController extends Controller
             'deduction_destinations.*' => ['string', 'in:rek_kebun,pribadi,vendor'],
         ]);
 
-        if (! $request->user()?->canRecordTransfer()) {
-            abort(response()->json(['success' => false, 'error' => ['code' => 'FORBIDDEN', 'message' => 'Anda tidak berhak menyimpan transfer dana.']], 403));
+        if (! $request->user()?->canCommitTransfer()) {
+            abort(response()->json(['success' => false, 'error' => ['code' => 'FORBIDDEN', 'message' => 'Hanya Direktur Keuangan yang dapat menyimpan permanen rencana transfer dana.']], 403));
         }
 
         $count = $this->service->commitDrafts($pdo, $request->user(), $request->input('deduction_destinations', []));
