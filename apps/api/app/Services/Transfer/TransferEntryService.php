@@ -269,11 +269,8 @@ class TransferEntryService
         });
 
         if (! empty($results)) {
-            $ids = array_map(fn ($e) => $e->id, $results);
-            $this->wa->notifyTransferDraftSaved(
-                $pdo, $actor,
-                TransferEntry::with('pdoDetail.expenseItem')->whereIn('id', $ids)->get()
-            );
+            $entries = collect($results)->each->load('pdoDetail.expenseItem', 'pdoDetail.sourceSupplementary');
+            $this->wa->notifyTransferDraftSaved($pdo, $actor, $entries);
         }
 
         return $results;
@@ -428,7 +425,7 @@ class TransferEntryService
             // Tujuan default rek_kebun, tapi bisa dipilih user per item ($deductionDests).
             $this->applyDeductionEntries($pdo, $actor, $deductionDests);
 
-            $this->wa->notifyTransferPlanApproved($pdo, $actor, $drafts->fresh(['pdoDetail.expenseItem']));
+            $this->wa->notifyTransferPlanApproved($pdo, $actor, $drafts->fresh(['pdoDetail.expenseItem', 'pdoDetail.sourceSupplementary']));
 
             return $drafts->count();
         });

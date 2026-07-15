@@ -131,7 +131,7 @@ class WhatsAppNotificationService
             $this->byRole($pdo, Role::DIREKTUR_KEUANGAN),
             array_merge($this->baseVars($pdo), [
                 'dicatat_oleh' => $actor->full_name,
-                'daftar_item'  => $this->formatTransferItemList($entries),
+                'daftar_item'  => $this->formatTransferItemList($entries, $pdo),
             ])
         );
     }
@@ -148,27 +148,44 @@ class WhatsAppNotificationService
             $recipients,
             array_merge($this->baseVars($pdo), [
                 'disetujui_oleh' => $actor->full_name,
-                'daftar_item'    => $this->formatTransferItemList($entries),
+                'daftar_item'    => $this->formatTransferItemList($entries, $pdo),
             ])
         );
     }
 
-    /** Render daftar item transfer (kode/nama + jumlah) untuk isi pesan WA. */
-    private function formatTransferItemList(Collection $entries): string
+    /** Render daftar item transfer, dikelompokkan per PDO sumber (Bulanan / masing-masing Tambahan). */
+    private function formatTransferItemList(Collection $entries, PdoHeader $pdo): string
     {
-        $lines = $entries->map(function ($e) {
-            $item  = $e->pdoDetail?->expenseItem;
-            $label = $item ? "[{$item->code}] {$item->name}" : ($e->pdoDetail?->description ?? '-');
-            return "- {$label}: Rp " . number_format($e->amount, 0, ',', '.');
+        $truncated = $entries->count() > 30;
+        $subset    = $truncated ? $entries->take(30) : $entries;
+
+        $groups = $subset->groupBy(fn ($e) => $e->pdoDetail?->source_pdo_supplementary_id ?? 'bulanan');
+
+        $sections = $groups->map(function ($group, $key) use ($pdo) {
+            $header = $key === 'bulanan'
+                ? "*PDO {$pdo->pdo_number}*"
+                : "*PDO {$group->first()->pdoDetail?->sourceSupplementary?->pdo_number}* (Tambahan)";
+
+            $lines = $group->map(fn ($e) => $this->formatTransferLine($e));
+
+            return $header . "\n" . $lines->implode("\n");
         });
 
-        // Pesan WA jadi tidak praktis di atas ~30 baris — potong dan arahkan ke sistem.
-        if ($lines->count() > 30) {
-            return $lines->take(30)->implode("\n")
-                . "\n… dan " . ($lines->count() - 30) . " item lainnya (lihat sistem untuk daftar lengkap).";
+        $result = $sections->implode("\n\n");
+
+        // Pesan WA jadi tidak praktis di atas ~30 item — potong dan arahkan ke sistem.
+        if ($truncated) {
+            $result .= "\n\n… dan " . ($entries->count() - 30) . " item lainnya (lihat sistem untuk daftar lengkap).";
         }
 
-        return $lines->implode("\n");
+        return $result;
+    }
+
+    private function formatTransferLine(\App\Models\TransferEntry $e): string
+    {
+        $item  = $e->pdoDetail?->expenseItem;
+        $label = $item ? "[{$item->code}] {$item->name}" : ($e->pdoDetail?->description ?? '-');
+        return "- {$label}: Rp " . number_format($e->amount, 0, ',', '.');
     }
 
     // ─────────────────────────────────────────────────────
