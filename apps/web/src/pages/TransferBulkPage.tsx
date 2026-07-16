@@ -7,7 +7,8 @@ import { useToastStore } from '@/store/toast.store'
 import { useAuthStore } from '@/store/auth.store'
 import { fmt } from '@/lib/format'
 import { isDirekturKeuangan } from '@/lib/auth'
-import { ArrowLeft, ChevronDown, ChevronUp, Download, GitBranch } from 'lucide-react'
+import { ArrowLeft, ChevronDown, ChevronUp, Download, GitBranch, Search, X } from 'lucide-react'
+import { DateRangePickerButton } from '@/components/ui/DateRangePickerButton'
 import type { ApiResponse, RoleCode } from '@/types'
 
 // ─── types ────────────────────────────────────────────────────────────────────
@@ -425,6 +426,14 @@ export function TransferBulkPage() {
   const [rows, setRows]           = useState<RowState[]>([])
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set())
 
+  // ── Filter & search state ────────────────────────────────────────────────────
+  const [searchName,     setSearchName]     = useState('')
+  const [filterHasDraft, setFilterHasDraft] = useState(false)
+  const [filterSaldo,    setFilterSaldo]    = useState<'all' | 'ada' | 'tidak'>('all')
+  const [filterDateFrom, setFilterDateFrom] = useState('')
+  const [filterDateTo,   setFilterDateTo]   = useState('')
+  const [filterDest,     setFilterDest]     = useState<TransferDest | 'all'>('all')
+
   const { data: summary, isLoading } = useQuery({
     queryKey: ['transfer-summary', pdoId],
     queryFn: async () => {
@@ -535,6 +544,30 @@ export function TransferBulkPage() {
   }, [summary, unitId, pdoId])
 
   const details = useMemo(() => summary?.details ?? [], [summary])
+
+  const filteredDetails = useMemo(() => details.filter((d) => {
+    if (searchName) {
+      const name = (d.expense_item?.name ?? d.description).toLowerCase()
+      if (!name.includes(searchName.toLowerCase())) return false
+    }
+    if (filterHasDraft && d.draft_entries.length === 0) return false
+    if (filterSaldo === 'ada'   && d.remaining <= 0) return false
+    if (filterSaldo === 'tidak' && d.remaining >  0) return false
+    if (filterDateFrom || filterDateTo) {
+      const hasMatch = d.entries.some((e) => {
+        const date = e.transfer_date.slice(0, 10)
+        if (filterDateFrom && date < filterDateFrom) return false
+        if (filterDateTo   && date > filterDateTo)   return false
+        return true
+      })
+      if (!hasMatch) return false
+    }
+    if (filterDest !== 'all') {
+      const hasMatch = d.entries.some((e) => e.transfer_destination === filterDest)
+      if (!hasMatch) return false
+    }
+    return true
+  }), [details, searchName, filterHasDraft, filterSaldo, filterDateFrom, filterDateTo, filterDest])
 
   // ── Cards ringkasan: hanya transfer yang SUDAH tercatat (committed + draft) ─────
   // Nilai kolom "Jumlah" pada form (input yang belum disimpan) TIDAK diikutkan —
@@ -664,10 +697,10 @@ export function TransferBulkPage() {
   // item dari PDO yang berbeda dari yang dimaksud. Ini murni pengelompokan
   // untuk RENDER; `rows`/`details` sendiri tetap dalam urutan asli.
   const rowsByDetailId = useMemo(() => new Map(rows.map((r) => [r.pdo_detail_id, r])), [rows])
-  const bulananDetails = details.filter((d) => !d.source_pdo_number)
+  const bulananDetails = filteredDetails.filter((d) => !d.source_pdo_number)
   const tambahanGroups = useMemo(() => {
     const groups = new Map<string, { pdoNumber: string; mergedAt: string | null; items: PdoDetailSummary[] }>()
-    for (const d of details) {
+    for (const d of filteredDetails) {
       if (!d.source_pdo_number) continue
       if (!groups.has(d.source_pdo_number)) {
         groups.set(d.source_pdo_number, { pdoNumber: d.source_pdo_number, mergedAt: d.source_pdo_merged_at, items: [] })
@@ -675,7 +708,7 @@ export function TransferBulkPage() {
       groups.get(d.source_pdo_number)!.items.push(d)
     }
     return [...groups.values()].sort((a, b) => (a.mergedAt ?? '').localeCompare(b.mergedAt ?? ''))
-  }, [details])
+  }, [filteredDetails])
 
   const renderDetailRow = (detail: PdoDetailSummary, row: RowState) => {
     const hasHistory   = detail.entries.length > 0
@@ -888,6 +921,118 @@ export function TransferBulkPage() {
         <SummaryCard label="Transfer — Vendor" value={cards.dest.vendor} tone="blue" />
         <SummaryCard label="Sisa Dana" value={cards.sisa} tone={cards.sisa < 0 ? 'red' : 'green'} />
       </div>
+
+      {/* ── Filter & Search bar ─────────────────────────────────────────────── */}
+      {(() => {
+        const activeCount = [
+          searchName !== '',
+          filterHasDraft,
+          filterSaldo !== 'all',
+          filterDateFrom !== '' || filterDateTo !== '',
+          filterDest !== 'all',
+        ].filter(Boolean).length
+
+        const resetAll = () => {
+          setSearchName('')
+          setFilterHasDraft(false)
+          setFilterSaldo('all')
+          setFilterDateFrom('')
+          setFilterDateTo('')
+          setFilterDest('all')
+        }
+
+        return (
+          <div className="mb-3 flex flex-wrap items-end gap-3 rounded-drawer border border-line bg-white px-4 py-3">
+            {/* Pencarian nama */}
+            <div className="flex-1 min-w-[180px]">
+              <label className="block text-[11px] font-bold uppercase tracking-wider text-muted mb-1">Cari Item</label>
+              <div className="relative">
+                <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted pointer-events-none" />
+                <input
+                  type="text"
+                  placeholder="Nama item biaya..."
+                  value={searchName}
+                  onChange={(e) => setSearchName(e.target.value)}
+                  className="input-base pl-8 text-sm"
+                />
+                {searchName && (
+                  <button type="button" onClick={() => setSearchName('')} className="absolute right-2 top-1/2 -translate-y-1/2 text-muted hover:text-ink">
+                    <X className="w-3.5 h-3.5" />
+                  </button>
+                )}
+              </div>
+            </div>
+
+            {/* Filter sisa saldo */}
+            <div className="min-w-[140px]">
+              <label className="block text-[11px] font-bold uppercase tracking-wider text-muted mb-1">Sisa Saldo</label>
+              <select value={filterSaldo} onChange={(e) => setFilterSaldo(e.target.value as 'all' | 'ada' | 'tidak')} className="input-base text-sm">
+                <option value="all">Semua</option>
+                <option value="ada">Ada sisa</option>
+                <option value="tidak">Tidak ada sisa</option>
+              </select>
+            </div>
+
+            {/* Filter tujuan transfer */}
+            <div className="min-w-[150px]">
+              <label className="block text-[11px] font-bold uppercase tracking-wider text-muted mb-1">Tujuan Transfer</label>
+              <select value={filterDest} onChange={(e) => setFilterDest(e.target.value as TransferDest | 'all')} className="input-base text-sm">
+                <option value="all">Semua Tujuan</option>
+                {DEST_OPTIONS.map((d) => <option key={d} value={d}>{DEST_LABELS[d]}</option>)}
+              </select>
+            </div>
+
+            {/* Filter tanggal transfer */}
+            <div className="flex flex-col justify-end">
+              <label className="block text-[11px] font-bold uppercase tracking-wider text-muted mb-1">Tanggal Transfer</label>
+              <DateRangePickerButton
+                startDate={filterDateFrom}
+                endDate={filterDateTo}
+                min=""
+                max=""
+                label="Tanggal Transfer"
+                onChange={(s, e) => { setFilterDateFrom(s); setFilterDateTo(e) }}
+              />
+            </div>
+
+            {/* Filter ada draft */}
+            <div className="flex flex-col justify-end">
+              <label className="block text-[11px] font-bold uppercase tracking-wider text-muted mb-1">&nbsp;</label>
+              <label className="flex items-center gap-2 cursor-pointer select-none h-9 px-3 border border-line rounded-card text-sm font-medium text-ink hover:bg-[#f7faf7]">
+                <input
+                  type="checkbox"
+                  checked={filterHasDraft}
+                  onChange={(e) => setFilterHasDraft(e.target.checked)}
+                  className="rounded border-line accent-green-600"
+                />
+                Ada Draft
+              </label>
+            </div>
+
+            {/* Reset & jumlah aktif */}
+            {activeCount > 0 && (
+              <div className="flex flex-col justify-end">
+                <label className="block text-[11px] font-bold uppercase tracking-wider text-muted mb-1">&nbsp;</label>
+                <button
+                  type="button"
+                  onClick={resetAll}
+                  className="flex items-center gap-1.5 h-9 px-3 text-sm text-red-600 hover:text-red-800 border border-red-200 rounded-card hover:bg-red-50"
+                >
+                  <X className="w-3.5 h-3.5" />
+                  Reset ({activeCount})
+                </button>
+              </div>
+            )}
+
+            {/* Info hasil filter */}
+            {activeCount > 0 && (
+              <div className="w-full text-[11px] text-muted pt-1 border-t border-line">
+                Menampilkan <span className="font-bold text-ink">{filteredDetails.length}</span> dari <span className="font-bold">{details.length}</span> item
+              </div>
+            )}
+          </div>
+        )
+      })()}
 
       <div className="overflow-auto border border-line rounded-drawer bg-white mb-4">
         <table className="w-full border-collapse" style={{ minWidth: 1400 }}>
