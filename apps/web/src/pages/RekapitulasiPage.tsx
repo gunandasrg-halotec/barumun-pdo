@@ -97,8 +97,12 @@ export function RekapitulasiPage() {
   const [file,      setFile]              = useState<File | null>(null)
   // realisasi detail modal
   const [detailItem, setDetailItem]       = useState<{ pdoDetailId: string; itemName: string } | null>(null)
+  const [detailPage, setDetailPage]       = useState(1)
   // realisasi aggregate drill-down modal (klik cell "Realisasi" di KPI header)
   const [aggregateGroup, setAggregateGroup] = useState<'kebun' | 'pribadi' | null>(null)
+  const [aggregatePage, setAggregatePage] = useState(1)
+
+  const PAGE_SIZE = 20
 
   // ── Plantation units (cross-unit roles only) ─────────────────────────────
   const { data: units } = useQuery({
@@ -442,7 +446,7 @@ export function RekapitulasiPage() {
                 <div
                   key={`kebun-${i}`}
                   className={`p-3 text-center border-r border-line border-t-2 border-t-[#1D9E75] ${k.clickGroup ? 'cursor-pointer hover:bg-[#f7faf7] transition-colors' : ''}`}
-                  onClick={k.clickGroup ? () => setAggregateGroup(k.clickGroup) : undefined}
+                  onClick={k.clickGroup ? () => { setAggregateGroup(k.clickGroup); setAggregatePage(1) } : undefined}
                   title={k.clickGroup ? 'Klik untuk lihat riwayat realisasi Kas Kebun' : undefined}
                 >
                   <div className="text-[9px] font-[700] text-[#0F6E56] uppercase tracking-wider mb-0.5">{k.group}</div>
@@ -461,7 +465,7 @@ export function RekapitulasiPage() {
                 <div
                   key={`pribadi-${i}`}
                   className={`p-3 text-center border-r border-line last:border-r-0 border-t-2 border-t-[#185FA5] ${k.clickGroup ? 'cursor-pointer hover:bg-[#f7faf7] transition-colors' : ''}`}
-                  onClick={k.clickGroup ? () => setAggregateGroup(k.clickGroup) : undefined}
+                  onClick={k.clickGroup ? () => { setAggregateGroup(k.clickGroup); setAggregatePage(1) } : undefined}
                   title={k.clickGroup ? 'Klik untuk lihat riwayat realisasi Pribadi/Vendor' : undefined}
                 >
                   <div className="text-[9px] font-[700] text-[#185FA5] uppercase tracking-wider mb-0.5">{k.group}</div>
@@ -478,7 +482,7 @@ export function RekapitulasiPage() {
           {filteredRecap && filteredRecap.categories.length > 0
             ? <RecapTable
                 data={filteredRecap}
-                onRealizationClick={(pdoDetailId, itemName) => setDetailItem({ pdoDetailId, itemName })}
+                onRealizationClick={(pdoDetailId, itemName) => { setDetailItem({ pdoDetailId, itemName }); setDetailPage(1) }}
               />
             : <div className="p-8 text-center text-sm text-muted">Tidak ada item yang cocok dengan filter.</div>
           }
@@ -619,7 +623,6 @@ export function RekapitulasiPage() {
         onClose={() => setDetailItem(null)}
         title={`Detail Realisasi — ${detailItem?.itemName ?? ''}`}
         width="w-[820px]"
-        className="!max-h-none"
       >
         {detailFetching ? (
           <div className="space-y-3 py-2">
@@ -631,29 +634,42 @@ export function RekapitulasiPage() {
           <EmptyState message="Belum ada data realisasi." />
         ) : (
           <div>
-            <table className="w-full border-collapse text-sm">
-              <thead>
-                <tr>
-                  {['No. Ref', 'Tanggal', 'Jumlah', 'Metode', 'Sumber Dana', 'Dicatat Oleh'].map((h) => (
-                    <th key={h} className="px-3 py-2 text-left text-[11px] font-bold uppercase tracking-wider bg-[#f7faf7] border border-line">
-                      {h}
-                    </th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {detailEntries.map((r) => (
-                  <tr key={r.id} className="border-t border-line hover:bg-[#fbfdfb]">
-                    <td className="px-3 py-2 font-bold">{r.proof_number}</td>
-                    <td className="px-3 py-2">{fmtDate(r.transaction_date)}</td>
-                    <td className="px-3 py-2 font-bold text-right">{fmt(r.amount)}</td>
-                    <td className="px-3 py-2">{PAYMENT_LABEL[r.payment_method]}</td>
-                    <td className="px-3 py-2">{FUNDING_LABEL[r.funding_source] ?? r.funding_source}</td>
-                    <td className="px-3 py-2">{r.recorder?.full_name ?? '—'}</td>
+            <div className="overflow-x-auto">
+              <table className="w-full border-collapse text-sm">
+                <thead>
+                  <tr>
+                    {['No. Ref', 'Tanggal', 'Jumlah', 'Metode', 'Sumber Dana', 'Dicatat Oleh'].map((h) => (
+                      <th key={h} className="px-3 py-2 text-left text-[11px] font-bold uppercase tracking-wider bg-[#f7faf7] border border-line">
+                        {h}
+                      </th>
+                    ))}
                   </tr>
-                ))}
-              </tbody>
-            </table>
+                </thead>
+                <tbody>
+                  {detailEntries.slice((detailPage - 1) * PAGE_SIZE, detailPage * PAGE_SIZE).map((r) => (
+                    <tr key={r.id} className="border-t border-line hover:bg-[#fbfdfb]">
+                      <td className="px-3 py-2 font-bold">{r.proof_number}</td>
+                      <td className="px-3 py-2">{fmtDate(r.transaction_date)}</td>
+                      <td className="px-3 py-2 font-bold text-right">{fmt(r.amount)}</td>
+                      <td className="px-3 py-2">{PAYMENT_LABEL[r.payment_method]}</td>
+                      <td className="px-3 py-2">{FUNDING_LABEL[r.funding_source] ?? r.funding_source}</td>
+                      <td className="px-3 py-2">{r.recorder?.full_name ?? '—'}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            {detailEntries.length > PAGE_SIZE && (
+              <div className="flex items-center justify-between mt-3 text-sm text-muted">
+                <span>
+                  {(detailPage - 1) * PAGE_SIZE + 1}–{Math.min(detailPage * PAGE_SIZE, detailEntries.length)} dari {detailEntries.length} entri
+                </span>
+                <div className="flex gap-2">
+                  <Button size="sm" variant="secondary" disabled={detailPage === 1} onClick={() => setDetailPage((p) => p - 1)}>← Prev</Button>
+                  <Button size="sm" variant="secondary" disabled={detailPage * PAGE_SIZE >= detailEntries.length} onClick={() => setDetailPage((p) => p + 1)}>Next →</Button>
+                </div>
+              </div>
+            )}
           </div>
         )}
         <div className="flex justify-end mt-4">
@@ -667,7 +683,6 @@ export function RekapitulasiPage() {
         onClose={() => setAggregateGroup(null)}
         title={`Realisasi ${aggregateGroup === 'kebun' ? 'Kas Kebun' : 'Pribadi / Vendor'}`}
         width="w-[900px]"
-        className="!max-h-none"
       >
         {aggregateFetching ? (
           <div className="space-y-3 py-2">
@@ -679,37 +694,50 @@ export function RekapitulasiPage() {
           <EmptyState message="Belum ada data realisasi." />
         ) : (
           <div>
-            <table className="w-full border-collapse text-sm">
-              <thead>
-                <tr>
-                  {['No. Ref', 'Tanggal', 'Item Biaya', 'Jumlah', 'Metode', 'Sumber Dana', 'Dicatat Oleh'].map((h) => (
-                    <th key={h} className="px-3 py-2 text-left text-[11px] font-bold uppercase tracking-wider bg-[#f7faf7] border border-line">
-                      {h}
-                    </th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {aggregateEntries.map((r) => (
-                  <tr key={r.id} className="border-t border-line hover:bg-[#fbfdfb]">
-                    <td className="px-3 py-2 font-bold">{r.proof_number}</td>
-                    <td className="px-3 py-2">{fmtDate(r.transaction_date)}</td>
-                    <td className="px-3 py-2">{r.pdo_detail?.expense_item?.name ?? '—'}</td>
-                    <td className="px-3 py-2 font-bold text-right">{fmt(r.amount)}</td>
-                    <td className="px-3 py-2">{PAYMENT_LABEL[r.payment_method]}</td>
-                    <td className="px-3 py-2">{FUNDING_LABEL[r.funding_source] ?? r.funding_source}</td>
-                    <td className="px-3 py-2">{r.recorder?.full_name ?? '—'}</td>
+            <div className="overflow-x-auto">
+              <table className="w-full border-collapse text-sm">
+                <thead>
+                  <tr>
+                    {['No. Ref', 'Tanggal', 'Item Biaya', 'Jumlah', 'Metode', 'Sumber Dana', 'Dicatat Oleh'].map((h) => (
+                      <th key={h} className="px-3 py-2 text-left text-[11px] font-bold uppercase tracking-wider bg-[#f7faf7] border border-line">
+                        {h}
+                      </th>
+                    ))}
                   </tr>
-                ))}
-              </tbody>
-              <tfoot>
-                <tr className="border-t-2 border-line font-bold">
-                  <td className="px-3 py-2" colSpan={3}>Total</td>
-                  <td className="px-3 py-2 text-right">{fmt(aggregateEntries.reduce((s, r) => s + r.amount, 0))}</td>
-                  <td colSpan={3} />
-                </tr>
-              </tfoot>
-            </table>
+                </thead>
+                <tbody>
+                  {aggregateEntries.slice((aggregatePage - 1) * PAGE_SIZE, aggregatePage * PAGE_SIZE).map((r) => (
+                    <tr key={r.id} className="border-t border-line hover:bg-[#fbfdfb]">
+                      <td className="px-3 py-2 font-bold">{r.proof_number}</td>
+                      <td className="px-3 py-2">{fmtDate(r.transaction_date)}</td>
+                      <td className="px-3 py-2">{r.pdo_detail?.expense_item?.name ?? '—'}</td>
+                      <td className="px-3 py-2 font-bold text-right">{fmt(r.amount)}</td>
+                      <td className="px-3 py-2">{PAYMENT_LABEL[r.payment_method]}</td>
+                      <td className="px-3 py-2">{FUNDING_LABEL[r.funding_source] ?? r.funding_source}</td>
+                      <td className="px-3 py-2">{r.recorder?.full_name ?? '—'}</td>
+                    </tr>
+                  ))}
+                </tbody>
+                <tfoot>
+                  <tr className="border-t-2 border-line font-bold">
+                    <td className="px-3 py-2" colSpan={3}>Total</td>
+                    <td className="px-3 py-2 text-right">{fmt(aggregateEntries.reduce((s, r) => s + r.amount, 0))}</td>
+                    <td colSpan={3} />
+                  </tr>
+                </tfoot>
+              </table>
+            </div>
+            {aggregateEntries.length > PAGE_SIZE && (
+              <div className="flex items-center justify-between mt-3 text-sm text-muted">
+                <span>
+                  {(aggregatePage - 1) * PAGE_SIZE + 1}–{Math.min(aggregatePage * PAGE_SIZE, aggregateEntries.length)} dari {aggregateEntries.length} entri
+                </span>
+                <div className="flex gap-2">
+                  <Button size="sm" variant="secondary" disabled={aggregatePage === 1} onClick={() => setAggregatePage((p) => p - 1)}>← Prev</Button>
+                  <Button size="sm" variant="secondary" disabled={aggregatePage * PAGE_SIZE >= aggregateEntries.length} onClick={() => setAggregatePage((p) => p + 1)}>Next →</Button>
+                </div>
+              </div>
+            )}
           </div>
         )}
         <div className="flex justify-end mt-4">
