@@ -141,6 +141,7 @@ export function TransferInstructionsPage() {
         <EmptyState message="Tidak ada instruksi transfer yang cocok dengan filter." />
       ) : (
         <div className="border border-line rounded-drawer bg-white overflow-hidden">
+          <div className="overflow-x-auto">
           <table className="w-full border-collapse" style={{ minWidth: 1000 }}>
             <thead>
               <tr>
@@ -214,6 +215,7 @@ export function TransferInstructionsPage() {
               })}
             </tbody>
           </table>
+          </div>
         </div>
       )}
     </div>
