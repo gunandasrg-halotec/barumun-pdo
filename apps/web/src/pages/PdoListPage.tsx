@@ -13,6 +13,7 @@ import { isKerani, isMgrKeu, canDeleteDraftPdo } from '@/lib/auth'
 import { useToastStore } from '@/store/toast.store'
 import type { ApiResponse, PdoHeader, PlantationUnit, RoleCode } from '@/types'
 import { Search } from 'lucide-react'
+import { CreatePdoMethodModal } from '@/components/pdo/CreatePdoMethodModal'
 
 // ─── types untuk modal transfer detail ────────────────────────────────────────
 
@@ -87,6 +88,7 @@ export function PdoListPage() {
   const [transferDetailPdo, setTransferDetailPdo] = useState<PdoHeader | null>(null)
   const [pengajuanDetailPdo, setPengajuanDetailPdo] = useState<PdoHeader | null>(null)
   const [collapsedGroups, setCollapsedGroups] = useState<Record<string, boolean>>({})
+  const [showCreateModal, setShowCreateModal] = useState(false)
 
   const { data: units } = useQuery({
     queryKey: ['plantation-units'],
@@ -186,7 +188,7 @@ export function PdoListPage() {
           </p>
         </div>
         {role && isKerani(role) && (
-          <Button onClick={() => navigate('/pdo/buat')}>+ Buat PDO Baru</Button>
+          <Button onClick={() => setShowCreateModal(true)}>+ Buat PDO Baru</Button>
         )}
       </div>
 
@@ -515,6 +517,8 @@ export function PdoListPage() {
           </Button>
         </div>
       </Modal>
+
+      <CreatePdoMethodModal open={showCreateModal} onClose={() => setShowCreateModal(false)} />
 
       {/* Modal Tutup PDO */}
       <Modal

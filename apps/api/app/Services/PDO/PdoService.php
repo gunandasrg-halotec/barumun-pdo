@@ -266,6 +266,103 @@ class PdoService
         });
     }
 
+    /**
+     * Buat PDO Bulanan baru dengan menyalin item dari PDO yang sudah ada.
+     * Item dengan expense_item yang sudah dihapus (soft-delete) dilewati.
+     * Item Auto External selalu mulai dengan amount=0 (needs_pull=true).
+     */
+    public function createPdoFromExisting(array $data, User $actor): array
+    {
+        $sourcePdo = PdoHeader::where('id', $data['source_pdo_id'])
+            ->where('company_id', $actor->company_id)
+            ->firstOrFail();
+
+        $unit = PlantationUnit::findOrFail($data['plantation_unit_id']);
+
+        // BR-PDO-001: duplikat (unit, bulan, tahun) → error
+        $exists = PdoHeader::withoutGlobalScopes()
+            ->where('plantation_unit_id', $data['plantation_unit_id'])
+            ->where('period_month', $data['period_month'])
+            ->where('period_year', $data['period_year'])
+            ->exists();
+
+        if ($exists) {
+            abort(response()->json([
+                'success' => false,
+                'error'   => ['code' => 'PDO_ALREADY_EXISTS', 'message' => 'PDO untuk periode dan unit ini sudah ada.'],
+            ], 409));
+        }
+
+        return DB::transaction(function () use ($data, $actor, $unit, $sourcePdo) {
+            $pdo = PdoHeader::create([
+                'company_id'         => $actor->company_id,
+                'plantation_unit_id' => $data['plantation_unit_id'],
+                'created_by'         => $actor->id,
+                'pdo_number'         => PdoHeader::generateNumber($unit->code, $data['period_year'], $data['period_month']),
+                'period_month'       => $data['period_month'],
+                'period_year'        => $data['period_year'],
+                'status'             => PdoHeader::STATUS_DRAFT,
+                'notes'              => $data['notes'] ?? null,
+            ]);
+
+            $copyAmounts   = (bool) ($data['copy_amounts'] ?? false);
+            $copiedCount   = 0;
+            $skippedCount  = 0;
+
+            $sourceDetails = PdoDetail::where('pdo_header_id', $sourcePdo->id)
+                ->whereNull('source_pdo_supplementary_id')
+                ->with('expenseItem')
+                ->orderBy('display_order')
+                ->get();
+
+            foreach ($sourceDetails as $sourceDetail) {
+                // Lewati item yang expense_item-nya sudah soft-deleted (Opsi B)
+                if ($sourceDetail->expenseItem === null) {
+                    $skippedCount++;
+                    continue;
+                }
+
+                $isAutoExternal = $sourceDetail->expenseItem->mode_input === ExpenseItem::MODE_AUTO_EXTERNAL;
+                $amount = (!$isAutoExternal && $copyAmounts) ? $sourceDetail->amount : 0;
+
+                PdoDetail::create([
+                    'pdo_header_id'           => $pdo->id,
+                    'expense_item_id'         => $sourceDetail->expense_item_id,
+                    'account_number'          => $sourceDetail->account_number,
+                    'description'             => $sourceDetail->description,
+                    'quantity'                => $isAutoExternal ? null : $sourceDetail->quantity,
+                    'unit'                    => $sourceDetail->unit,
+                    'rate'                    => $sourceDetail->rate,
+                    'amount'                  => $amount,
+                    'notes'                   => $sourceDetail->notes,
+                    'display_order'           => $sourceDetail->display_order,
+                    'external_source_system'  => $isAutoExternal ? $sourceDetail->external_source_system : null,
+                    'external_component'      => $isAutoExternal ? $sourceDetail->external_component : null,
+                    'external_component_key'  => $isAutoExternal ? $sourceDetail->external_component_key : null,
+                    'external_component_keys' => $isAutoExternal ? $sourceDetail->external_component_keys : null,
+                    'external_block_keys'     => $isAutoExternal ? $sourceDetail->external_block_keys : null,
+                ]);
+
+                $copiedCount++;
+            }
+
+            AuditLog::record(
+                actor: $actor,
+                entityType: 'pdo_headers',
+                entityId: $pdo->id,
+                action: 'INSERT',
+                oldValues: null,
+                newValues: array_merge($pdo->toArray(), ['source_pdo_id' => $sourcePdo->id])
+            );
+
+            return [
+                'pdo'           => $pdo->load(['plantationUnit', 'creator', 'details.expenseItem']),
+                'copied_count'  => $copiedCount,
+                'skipped_count' => $skippedCount,
+            ];
+        });
+    }
+
     public function updatePdo(PdoHeader $pdo, array $data, User $actor): PdoHeader
     {
         // BR-PDO-003: hanya bisa edit saat draft

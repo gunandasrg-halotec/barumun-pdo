@@ -1,5 +1,5 @@
 import { useEffect, useCallback, useState } from 'react'
-import { useNavigate, useParams } from 'react-router-dom'
+import { useNavigate, useParams, useLocation } from 'react-router-dom'
 import { useForm, useFieldArray } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
@@ -54,10 +54,16 @@ const YEARS  = Array.from({ length: 5 }, (_, i) => new Date().getFullYear() - i 
 export function PdoFormPage() {
   const { id }   = useParams<{ id: string }>()
   const navigate = useNavigate()
+  const location = useLocation()
   const toast    = useToastStore((s) => s.push)
   const qc       = useQueryClient()
   const user     = useAuthStore((s) => s.user)
   const isEdit   = !!id
+
+  const createState     = (location.state ?? {}) as { sourcePdoId?: string; sourcePdoNumber?: string; copyAmounts?: boolean }
+  const sourcePdoId     = isEdit ? null : (createState.sourcePdoId ?? null)
+  const sourcePdoNumber = isEdit ? null : (createState.sourcePdoNumber ?? null)
+  const sourceCopyAmounts = isEdit ? false : (createState.copyAmounts ?? false)
 
   const [rowSelections,    setRowSelections]   = useState<RowSelection[]>([])
   const [detailSnapshots,  setDetailSnapshots] = useState<DetailSnapshot[]>([])
@@ -201,11 +207,27 @@ export function PdoFormPage() {
     mutationFn: (data: Form) => {
       if (isEdit) return api.put(`/pdo/${id}`, data)
       const { plantation_unit_id, period_month, period_year, notes } = data
-      return api.post('/pdo', { plantation_unit_id, period_month, period_year, notes })
+      const body: Record<string, unknown> = { plantation_unit_id, period_month, period_year, notes }
+      if (sourcePdoId) {
+        body.source_pdo_id = sourcePdoId
+        body.copy_amounts  = sourceCopyAmounts
+      }
+      return api.post('/pdo', body)
     },
     onSuccess: (res) => {
-      const created = (res.data as ApiResponse<PdoHeader>).data
-      toast(isEdit ? 'PDO berhasil diperbarui' : 'PDO berhasil dibuat — item rutin telah disisipkan otomatis')
+      const result  = res.data as ApiResponse<PdoHeader> & { skipped_count?: number }
+      const created = result.data
+      if (isEdit) {
+        toast('PDO berhasil diperbarui')
+      } else if (sourcePdoId) {
+        let msg = `PDO berhasil dibuat — item dari PDO ${sourcePdoNumber} telah disalin`
+        if ((result.skipped_count ?? 0) > 0) {
+          msg += `. ${result.skipped_count} item dilewati karena item biaya tidak aktif di master data.`
+        }
+        toast(msg)
+      } else {
+        toast('PDO berhasil dibuat — item rutin telah disisipkan otomatis')
+      }
       qc.invalidateQueries({ queryKey: ['pdo'] })
       navigate(`/pdo/${created.id}`)
     },
@@ -214,14 +236,19 @@ export function PdoFormPage() {
 
   const submit = useMutation({
     mutationFn: async (data: Form) => {
+      const body: Record<string, unknown> = {
+        plantation_unit_id: data.plantation_unit_id,
+        period_month: data.period_month,
+        period_year:  data.period_year,
+        notes:        data.notes,
+      }
+      if (sourcePdoId) {
+        body.source_pdo_id = sourcePdoId
+        body.copy_amounts  = sourceCopyAmounts
+      }
       const res = isEdit
         ? await api.put(`/pdo/${id}`, data)
-        : await api.post('/pdo', {
-            plantation_unit_id: data.plantation_unit_id,
-            period_month: data.period_month,
-            period_year:  data.period_year,
-            notes:        data.notes,
-          })
+        : await api.post('/pdo', body)
       const header = (res.data as ApiResponse<PdoHeader>).data
       await api.post(`/pdo/${header.id}/submit`, {
         submission_date: new Date().toISOString().split('T')[0],
@@ -708,11 +735,20 @@ export function PdoFormPage() {
         </div>
 
         {!isEdit && (
-          <div className="card mb-4 bg-[#f7faf7] border border-dashed border-[#b8d4b8]">
-            <p className="text-sm text-muted text-center py-3">
-              Item biaya akan disisipkan otomatis dari daftar item rutin setelah PDO disimpan.
-            </p>
-          </div>
+          sourcePdoId ? (
+            <div className="card mb-4 bg-[#edf7f2] border border-[#9FE1CB]">
+              <p className="text-sm text-[#0F6E56] text-center py-3">
+                Item biaya akan disalin dari PDO <span className="font-bold">{sourcePdoNumber}</span>.
+                {!sourceCopyAmounts && <span className="text-[#0F6E56]/70"> Jumlah biaya tidak disalin — isi manual setelah PDO dibuat.</span>}
+              </p>
+            </div>
+          ) : (
+            <div className="card mb-4 bg-[#f7faf7] border border-dashed border-[#b8d4b8]">
+              <p className="text-sm text-muted text-center py-3">
+                Item biaya akan disisipkan otomatis dari daftar item rutin setelah PDO disimpan.
+              </p>
+            </div>
+          )
         )}
 
         {isEdit && (

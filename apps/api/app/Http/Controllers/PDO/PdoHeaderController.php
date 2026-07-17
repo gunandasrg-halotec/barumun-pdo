@@ -36,7 +36,23 @@ class PdoHeaderController extends Controller
 
     public function store(StorePdoRequest $request): JsonResponse
     {
-        $pdo = $this->service->createPdo($request->validated(), $request->user());
+        $data = $request->validated();
+
+        if (!empty($data['source_pdo_id'])) {
+            $result  = $this->service->createPdoFromExisting($data, $request->user());
+            $message = 'PDO berhasil dibuat — ' . $result['copied_count'] . ' item disalin dari PDO sumber.';
+            if ($result['skipped_count'] > 0) {
+                $message .= ' ' . $result['skipped_count'] . ' item dilewati karena item biaya tidak aktif di master data.';
+            }
+            return response()->json([
+                'success'       => true,
+                'data'          => $result['pdo'],
+                'skipped_count' => $result['skipped_count'],
+                'message'       => $message,
+            ], 201);
+        }
+
+        $pdo = $this->service->createPdo($data, $request->user());
 
         return response()->json(['success' => true, 'data' => $pdo, 'message' => 'PDO berhasil dibuat dengan template item rutin.'], 201);
     }
