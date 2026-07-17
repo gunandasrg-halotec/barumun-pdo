@@ -212,14 +212,14 @@ export function PdoDetailPage() {
               className={`badge ${filterAutoExternal ? 'badge-approved' : 'badge-draft'} cursor-pointer`}
               onClick={() => setFilterAutoExternal((v) => !v)}
             >
-              Auto External
+              Tampilkan item biaya otomatis
             </button>
             <button
               type="button"
               className={`badge ${filterZeroAmount ? 'badge-approved' : 'badge-draft'} cursor-pointer`}
               onClick={() => setFilterZeroAmount((v) => !v)}
             >
-              Jumlah = 0
+              Tampilkan item belum ada biaya
             </button>
             {hasActiveFilter && (
               <button
