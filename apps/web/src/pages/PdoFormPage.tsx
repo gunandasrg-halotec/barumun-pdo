@@ -13,7 +13,7 @@ import { AttachmentSection } from '@/components/pdo/DetailAttachmentPanel'
 import { useItems, useSubcategories, useCategories } from '@/hooks/useMasterData'
 import { useBulkPullExternalCost, usePdo, usePullExternalCost } from '@/hooks/usePdo'
 import { fmt } from '@/lib/format'
-import { ArrowLeft, Plus, Trash2, LayoutList, Paperclip, CloudDownload } from 'lucide-react'
+import { ArrowLeft, Plus, Trash2, LayoutList, Paperclip, CloudDownload, Search } from 'lucide-react'
 import type { ApiResponse, PdoDetail, PdoHeader, PlantationUnit } from '@/types'
 
 const detailSchema = z.object({
@@ -70,6 +70,9 @@ export function PdoFormPage() {
   const [pullErrors,       setPullErrors]      = useState<Record<number, string>>({})
   const [pullingDetailId,  setPullingDetailId] = useState<string | null>(null)
   const [collapsedGroups,  setCollapsedGroups] = useState<Set<string>>(new Set())
+  const [itemSearch, setItemSearch]                   = useState('')
+  const [filterAutoExternal, setFilterAutoExternal]   = useState(false)
+  const [filterZeroAmount, setFilterZeroAmount]       = useState(false)
 
   const { data: units } = useQuery({
     queryKey: ['plantation-units'],
@@ -486,6 +489,22 @@ export function PdoFormPage() {
     })
   }, [])
 
+  const hasActiveFilter = !!itemSearch || filterAutoExternal || filterZeroAmount
+
+  const matchesFilter = (idx: number): boolean => {
+    const detail = detailValues?.[idx]
+    if (!detail) return false
+    const item = items?.find((i) => i.id === detail.expense_item_id)
+    if (filterAutoExternal && item?.mode_input !== 'auto_external') return false
+    if (filterZeroAmount && Number(detail.amount) !== 0) return false
+    if (itemSearch) {
+      const q = itemSearch.toLowerCase()
+      const haystack = `${item?.code ?? ''} ${item?.name ?? ''} ${detail.description ?? ''}`.toLowerCase()
+      if (!haystack.includes(q)) return false
+    }
+    return true
+  }
+
   // Build grouped structure preserving original field indices
   type GroupItem = { fieldId: string; idx: number }
   type SubGroup  = { subKey: string; subLabel: string; subOrder: number; items: GroupItem[] }
@@ -783,6 +802,43 @@ export function PdoFormPage() {
               </p>
             )}
 
+            {fields.length > 0 && (
+              <div className="flex items-center gap-2 mb-4 flex-wrap">
+                <div className="relative flex-1 min-w-[220px] max-w-[320px]">
+                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted" />
+                  <input
+                    className="input-base pl-9 w-full"
+                    placeholder="Cari kode/nama item..."
+                    value={itemSearch}
+                    onChange={(e) => setItemSearch(e.target.value)}
+                  />
+                </div>
+                <button
+                  type="button"
+                  className={`badge ${filterAutoExternal ? 'badge-approved' : 'badge-draft'} cursor-pointer`}
+                  onClick={() => setFilterAutoExternal((v) => !v)}
+                >
+                  Auto External
+                </button>
+                <button
+                  type="button"
+                  className={`badge ${filterZeroAmount ? 'badge-approved' : 'badge-draft'} cursor-pointer`}
+                  onClick={() => setFilterZeroAmount((v) => !v)}
+                >
+                  Jumlah = 0
+                </button>
+                {hasActiveFilter && (
+                  <button
+                    type="button"
+                    className="text-xs text-muted underline"
+                    onClick={() => { setItemSearch(''); setFilterAutoExternal(false); setFilterZeroAmount(false) }}
+                  >
+                    Reset filter
+                  </button>
+                )}
+              </div>
+            )}
+
             {fields.length === 0 ? (
               <p className="text-muted text-sm text-center py-6">
                 Klik "Tambah Item" untuk memulai input rencana biaya.
@@ -790,16 +846,22 @@ export function PdoFormPage() {
             ) : (
               <div className="flex flex-col gap-2">
                 {/* Ungrouped rows (newly added, no category selected yet) */}
-                {ungrouped.length > 0 && (
+                {ungrouped.filter(({ idx }) => matchesFilter(idx)).length > 0 && (
                   <div className="flex flex-col gap-3">
-                    {ungrouped.map(({ fieldId, idx }) => renderDetailRow(fieldId, idx))}
+                    {ungrouped.filter(({ idx }) => matchesFilter(idx)).map(({ fieldId, idx }) => renderDetailRow(fieldId, idx))}
                   </div>
                 )}
 
                 {/* Grouped rows: collapsible by category → sub-kategori */}
                 {sortedCats.map((cg) => {
                   const catCollapsed = collapsedGroups.has(`cat_${cg.catKey}`)
-                  const sortedSubs   = [...cg.subMap.values()].sort((a, b) => a.subOrder - b.subOrder)
+                  const sortedSubs   = [...cg.subMap.values()]
+                    .map((sg) => ({ ...sg, items: sg.items.filter(({ idx }) => matchesFilter(idx)) }))
+                    .filter((sg) => sg.items.length > 0)
+                    .sort((a, b) => a.subOrder - b.subOrder)
+
+                  if (sortedSubs.length === 0) return null
+
                   const catTotal     = sortedSubs.reduce(
                     (s, sg) => s + sg.items.reduce(
                       (ss, { idx }) => ss + (Number(detailValues?.[idx]?.amount) || 0),

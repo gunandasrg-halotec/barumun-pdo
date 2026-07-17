@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Search, LogOut } from 'lucide-react'
+import { LogOut } from 'lucide-react'
 import { useAuthStore } from '@/store/auth.store'
 import { useNavigate } from 'react-router-dom'
 import { api } from '@/lib/api'
@@ -8,11 +8,7 @@ import { getInitials } from '@/lib/format'
 import { ROLE_LABELS } from '@/lib/auth'
 import type { RoleCode } from '@/types'
 
-interface TopbarProps {
-  onSearch?: (query: string) => void
-}
-
-export function Topbar({ onSearch }: TopbarProps) {
+export function Topbar() {
   const { user, logout } = useAuthStore()
   const navigate = useNavigate()
   const [showMenu, setShowMenu] = useState(false)
@@ -28,18 +24,7 @@ export function Topbar({ onSearch }: TopbarProps) {
   }
 
   return (
-    <header className="flex items-center justify-between px-7 py-4 bg-white border-b border-line sticky top-0 z-20">
-      {/* Search */}
-      <div className="relative flex-1 max-w-[430px]">
-        <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted" />
-        <input
-          type="text"
-          placeholder="Cari nomor PDO, kategori, item, keterangan biaya..."
-          className="w-full pl-9 pr-4 py-2.5 text-sm border border-line rounded-badge bg-[#f7faf7] text-ink placeholder:text-muted focus:outline-none focus:ring-2 focus:ring-[#b7e9d1]"
-          onChange={(e) => onSearch?.(e.target.value)}
-        />
-      </div>
-
+    <header className="flex items-center justify-end px-7 py-4 bg-white border-b border-line sticky top-0 z-20">
       {/* Profile */}
       {user && (
         <div className="relative">
