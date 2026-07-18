@@ -8,6 +8,17 @@ use App\Models\User;
 class RealizationJournalExportService
 {
     /**
+     * Label Tag per kode unit kebun, dipakai untuk mengelompokkan transaksi
+     * jurnal umum berdasarkan kebun di Jurnal by Mekari.
+     */
+    private const UNIT_TAGS = [
+        'BN' => 'Kebun Binanga',
+        'JM' => 'Kebun JM',
+        'KP' => 'Kebun KP',
+        'SS' => 'Kebun Sosa',
+    ];
+
+    /**
      * Bangun baris-baris jurnal (debit + kredit) untuk setiap realisasi terpilih.
      * Tidak ada entry yang di-skip — AccountCode dikosongkan bila belum tersedia
      * di master data, agar user bisa mengisinya manual sebelum import ke Jurnal.
@@ -37,6 +48,7 @@ class RealizationJournalExportService
             $itemCode  = $expenseItem?->code ?? $pdoDetail?->id;
             $itemName  = $expenseItem?->name ?? $pdoDetail?->description ?? '—';
             $unitName  = $plantationUnit?->name ?? '—';
+            $tag       = self::UNIT_TAGS[$plantationUnit?->code] ?? '';
 
             $transactionNumber = $entry->proof_number;
             $transactionDate   = $entry->transaction_date->format('d/m/Y');
@@ -63,6 +75,7 @@ class RealizationJournalExportService
                     'credit'       => $entry->amount,
                 ],
                 'memo'                    => $memo,
+                'tag'                     => $tag,
                 'already_exported'       => $entry->exported_to_journal_at !== null,
                 'already_exported_at'    => $entry->exported_to_journal_at?->toIso8601String(),
             ];
@@ -96,7 +109,7 @@ class RealizationJournalExportService
                     $line['debit'] ?? '',
                     $line['credit'] ?? '',
                     $row['memo'],
-                    '', // Tags
+                    $row['tag'],
                     '', // Currency
                     '', // RateToBase
                 ]);

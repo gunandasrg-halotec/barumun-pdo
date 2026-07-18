@@ -36,6 +36,7 @@ interface JournalRow {
   debit_row: JournalRowSide
   credit_row: JournalRowSide
   memo: string
+  tag: string
   already_exported: boolean
   already_exported_at: string | null
 }
@@ -403,7 +404,7 @@ export function RealizationPage() {
           <table className="w-full border-collapse text-sm" style={{ minWidth: 900 }}>
             <thead>
               <tr>
-                {['No. Transaksi', 'Tanggal', 'Kode Akun', 'Deskripsi', 'Debit', 'Credit', 'Memo'].map((h) => (
+                {['No. Transaksi', 'Tanggal', 'Kode Akun', 'Deskripsi', 'Debit', 'Credit', 'Memo', 'Tag'].map((h) => (
                   <th key={h} className="px-3 py-2.5 text-left text-[11px] font-bold uppercase tracking-wider text-muted bg-[#f7faf7] sticky top-0 z-10">
                     {h}
                   </th>
@@ -427,6 +428,7 @@ export function RealizationPage() {
                     <td className="px-3 py-2 text-right font-bold whitespace-nowrap">{fmt(row.debit_row.debit ?? 0)}</td>
                     <td className="px-3 py-2 text-right whitespace-nowrap">—</td>
                     <td className="px-3 py-2" rowSpan={2}>{row.memo}</td>
+                    <td className="px-3 py-2 whitespace-nowrap" rowSpan={2}>{row.tag}</td>
                   </tr>
                   <tr key={`${row.realization_entry_id}-credit`} className="border-t border-dashed border-line">
                     <td className={`px-3 py-2 whitespace-nowrap ${!row.credit_row.account_code ? 'bg-amber-50' : ''}`}>
