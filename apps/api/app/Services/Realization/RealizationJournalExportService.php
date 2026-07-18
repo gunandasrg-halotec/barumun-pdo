@@ -52,7 +52,7 @@ class RealizationJournalExportService
                 'transaction_date'     => $transactionDate,
                 'debit_row' => [
                     'account_code' => $pdoDetail?->account_number ?: null,
-                    'description'  => $itemName,
+                    'description'  => "{$itemCode} - {$itemName}",
                     'debit'        => $entry->amount,
                     'credit'       => null,
                 ],
