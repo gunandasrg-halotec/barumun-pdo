@@ -25,7 +25,6 @@ class RealizationJournalExportService
             ->map(fn ($id) => $entries->get($id))
             ->filter();
 
-        $usedTransactionNumbers = [];
         $rows = [];
 
         foreach ($ordered as $entry) {
@@ -36,21 +35,16 @@ class RealizationJournalExportService
 
             $pdoNumber = $pdoHeader?->pdo_number ?? '—';
             $itemCode  = $expenseItem?->code ?? $pdoDetail?->id;
-            $baseTransactionNumber = "{$pdoNumber}/{$itemCode}";
+            $itemName  = $expenseItem?->name ?? $pdoDetail?->description ?? '—';
+            $unitName  = $plantationUnit?->name ?? '—';
 
-            $transactionNumber = $baseTransactionNumber;
-            $suffix = 1;
-            while (isset($usedTransactionNumbers[$transactionNumber])) {
-                $suffix++;
-                $transactionNumber = "{$baseTransactionNumber}-{$suffix}";
+            $transactionNumber = $entry->proof_number;
+            $transactionDate   = $entry->transaction_date->format('d/m/Y');
+
+            $memo = "{$pdoNumber} - {$itemCode}  {$itemName}";
+            if ($entry->explanation) {
+                $memo .= " - {$entry->explanation}";
             }
-            $usedTransactionNumbers[$transactionNumber] = true;
-
-            $transactionDate = $entry->transaction_date->format('d/m/Y');
-            $memo = trim($pdoNumber . ($entry->explanation ? " — {$entry->explanation}" : ''));
-
-            $itemName = $expenseItem?->name ?? $pdoDetail?->description ?? '—';
-            $unitName = $plantationUnit?->name ?? '—';
 
             $rows[] = [
                 'realization_entry_id' => $entry->id,
