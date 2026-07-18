@@ -22,6 +22,7 @@ export interface PlantationUnit {
   name: string
   is_active: boolean
   payroll_estate_external_id?: string | null
+  account_code_kas_kebun?: string | null
 }
 
 export interface AuthUser {
@@ -273,6 +274,7 @@ export interface RealizationEntry {
   explanation: string | null
   created_at: string
   attachments?: RealizationAttachment[]
+  exported_to_journal_at?: string | null
 }
 
 export interface RealizationAttachment {

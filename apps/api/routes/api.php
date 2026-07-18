@@ -118,6 +118,7 @@ Route::prefix('v1')->middleware(['auth:sanctum', 'ensure.unit.access'])->group(f
 
     // ── Realisasi Dana ────────────────────────────────
     Route::get('realization-entries', [RealizationEntryController::class, 'index']);
+    Route::post('realization-entries/export-journal', [RealizationEntryController::class, 'exportJournal']);
     Route::post('realization-entries', [RealizationEntryController::class, 'store'])->middleware('check.pdo.status');
     Route::put('realization-entries/{entry}', [RealizationEntryController::class, 'update'])->middleware('check.pdo.status');
     Route::delete('realization-entries/{entry}', [RealizationEntryController::class, 'destroy'])->middleware('check.pdo.status');

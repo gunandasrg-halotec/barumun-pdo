@@ -336,7 +336,12 @@ class MasterDataService
         $old = $unit->toArray();
 
         $unit->update([
-            'payroll_estate_external_id' => $data['payroll_estate_external_id'] ?? null,
+            'payroll_estate_external_id' => array_key_exists('payroll_estate_external_id', $data)
+                ? $data['payroll_estate_external_id']
+                : $unit->payroll_estate_external_id,
+            'account_code_kas_kebun' => array_key_exists('account_code_kas_kebun', $data)
+                ? $data['account_code_kas_kebun']
+                : $unit->account_code_kas_kebun,
         ]);
 
         AuditLog::record(

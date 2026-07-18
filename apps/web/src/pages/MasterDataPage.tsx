@@ -32,6 +32,7 @@ export function MasterDataPage() {
   const [expandedCats, setExpandedCats] = useState<Set<string>>(new Set())
   const [expandedSubs, setExpandedSubs] = useState<Set<string>>(new Set())
   const [payrollMappings, setPayrollMappings] = useState<Record<string, string>>({})
+  const [kasKebunMappings, setKasKebunMappings] = useState<Record<string, string>>({})
 
   const { data: categories } = useCategories({ is_active: undefined })
   const { data: subcategories } = useSubcategories({ is_active: undefined })
@@ -50,6 +51,9 @@ export function MasterDataPage() {
     if (!units) return
     setPayrollMappings(Object.fromEntries(
       units.map((unit) => [unit.id, unit.payroll_estate_external_id ?? ''])
+    ))
+    setKasKebunMappings(Object.fromEntries(
+      units.map((unit) => [unit.id, unit.account_code_kas_kebun ?? ''])
     ))
   }, [units])
 
@@ -72,14 +76,15 @@ export function MasterDataPage() {
     mutationFn: async (unit: PlantationUnit) => {
       const res = await api.put<ApiResponse<PlantationUnit>>(`/plantation-units/${unit.id}`, {
         payroll_estate_external_id: payrollMappings[unit.id] || null,
+        account_code_kas_kebun: kasKebunMappings[unit.id] || null,
       })
       return res.data.data
     },
     onSuccess: () => {
-      toast('Payroll Estate Mapping tersimpan')
+      toast('Mapping unit kebun tersimpan')
       qc.invalidateQueries({ queryKey: ['plantation-units'] })
     },
-    onError: () => toast('Gagal menyimpan Payroll Estate Mapping', 'error'),
+    onError: () => toast('Gagal menyimpan mapping unit kebun', 'error'),
   })
 
   const currentMasterDataUrl = buildMasterDataUrl({
@@ -379,7 +384,7 @@ export function MasterDataPage() {
           <table className="w-full border-collapse">
             <thead>
               <tr>
-                {['Kode', 'Kebun', 'Payroll Estate Mapping', 'Aksi'].map((h) => (
+                {['Kode', 'Kebun', 'Payroll Estate Mapping', 'Kode Kas Kebun', 'Aksi'].map((h) => (
                   <th key={h} className="px-4 py-3 text-left text-[11px] font-bold uppercase tracking-wider text-[#526257] bg-[#f7faf7] sticky top-0">
                     {h}
                   </th>
@@ -388,7 +393,7 @@ export function MasterDataPage() {
             </thead>
             <tbody>
               {!units?.length ? (
-                <tr><td colSpan={4} className="p-6"><EmptyState /></td></tr>
+                <tr><td colSpan={5} className="p-6"><EmptyState /></td></tr>
               ) : units.map((unit) => (
                 <tr key={unit.id} className="border-t border-line hover:bg-[#fbfdfb]">
                   <td className="px-4 py-3 text-sm font-bold">{unit.code}</td>
@@ -402,6 +407,17 @@ export function MasterDataPage() {
                         [unit.id]: event.target.value,
                       }))}
                       placeholder="Estate ID Payroll"
+                    />
+                  </td>
+                  <td className="px-4 py-3">
+                    <input
+                      className="input-base max-w-xs"
+                      value={kasKebunMappings[unit.id] ?? ''}
+                      onChange={(event) => setKasKebunMappings((current) => ({
+                        ...current,
+                        [unit.id]: event.target.value,
+                      }))}
+                      placeholder="mis. 1-10002"
                     />
                   </td>
                   <td className="px-4 py-3">

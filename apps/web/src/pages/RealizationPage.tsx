@@ -9,7 +9,7 @@ import { UnitMultiSelectButton } from '@/components/ui/UnitMultiSelectButton'
 import { useAuthStore } from '@/store/auth.store'
 import { useToastStore } from '@/store/toast.store'
 import { fmt, fmtDate } from '@/lib/format'
-import { Upload, AlertCircle, Search, ChevronDown, ChevronRight } from 'lucide-react'
+import { Upload, AlertCircle, AlertTriangle, Search, ChevronDown, ChevronRight, FileSpreadsheet } from 'lucide-react'
 import type { ApiResponse, PlantationUnit, RealizationEntry } from '@/types'
 
 const PAYMENT_LABEL: Record<string, string> = {
@@ -20,7 +20,25 @@ const FUNDING_LABEL: Record<string, string> = {
   kas_kebun: 'Kas Kebun', rekening_kebun: 'Rekening Kebun', rekening_utama: 'Rekening Utama',
 }
 
-const COLS = ['PDO', 'Item PDO', 'No. Ref', 'Tanggal', 'Jumlah', 'Metode', 'Sumber Dana', 'Dicatat Oleh', 'Bukti', 'Aksi']
+const COLS = ['', 'PDO', 'Item PDO', 'No. Ref', 'Tanggal', 'Jumlah', 'Metode', 'Sumber Dana', 'Dicatat Oleh', 'Bukti', 'Status Jurnal', 'Aksi']
+
+interface JournalRowSide {
+  account_code: string | null
+  description: string
+  debit: number | null
+  credit: number | null
+}
+
+interface JournalRow {
+  realization_entry_id: string
+  transaction_number: string
+  transaction_date: string
+  debit_row: JournalRowSide
+  credit_row: JournalRowSide
+  memo: string
+  already_exported: boolean
+  already_exported_at: string | null
+}
 
 export function RealizationPage() {
   const user  = useAuthStore((s) => s.user)
@@ -33,6 +51,9 @@ export function RealizationPage() {
   const [endDate,    setEndDate]   = useState('')
   const [collapsed,  setCollapsed] = useState<Record<string, boolean>>({})
   const [unitIds,    setUnitIds]   = useState<string[]>([])
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
+  const [previewRows, setPreviewRows] = useState<JournalRow[] | null>(null)
+  const [showPreview,  setShowPreview] = useState(false)
 
   const isHO = !user?.plantation_unit?.id
 
@@ -76,6 +97,45 @@ export function RealizationPage() {
     onError: () => toast('Gagal upload bukti', 'error'),
   })
 
+  const previewJournal = useMutation({
+    mutationFn: async () => {
+      const res = await api.post<ApiResponse<{ rows: JournalRow[] }>>('/realization-entries/export-journal', {
+        entry_ids: Array.from(selectedIds),
+        preview: true,
+      })
+      return res.data.data.rows
+    },
+    onSuccess: (rows) => {
+      setPreviewRows(rows)
+      setShowPreview(true)
+    },
+    onError: () => toast('Gagal memuat preview jurnal', 'error'),
+  })
+
+  const downloadJournal = useMutation({
+    mutationFn: async () => {
+      const res = await api.post('/realization-entries/export-journal', {
+        entry_ids: Array.from(selectedIds),
+        preview: false,
+      }, { responseType: 'blob' })
+      return res.data
+    },
+    onSuccess: (blob) => {
+      const url  = URL.createObjectURL(new Blob([blob]))
+      const a    = document.createElement('a')
+      a.href     = url
+      a.download = `JurnalUmum-${new Date().toISOString().slice(0, 10)}.csv`
+      a.click()
+      URL.revokeObjectURL(url)
+      toast('CSV jurnal berhasil diunduh')
+      setShowPreview(false)
+      setPreviewRows(null)
+      setSelectedIds(new Set())
+      qc.invalidateQueries({ queryKey: ['realizations'] })
+    },
+    onError: () => toast('Gagal mengunduh CSV jurnal', 'error'),
+  })
+
   const filtered = useMemo(() => {
     if (!realizations) return []
     const q = search.trim().toLowerCase()
@@ -114,6 +174,24 @@ export function RealizationPage() {
   const toggleGroup = (id: string) =>
     setCollapsed((prev) => ({ ...prev, [id]: !prev[id] }))
 
+  const toggleSelect = (id: string) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev)
+      next.has(id) ? next.delete(id) : next.add(id)
+      return next
+    })
+  }
+
+  const allVisibleIds = filtered.map((r) => r.id)
+  const allSelected = allVisibleIds.length > 0 && allVisibleIds.every((id) => selectedIds.has(id))
+
+  const toggleSelectAll = () => {
+    setSelectedIds((prev) => {
+      if (allSelected) return new Set()
+      return new Set(allVisibleIds)
+    })
+  }
+
   return (
     <div>
       <div className="flex items-start justify-between mb-6">
@@ -121,6 +199,14 @@ export function RealizationPage() {
           <h2 className="text-[28px] font-[950] text-ink">Realisasi Biaya</h2>
           <p className="text-muted text-sm mt-1">Daftar semua realisasi pengeluaran yang sudah dicatat.</p>
         </div>
+        <Button
+          disabled={selectedIds.size === 0}
+          loading={previewJournal.isPending}
+          onClick={() => previewJournal.mutate()}
+        >
+          <FileSpreadsheet className="w-4 h-4" /> Export ke Jurnal Sementara
+          {selectedIds.size > 0 && ` (${selectedIds.size})`}
+        </Button>
       </div>
 
       {/* Filter Bar */}
@@ -174,9 +260,15 @@ export function RealizationPage() {
           <table className="w-full border-collapse" style={{ minWidth: 1000 }}>
             <thead>
               <tr>
-                {COLS.map((h) => (
-                  <th key={h} className="px-4 py-3 text-left text-[11px] font-bold uppercase tracking-wider text-muted bg-[#f7faf7] border-b border-line">
-                    {h}
+                {COLS.map((h, i) => (
+                  <th key={h || i} className="px-4 py-3 text-left text-[11px] font-bold uppercase tracking-wider text-muted bg-[#f7faf7] border-b border-line">
+                    {i === 0 ? (
+                      <input
+                        type="checkbox"
+                        checked={allSelected}
+                        onChange={toggleSelectAll}
+                      />
+                    ) : h}
                   </th>
                 ))}
               </tr>
@@ -207,6 +299,13 @@ export function RealizationPage() {
                     {/* Entry rows */}
                     {!isCollapsed && group.entries.map((r) => (
                       <tr key={r.id} className="border-t border-line hover:bg-[#fbfdfb]">
+                        <td className="px-4 py-3">
+                          <input
+                            type="checkbox"
+                            checked={selectedIds.has(r.id)}
+                            onChange={() => toggleSelect(r.id)}
+                          />
+                        </td>
                         <td className="px-4 py-3 text-sm text-muted">{group.pdoNumber}</td>
                         <td className="px-4 py-3 text-sm">
                           {r.pdo_detail?.expense_item
@@ -230,6 +329,13 @@ export function RealizationPage() {
                             <span className="flex items-center gap-1 text-xs text-amber-600">
                               <AlertCircle className="w-3 h-3" /> Belum
                             </span>
+                          )}
+                        </td>
+                        <td className="px-4 py-3">
+                          {r.exported_to_journal_at ? (
+                            <span className="badge badge-approved">Sudah di-export {fmtDate(r.exported_to_journal_at)}</span>
+                          ) : (
+                            <span className="badge badge-draft">Belum</span>
                           )}
                         </td>
                         <td className="px-4 py-3">
@@ -275,6 +381,74 @@ export function RealizationPage() {
           <Button variant="secondary" onClick={() => { setUploadId(null); setFile(null) }}>Tutup</Button>
           <Button loading={uploadBukti.isPending} disabled={!file} onClick={() => uploadBukti.mutate()}>
             Upload
+          </Button>
+        </div>
+      </Modal>
+
+      {/* Modal Preview Jurnal */}
+      <Modal
+        open={showPreview}
+        onClose={() => { setShowPreview(false); setPreviewRows(null) }}
+        title="Preview Export Jurnal Umum"
+        width="w-[95vw] max-w-[1400px]"
+      >
+        {previewRows && previewRows.some((r) => r.already_exported) && (
+          <div className="flex items-center gap-2 mb-3 px-3 py-2.5 rounded-card bg-amber-50 border border-amber-200 text-sm text-amber-800">
+            <AlertTriangle className="w-4 h-4 shrink-0" />
+            {previewRows.filter((r) => r.already_exported).length} item sudah pernah di-export sebelumnya.
+          </div>
+        )}
+
+        <div className="border border-line rounded-card overflow-y-auto overflow-x-auto max-h-[60vh]">
+          <table className="w-full border-collapse text-sm" style={{ minWidth: 900 }}>
+            <thead>
+              <tr>
+                {['No. Transaksi', 'Tanggal', 'Kode Akun', 'Deskripsi', 'Debit', 'Credit'].map((h) => (
+                  <th key={h} className="px-3 py-2.5 text-left text-[11px] font-bold uppercase tracking-wider text-muted bg-[#f7faf7] sticky top-0 z-10">
+                    {h}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {previewRows?.map((row) => (
+                <>
+                  <tr key={`${row.realization_entry_id}-debit`} className="border-t border-line">
+                    <td className="px-3 py-2 font-bold whitespace-nowrap" rowSpan={2}>{row.transaction_number}</td>
+                    <td className="px-3 py-2 whitespace-nowrap" rowSpan={2}>{row.transaction_date}</td>
+                    <td className={`px-3 py-2 whitespace-nowrap ${!row.debit_row.account_code ? 'bg-amber-50' : ''}`}>
+                      {row.debit_row.account_code || (
+                        <span className="flex items-center gap-1 text-amber-700">
+                          <AlertTriangle className="w-3 h-3" /> Kosong
+                        </span>
+                      )}
+                    </td>
+                    <td className="px-3 py-2">{row.debit_row.description}</td>
+                    <td className="px-3 py-2 text-right font-bold whitespace-nowrap">{fmt(row.debit_row.debit ?? 0)}</td>
+                    <td className="px-3 py-2 text-right whitespace-nowrap">—</td>
+                  </tr>
+                  <tr key={`${row.realization_entry_id}-credit`} className="border-t border-dashed border-line">
+                    <td className={`px-3 py-2 whitespace-nowrap ${!row.credit_row.account_code ? 'bg-amber-50' : ''}`}>
+                      {row.credit_row.account_code || (
+                        <span className="flex items-center gap-1 text-amber-700">
+                          <AlertTriangle className="w-3 h-3" /> Kosong
+                        </span>
+                      )}
+                    </td>
+                    <td className="px-3 py-2">{row.credit_row.description}</td>
+                    <td className="px-3 py-2 text-right whitespace-nowrap">—</td>
+                    <td className="px-3 py-2 text-right font-bold whitespace-nowrap">{fmt(row.credit_row.credit ?? 0)}</td>
+                  </tr>
+                </>
+              ))}
+            </tbody>
+          </table>
+        </div>
+
+        <div className="flex justify-end gap-2 mt-5">
+          <Button variant="secondary" onClick={() => { setShowPreview(false); setPreviewRows(null) }}>Batal</Button>
+          <Button loading={downloadJournal.isPending} onClick={() => downloadJournal.mutate()}>
+            Unduh CSV
           </Button>
         </div>
       </Modal>

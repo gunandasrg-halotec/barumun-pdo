@@ -17,6 +17,7 @@ class UpdatePlantationUnitPayrollMappingRequest extends FormRequest
     {
         return [
             'payroll_estate_external_id' => ['nullable', 'string', 'max:255'],
+            'account_code_kas_kebun'     => ['nullable', 'string', 'max:50'],
         ];
     }
 
