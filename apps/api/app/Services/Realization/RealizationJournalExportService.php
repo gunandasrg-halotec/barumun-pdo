@@ -68,7 +68,9 @@ class RealizationJournalExportService
             $creditAccountCode = $isRekeningUtama
                 ? self::REKENING_UTAMA_ACCOUNT_CODE
                 : ($plantationUnit?->account_code_kas_kebun ?: null);
-            $creditDescription = $isRekeningUtama ? 'Rekening Utama' : "Kas Kebun {$unitName}";
+            $creditDescription = $isRekeningUtama
+                ? 'Bank BRI 01220101002851560 (an Sofi Hana Nasution)'
+                : "Kas Kebun {$unitName}";
 
             $rows[] = [
                 'realization_entry_id' => $entry->id,
