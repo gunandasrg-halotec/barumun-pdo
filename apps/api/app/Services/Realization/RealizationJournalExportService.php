@@ -19,6 +19,12 @@ class RealizationJournalExportService
     ];
 
     /**
+     * Kode akun untuk baris kredit saat funding_source = rekening_utama
+     * (bukan kas kebun per unit, tapi rekening utama perusahaan).
+     */
+    private const REKENING_UTAMA_ACCOUNT_CODE = '1-10019';
+
+    /**
      * Bangun baris-baris jurnal (debit + kredit) untuk setiap realisasi terpilih.
      * Tidak ada entry yang di-skip — AccountCode dikosongkan bila belum tersedia
      * di master data, agar user bisa mengisinya manual sebelum import ke Jurnal.
@@ -58,6 +64,12 @@ class RealizationJournalExportService
                 $memo .= " - {$entry->explanation}";
             }
 
+            $isRekeningUtama   = $entry->funding_source === RealizationEntry::FUNDING_REKENING_UTAMA;
+            $creditAccountCode = $isRekeningUtama
+                ? self::REKENING_UTAMA_ACCOUNT_CODE
+                : ($plantationUnit?->account_code_kas_kebun ?: null);
+            $creditDescription = $isRekeningUtama ? 'Rekening Utama' : "Kas Kebun {$unitName}";
+
             $rows[] = [
                 'realization_entry_id' => $entry->id,
                 'transaction_number'   => $transactionNumber,
@@ -69,8 +81,8 @@ class RealizationJournalExportService
                     'credit'       => null,
                 ],
                 'credit_row' => [
-                    'account_code' => $plantationUnit?->account_code_kas_kebun ?: null,
-                    'description'  => "Kas Kebun {$unitName}",
+                    'account_code' => $creditAccountCode,
+                    'description'  => $creditDescription,
                     'debit'        => null,
                     'credit'       => $entry->amount,
                 ],
