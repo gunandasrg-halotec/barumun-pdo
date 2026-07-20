@@ -178,6 +178,32 @@ export function RekapitulasiPage() {
   })
 
   const selectedPaymentMethod = watch('payment_method')
+  const selectedPdoDetailId   = watch('pdo_detail_id')
+
+  // ── Prefill No. Referensi sesuai pola {PDO_Number}/{Item_code}/{SequenceNumber} ──
+  // Dihitung per kode item DALAM PDO yang sama (bukan per pdo_detail_id), karena
+  // satu kode item bisa punya beberapa baris pdo_detail berbeda (mis. dari PDO Tambahan).
+  const { data: pdoRealizationEntries } = useQuery({
+    queryKey: ['realizations-for-pdo-sequence', resolvedUnitId, year, month],
+    queryFn: async () => {
+      const res = await api.get<ApiResponse<RealizationEntry[]>>('/realization-entries', {
+        params: { unit_id: resolvedUnitId, period_year: year, period_month: month },
+      })
+      return res.data.data
+    },
+    enabled: !!resolvedUnitId && !!activePdo,
+  })
+
+  useEffect(() => {
+    if (!selectedPdoDetailId || !activePdo || !pdoRealizationEntries) return
+    const item     = availableItems.find((d) => d.pdo_detail_id === selectedPdoDetailId)
+    const itemCode = item?.expense_item?.code ?? 'NOITEM'
+    const existingCount = pdoRealizationEntries.filter(
+      (r) => (r.pdo_detail?.expense_item?.code ?? 'NOITEM') === itemCode
+    ).length
+    const sequence = existingCount + 1
+    setValue('proof_number', `${activePdo.pdo_number}/${itemCode}/${sequence}`)
+  }, [selectedPdoDetailId, pdoRealizationEntries, activePdo, availableItems, setValue])
 
   useEffect(() => {
     if (isPribadiVendorRole(user ?? undefined)) {
