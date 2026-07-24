@@ -18,6 +18,7 @@ use App\Http\Controllers\PdoSupplementary\PdoSupplementaryController;
 use App\Http\Controllers\PdoSupplementary\PdoSupplementaryMergeController;
 use App\Http\Controllers\Realization\RealizationAttachmentController;
 use App\Http\Controllers\Realization\RealizationEntryController;
+use App\Http\Controllers\Reports\CashBookController;
 use App\Http\Controllers\Reports\RecapController;
 use App\Http\Controllers\Reports\ReportController;
 use App\Http\Controllers\Settings\SystemSettingController;
@@ -157,6 +158,8 @@ Route::prefix('v1')->middleware(['auth:sanctum', 'ensure.unit.access'])->group(f
     Route::get('reports/missing-proof', [ReportController::class, 'missingProof']);
     Route::get('reports/recap', [RecapController::class, 'index']);
     Route::get('reports/recap/export', [RecapController::class, 'exportExcel']);
+    Route::get('reports/cashbook', [CashBookController::class, 'index']);
+    Route::get('reports/cashbook/export', [CashBookController::class, 'exportExcel']);
     Route::post('reports/export', [ReportController::class, 'export']);
     Route::get('reports/export/{job}', [ReportController::class, 'exportStatus']);
 

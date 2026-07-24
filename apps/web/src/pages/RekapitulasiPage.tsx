@@ -8,6 +8,7 @@ import { Button } from '@/components/ui/Button'
 import { Modal } from '@/components/ui/Modal'
 import { EmptyState } from '@/components/ui/EmptyState'
 import { useRecapData } from '@/hooks/useRecapData'
+import { useCashBookData } from '@/hooks/useCashBookData'
 import { RecapTable } from '@/components/recap/RecapTable'
 import { useAuthStore } from '@/store/auth.store'
 import { useToastStore } from '@/store/toast.store'
@@ -84,6 +85,9 @@ export function RekapitulasiPage() {
 
   const isCrossUnit = CROSS_UNIT_ROLES.includes(role)
 
+  // ── Tab: Rekap Buku Kas (per-item, mengikuti PDO) vs Buku Kas Harian (kronologis) ──
+  const [activeTab, setActiveTab] = useState<'rekap' | 'harian'>('rekap')
+
   // ── Period / unit filter state ───────────────────────────────────────────
   const [year,              setYear]              = useState(currentYear)
   const [month,             setMonth]             = useState(currentMonth)
@@ -149,6 +153,18 @@ export function RekapitulasiPage() {
       end_date:     validEndDate,
     },
     !!resolvedUnitId,
+  )
+
+  // ── Cash book (kronologis) data ───────────────────────────────────────────
+  const { data: cashBook, isFetching: cashBookFetching, isError: cashBookError } = useCashBookData(
+    {
+      period_year:  year,
+      period_month: month,
+      unit_id:      resolvedUnitId || undefined,
+      start_date:   validStartDate,
+      end_date:     validEndDate,
+    },
+    activeTab === 'harian' && !!resolvedUnitId,
   )
 
   // ── Active PDO for current period+unit (for input form) ──────────────────
@@ -391,15 +407,16 @@ export function RekapitulasiPage() {
     if (!resolvedUnitId) return
     setExcelLoading(true)
     try {
+      const isHarian = activeTab === 'harian'
       const params: Record<string, string | number> = { period_year: year, period_month: month, unit_id: resolvedUnitId }
-      if (categoryId)      params.category_id = categoryId
-      if (validStartDate)  params.start_date  = validStartDate
-      if (validEndDate)    params.end_date    = validEndDate
-      const res = await api.get('/reports/recap/export', { params, responseType: 'blob' })
+      if (!isHarian && categoryId) params.category_id = categoryId
+      if (validStartDate)          params.start_date  = validStartDate
+      if (validEndDate)            params.end_date    = validEndDate
+      const res = await api.get(isHarian ? '/reports/cashbook/export' : '/reports/recap/export', { params, responseType: 'blob' })
       const url = URL.createObjectURL(res.data)
       const a   = document.createElement('a')
       a.href    = url
-      a.download = `BukuKasKebun_${year}_${month}${resolvedUnitId ? '' : ''}.xlsx`
+      a.download = `${isHarian ? 'BukuKasHarian' : 'BukuKasKebun'}_${year}_${month}.xlsx`
       a.click()
       URL.revokeObjectURL(url)
     } catch {
@@ -416,7 +433,9 @@ export function RekapitulasiPage() {
         <div>
           <h2 className="text-[28px] font-[950] text-ink">Buku Kas Kebun</h2>
           <p className="text-muted text-sm mt-1">
-            {recap ? `${recap.period_label}${recap.unit ? ` · ${recap.unit.name}` : ''}` : 'Pilih periode dan unit untuk menampilkan data.'}
+            {activeTab === 'rekap'
+              ? (recap     ? `${recap.period_label}${recap.unit ? ` · ${recap.unit.name}` : ''}`     : 'Pilih periode dan unit untuk menampilkan data.')
+              : (cashBook  ? `${cashBook.period_label}${cashBook.unit ? ` · ${cashBook.unit.name}` : ''}` : 'Pilih periode dan unit untuk menampilkan data.')}
           </p>
         </div>
         <div className="flex gap-2">
@@ -431,6 +450,27 @@ export function RekapitulasiPage() {
             </Button>
           )}
         </div>
+      </div>
+
+      {/* Tabs */}
+      <div className="flex gap-1 mb-4 border-b border-line">
+        {([
+          { key: 'rekap',  label: 'Rekap Buku Kas' },
+          { key: 'harian', label: 'Buku Kas Harian' },
+        ] as const).map((t) => (
+          <button
+            key={t.key}
+            type="button"
+            onClick={() => setActiveTab(t.key)}
+            className={`px-4 py-2 text-sm font-bold border-b-2 transition-colors ${
+              activeTab === t.key
+                ? 'border-[#1D9E75] text-[#0F6E56]'
+                : 'border-transparent text-muted hover:text-ink'
+            }`}
+          >
+            {t.label}
+          </button>
+        ))}
       </div>
 
       {/* Filter Bar */}
@@ -464,14 +504,16 @@ export function RekapitulasiPage() {
           </div>
         )}
 
-        <div>
-          <label className="label">Realisasi</label>
-          <select className="input-base" value={realizationFilter} onChange={(e) => setRealizationFilter(e.target.value as 'all' | 'has' | 'no')}>
-            <option value="all">Semua</option>
-            <option value="has">Sudah ada realisasi</option>
-            <option value="no">Belum ada realisasi</option>
-          </select>
-        </div>
+        {activeTab === 'rekap' && (
+          <div>
+            <label className="label">Realisasi</label>
+            <select className="input-base" value={realizationFilter} onChange={(e) => setRealizationFilter(e.target.value as 'all' | 'has' | 'no')}>
+              <option value="all">Semua</option>
+              <option value="has">Sudah ada realisasi</option>
+              <option value="no">Belum ada realisasi</option>
+            </select>
+          </div>
+        )}
 
         <div className="flex items-end">
           <DateRangePickerButton
@@ -483,23 +525,25 @@ export function RekapitulasiPage() {
           />
         </div>
 
-        <div className="flex-1 min-w-[200px]">
-          <label className="label">Cari Item Biaya</label>
-          <div className="relative">
-            <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-4 h-4 text-muted pointer-events-none" />
-            <input
-              type="text"
-              className="input-base pl-8"
-              placeholder="Nama atau kode item..."
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-            />
+        {activeTab === 'rekap' && (
+          <div className="flex-1 min-w-[200px]">
+            <label className="label">Cari Item Biaya</label>
+            <div className="relative">
+              <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-4 h-4 text-muted pointer-events-none" />
+              <input
+                type="text"
+                className="input-base pl-8"
+                placeholder="Nama atau kode item..."
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+              />
+            </div>
           </div>
-        </div>
+        )}
       </div>
 
-      {/* Content */}
-      {isFetching ? (
+      {/* Content — Tab: Rekap Buku Kas */}
+      {activeTab === 'rekap' && (isFetching ? (
         <div className="card space-y-3">
           {Array.from({ length: 5 }).map((_, i) => (
             <div key={i} className="h-8 bg-[#f0f4f0] rounded animate-pulse" />
@@ -579,7 +623,70 @@ export function RekapitulasiPage() {
             : <div className="p-8 text-center text-sm text-muted">Tidak ada item yang cocok dengan filter.</div>
           }
         </div>
-      )}
+      ))}
+
+      {/* Content — Tab: Buku Kas Harian (kronologis) */}
+      {activeTab === 'harian' && (cashBookFetching ? (
+        <div className="card space-y-3">
+          {Array.from({ length: 5 }).map((_, i) => (
+            <div key={i} className="h-8 bg-[#f0f4f0] rounded animate-pulse" />
+          ))}
+        </div>
+      ) : cashBookError ? (
+        <div className="card text-sm text-red-600">Gagal memuat data. Coba lagi.</div>
+      ) : !cashBook || cashBook.rows.length === 0 ? (
+        <EmptyState message="Tidak ada transaksi kas kebun untuk periode dan unit ini." />
+      ) : (
+        <div className="card p-0 overflow-hidden">
+          {/* Summary */}
+          <div className="grid grid-cols-4 border-b border-line">
+            {[
+              { label: 'Saldo Awal',       value: cashBook.opening_balance },
+              { label: 'Total Penerimaan', value: cashBook.total_penerimaan },
+              { label: 'Total Pengeluaran',value: cashBook.total_pengeluaran },
+              { label: 'Saldo Akhir',      value: cashBook.closing_balance },
+            ].map((k, i) => (
+              <div key={k.label} className={`p-4 text-center border-r border-line last:border-r-0 border-t-2 ${i === 3 ? 'border-t-[#1D9E75]' : 'border-t-transparent'}`}>
+                <div className="text-[10px] font-[850] text-muted uppercase tracking-wider mb-1">{k.label}</div>
+                <div className={`text-[17px] font-[950] ${k.value < 0 ? 'text-red-600' : 'text-ink'}`}>
+                  {fmt(k.value)}
+                </div>
+              </div>
+            ))}
+          </div>
+
+          {/* Chronological table */}
+          <div className="overflow-x-auto">
+            <table className="w-full border-collapse text-sm">
+              <thead>
+                <tr>
+                  {['Tanggal', 'No. Ref', 'Uraian', 'Penerimaan', 'Pengeluaran', 'Saldo'].map((h) => (
+                    <th key={h} className="px-3 py-2 text-left text-[11px] font-bold uppercase tracking-wider bg-[#f7faf7] border-b border-line sticky top-0">
+                      {h}
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {cashBook.rows.map((r, i) => (
+                  <tr key={`${r.date}-${i}`} className="border-t border-line hover:bg-[#fbfdfb]">
+                    <td className="px-3 py-2 whitespace-nowrap">{fmtDate(r.date)}</td>
+                    <td className="px-3 py-2 font-mono text-xs">{r.reference ?? '—'}</td>
+                    <td className="px-3 py-2">{r.description}</td>
+                    <td className="px-3 py-2 text-right tabular-nums text-[#0F6E56] font-bold">
+                      {r.type === 'penerimaan' ? fmt(r.amount) : ''}
+                    </td>
+                    <td className="px-3 py-2 text-right tabular-nums text-red-600 font-bold">
+                      {r.type === 'pengeluaran' ? fmt(r.amount) : ''}
+                    </td>
+                    <td className="px-3 py-2 text-right tabular-nums font-bold">{fmt(r.balance)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      ))}
 
       {/* ── Modal Input/Edit Realisasi ───────────────────────────────────────── */}
       <Modal open={inputOpen} onClose={closeInputModal} title={editingEntry ? 'Edit Realisasi Biaya' : 'Input Realisasi Biaya'}>
