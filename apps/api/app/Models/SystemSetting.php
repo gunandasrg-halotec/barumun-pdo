@@ -23,6 +23,7 @@ class SystemSetting extends Model
     const KEY_WA_GATEWAY_URL        = 'wa_gateway_url';
     const KEY_WA_GATEWAY_USERNAME   = 'wa_gateway_username';
     const KEY_WA_GATEWAY_PASSWORD   = 'wa_gateway_password';
+    const KEY_WA_GATEWAY_DEVICE_ID  = 'wa_gateway_device_id';
     const KEY_REMINDER_DAY          = 'reminder_day_of_month';
     const KEY_REMINDER_HOUR         = 'reminder_hour';
 

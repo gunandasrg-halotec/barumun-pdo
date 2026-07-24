@@ -66,6 +66,7 @@ class SystemSettingService
         $baseUrl  = SystemSetting::getValue($companyId, SystemSetting::KEY_WA_GATEWAY_URL);
         $username = SystemSetting::getValue($companyId, SystemSetting::KEY_WA_GATEWAY_USERNAME);
         $password = SystemSetting::getValue($companyId, SystemSetting::KEY_WA_GATEWAY_PASSWORD);
+        $deviceId = SystemSetting::getValue($companyId, SystemSetting::KEY_WA_GATEWAY_DEVICE_ID);
 
         if (! $baseUrl) {
             return ['success' => false, 'message' => 'URL WhatsApp gateway belum dikonfigurasi.'];
@@ -86,6 +87,7 @@ class SystemSettingService
 
         try {
             $response = Http::withBasicAuth($username, $password)
+                ->withHeaders(['X-Device-Id' => $deviceId])
                 ->timeout(10)
                 ->post($endpoint, [
                     'phone'   => $phone,

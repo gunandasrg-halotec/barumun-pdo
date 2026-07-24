@@ -43,7 +43,9 @@ class SystemSettingController extends Controller
         $this->requireAdmin($request);
         $result = $this->service->testWhatsApp($request->user()->company_id, $request->user());
 
-        $status = $result['success'] ? 200 : 502;
+        // Pakai status code asli dari gateway kalau tersedia (mis. 429, 401),
+        // bukan selalu 502 — 502 dikhususkan utk kegagalan koneksi/config di sisi kita.
+        $status = $result['status'] ?? 502;
 
         return response()->json(['success' => $result['success'], 'data' => $result], $status);
     }

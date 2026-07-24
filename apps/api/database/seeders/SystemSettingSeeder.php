@@ -46,6 +46,11 @@ class SystemSettingSeeder extends Seeder
                 'value'       => '',
                 'description' => 'Password untuk Basic Auth WhatsApp gateway. Disimpan terenkripsi.',
             ],
+            [
+                'key'         => 'wa_gateway_device_id',
+                'value'       => 'barumun',
+                'description' => 'Device ID untuk header X-Device-Id saat mengirim pesan WhatsApp via gateway.',
+            ],
 
             // ── Jadwal reminder bulanan (BRD BR-NOTIF-004) ────────────────
             [
