@@ -157,8 +157,10 @@ class RealizationEntryService
     /**
      * Catat realisasi baru.
      * BR-REAL-001: hanya saat PDO berstatus final.
-     * BR-REAL-002: total realisasi PER KANTONG tidak boleh melebihi transfer ke kantong itu.
-     * BR-REAL-003: total realisasi (semua kantong) tidak boleh melebihi amount yang disetujui.
+     * BR-REAL-002: total realisasi PER KANTONG (PDO-level) tidak boleh melebihi transfer ke
+     * kantong itu — ini satu-satunya hard ceiling. Anggaran per item (pdo_detail.amount)
+     * tidak lagi jadi batas keras: realisasi 1 item boleh melebihi anggarannya sendiri
+     * selama total kantong PDO masih cukup (realokasi antar item dalam 1 kantong diizinkan).
      * BR-REAL-005: KERANI hanya boleh realisasi kantong rek_kebun; STAFF_PURCHASING
      * & MANAJER_KEUANGAN hanya kantong pribadi+vendor. Item potongan tidak bisa direalisasi.
      */
@@ -231,18 +233,9 @@ class RealizationEntryService
                 ], 422));
             }
 
-            $totalRealizedAll = (int) $detail->realizationEntries()->sum('amount');
-            $newTotalAll = $totalRealizedAll + $data['amount'];
-
-            if ($newTotalAll > $detail->amount) {
-                abort(response()->json([
-                    'success' => false,
-                    'error'   => ['code' => 'REALIZATION_EXCEEDS_BUDGET', 'message' => "Total realisasi ({$newTotalAll}) melebihi anggaran ({$detail->amount})."],
-                ], 422));
-            }
-
             $entry = RealizationEntry::create([
                 'pdo_detail_id'    => $detail->id,
+                'vehicle_id'       => $data['vehicle_id'] ?? null,
                 'recorded_by'      => $actor->id,
                 'transaction_date' => $data['transaction_date'],
                 'amount'           => $data['amount'],
@@ -311,24 +304,7 @@ class RealizationEntryService
             ], 403));
         }
 
-        $detail = $entry->pdoDetail;
-
-        return DB::transaction(function () use ($entry, $data, $actor, $detail) {
-            // Lock detail row to prevent race condition on cumulative validation
-            $detail = PdoDetail::lockForUpdate()->findOrFail($detail->id);
-
-            // BR-REAL-003: validasi ulang jika amount berubah
-            if (isset($data['amount'])) {
-                $totalRealizedAll = (int) $detail->realizationEntries()->where('id', '!=', $entry->id)->sum('amount');
-                $newTotalAll      = $totalRealizedAll + $data['amount'];
-                if ($newTotalAll > $detail->amount) {
-                    abort(response()->json([
-                        'success' => false,
-                        'error'   => ['code' => 'REALIZATION_EXCEEDS_BUDGET', 'message' => "Total realisasi ({$newTotalAll}) melebihi anggaran ({$detail->amount})."],
-                    ], 422));
-                }
-            }
-
+        return DB::transaction(function () use ($entry, $data, $actor) {
             $old = $entry->toArray();
             $entry->update($data);
 
