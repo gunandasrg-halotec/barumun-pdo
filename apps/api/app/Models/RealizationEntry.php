@@ -29,6 +29,7 @@ class RealizationEntry extends Model
 
     protected $fillable = [
         'pdo_detail_id',
+        'vehicle_id',
         'recorded_by',
         'transaction_date',
         'amount',
@@ -68,5 +69,10 @@ class RealizationEntry extends Model
     public function journalExporter(): BelongsTo
     {
         return $this->belongsTo(User::class, 'exported_to_journal_by');
+    }
+
+    public function vehicle(): BelongsTo
+    {
+        return $this->belongsTo(Vehicle::class, 'vehicle_id');
     }
 }

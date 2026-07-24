@@ -12,6 +12,9 @@ import { fmt, fmtDate } from '@/lib/format'
 import { Upload, AlertCircle, AlertTriangle, Search, ChevronDown, ChevronRight, FileSpreadsheet } from 'lucide-react'
 import type { ApiResponse, PlantationUnit, RealizationEntry } from '@/types'
 
+// Role yang boleh export realisasi ke jurnal umum — mirror User::canExportJournal() di backend.
+const JOURNAL_EXPORT_ROLES = ['STAFF_KEUANGAN', 'MANAJER_KEUANGAN', 'DIREKTUR_KEUANGAN']
+
 const PAYMENT_LABEL: Record<string, string> = {
   tunai: 'Tunai', transfer: 'Transfer Bank',
 }
@@ -41,6 +44,26 @@ interface JournalRow {
   already_exported_at: string | null
 }
 
+interface Stage2DebitRow {
+  account_code: string | null
+  description: string
+  debit: number
+}
+
+interface Stage2Posting {
+  tag: string
+  debit_rows: Stage2DebitRow[]
+  credit_row: JournalRowSide
+}
+
+interface Stage2Row {
+  realization_entry_id: string
+  transaction_number: string
+  transaction_date: string
+  memo: string
+  postings: Stage2Posting[]
+}
+
 export function RealizationPage() {
   const user  = useAuthStore((s) => s.user)
   const toast = useToastStore((s) => s.push)
@@ -54,9 +77,13 @@ export function RealizationPage() {
   const [unitIds,    setUnitIds]   = useState<string[]>([])
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
   const [previewRows, setPreviewRows] = useState<JournalRow[] | null>(null)
+  const [stage2Rows,  setStage2Rows]  = useState<Stage2Row[]>([])
+  const [stage2SkippedIds, setStage2SkippedIds] = useState<string[]>([])
+  const [includeInventoryUsage, setIncludeInventoryUsage] = useState(false)
   const [showPreview,  setShowPreview] = useState(false)
 
   const isHO = !user?.plantation_unit?.id
+  const canExportJournal = !!user?.role?.code && JOURNAL_EXPORT_ROLES.includes(user.role.code)
 
   const { data: units } = useQuery({
     queryKey: ['plantation-units'],
@@ -100,14 +127,21 @@ export function RealizationPage() {
 
   const previewJournal = useMutation({
     mutationFn: async () => {
-      const res = await api.post<ApiResponse<{ rows: JournalRow[] }>>('/realization-entries/export-journal', {
+      const res = await api.post<ApiResponse<{
+        rows: JournalRow[]
+        stage2_rows: Stage2Row[]
+        stage2_skipped_entry_ids: string[]
+      }>>('/realization-entries/export-journal', {
         entry_ids: Array.from(selectedIds),
         preview: true,
+        include_inventory_usage: includeInventoryUsage,
       })
-      return res.data.data.rows
+      return res.data.data
     },
-    onSuccess: (rows) => {
-      setPreviewRows(rows)
+    onSuccess: (data) => {
+      setPreviewRows(data.rows)
+      setStage2Rows(data.stage2_rows ?? [])
+      setStage2SkippedIds(data.stage2_skipped_entry_ids ?? [])
       setShowPreview(true)
     },
     onError: () => toast('Gagal memuat preview jurnal', 'error'),
@@ -118,6 +152,7 @@ export function RealizationPage() {
       const res = await api.post('/realization-entries/export-journal', {
         entry_ids: Array.from(selectedIds),
         preview: false,
+        include_inventory_usage: includeInventoryUsage,
       }, { responseType: 'blob' })
       return res.data
     },
@@ -131,6 +166,8 @@ export function RealizationPage() {
       toast('CSV jurnal berhasil diunduh')
       setShowPreview(false)
       setPreviewRows(null)
+      setStage2Rows([])
+      setStage2SkippedIds([])
       setSelectedIds(new Set())
       qc.invalidateQueries({ queryKey: ['realizations'] })
     },
@@ -200,14 +237,27 @@ export function RealizationPage() {
           <h2 className="text-[28px] font-[950] text-ink">Realisasi Biaya</h2>
           <p className="text-muted text-sm mt-1">Daftar semua realisasi pengeluaran yang sudah dicatat.</p>
         </div>
-        <Button
-          disabled={selectedIds.size === 0}
-          loading={previewJournal.isPending}
-          onClick={() => previewJournal.mutate()}
-        >
-          <FileSpreadsheet className="w-4 h-4" /> Export ke Jurnal Sementara
-          {selectedIds.size > 0 && ` (${selectedIds.size})`}
-        </Button>
+        {canExportJournal && (
+          <div className="flex flex-col items-end gap-2">
+            <label className="flex items-center gap-2 text-sm cursor-pointer select-none">
+              <input
+                type="checkbox"
+                checked={includeInventoryUsage}
+                onChange={(e) => setIncludeInventoryUsage(e.target.checked)}
+                className="rounded"
+              />
+              Sertakan jurnal pemakaian persediaan
+            </label>
+            <Button
+              disabled={selectedIds.size === 0}
+              loading={previewJournal.isPending}
+              onClick={() => previewJournal.mutate()}
+            >
+              <FileSpreadsheet className="w-4 h-4" /> Export ke Jurnal Sementara
+              {selectedIds.size > 0 && ` (${selectedIds.size})`}
+            </Button>
+          </div>
+        )}
       </div>
 
       {/* Filter Bar */}
@@ -389,7 +439,7 @@ export function RealizationPage() {
       {/* Modal Preview Jurnal */}
       <Modal
         open={showPreview}
-        onClose={() => { setShowPreview(false); setPreviewRows(null) }}
+        onClose={() => { setShowPreview(false); setPreviewRows(null); setStage2Rows([]); setStage2SkippedIds([]) }}
         title="Preview Export Jurnal Umum"
         width="w-[95vw] max-w-[1400px]"
       >
@@ -448,8 +498,86 @@ export function RealizationPage() {
           </table>
         </div>
 
+        {stage2Rows.length > 0 && (
+          <div className="mt-6">
+            <h4 className="text-sm font-bold mb-2">Jurnal Pemakaian Persediaan (Tahap 2)</h4>
+            <div className="border border-line rounded-card overflow-y-auto overflow-x-auto max-h-[40vh]">
+              <table className="w-full border-collapse text-sm" style={{ minWidth: 900 }}>
+                <thead>
+                  <tr>
+                    {['No. Transaksi', 'Tanggal', 'Kode Akun', 'Deskripsi', 'Debit', 'Credit', 'Memo', 'Tag'].map((h) => (
+                      <th key={h} className="px-3 py-2.5 text-left text-[11px] font-bold uppercase tracking-wider text-muted bg-[#f7faf7] sticky top-0 z-10">
+                        {h}
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {stage2Rows.map((row) =>
+                    row.postings.map((posting, postingIdx) => {
+                      const spanLen = posting.debit_rows.length + 1
+                      return (
+                        <>
+                          {posting.debit_rows.map((dr, idx) => (
+                            <tr key={`${row.realization_entry_id}-s2-${postingIdx}-debit-${idx}`} className="border-t border-line">
+                              {idx === 0 && postingIdx === 0 && (
+                                <>
+                                  <td className="px-3 py-2 font-bold whitespace-nowrap" rowSpan={row.postings.reduce((n, p) => n + p.debit_rows.length + 1, 0)}>{row.transaction_number}</td>
+                                  <td className="px-3 py-2 whitespace-nowrap" rowSpan={row.postings.reduce((n, p) => n + p.debit_rows.length + 1, 0)}>{row.transaction_date}</td>
+                                </>
+                              )}
+                              <td className={`px-3 py-2 whitespace-nowrap ${!dr.account_code ? 'bg-amber-50' : ''}`}>
+                                {dr.account_code || (
+                                  <span className="flex items-center gap-1 text-amber-700">
+                                    <AlertTriangle className="w-3 h-3" /> Kosong
+                                  </span>
+                                )}
+                              </td>
+                              <td className="px-3 py-2">{dr.description}</td>
+                              <td className="px-3 py-2 text-right font-bold whitespace-nowrap">{fmt(dr.debit)}</td>
+                              <td className="px-3 py-2 text-right whitespace-nowrap">—</td>
+                              {idx === 0 && postingIdx === 0 && (
+                                <td className="px-3 py-2" rowSpan={row.postings.reduce((n, p) => n + p.debit_rows.length + 1, 0)}>{row.memo}</td>
+                              )}
+                              {idx === 0 && (
+                                <td className="px-3 py-2 whitespace-nowrap" rowSpan={spanLen}>{posting.tag}</td>
+                              )}
+                            </tr>
+                          ))}
+                          <tr key={`${row.realization_entry_id}-s2-${postingIdx}-credit`} className="border-t border-dashed border-line">
+                            <td className={`px-3 py-2 whitespace-nowrap ${!posting.credit_row.account_code ? 'bg-amber-50' : ''}`}>
+                              {posting.credit_row.account_code || (
+                                <span className="flex items-center gap-1 text-amber-700">
+                                  <AlertTriangle className="w-3 h-3" /> Kosong
+                                </span>
+                              )}
+                            </td>
+                            <td className="px-3 py-2">{posting.credit_row.description}</td>
+                            <td className="px-3 py-2 text-right whitespace-nowrap">—</td>
+                            <td className="px-3 py-2 text-right font-bold whitespace-nowrap">{fmt(posting.credit_row.credit ?? 0)}</td>
+                          </tr>
+                        </>
+                      )
+                    })
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+
+        {stage2SkippedIds.length > 0 && (
+          <div className="flex items-start gap-2 mt-4 px-3 py-2.5 rounded-card bg-amber-50 border border-amber-200 text-sm text-amber-800">
+            <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
+            <span>
+              <strong>{stage2SkippedIds.length} realisasi</strong> dilewati karena belum ada log trip kendaraan untuk PDO ini.
+              Jurnal tahap 1 (persediaan atas kas) tetap di-generate normal.
+            </span>
+          </div>
+        )}
+
         <div className="flex justify-end gap-2 mt-5">
-          <Button variant="secondary" onClick={() => { setShowPreview(false); setPreviewRows(null) }}>Batal</Button>
+          <Button variant="secondary" onClick={() => { setShowPreview(false); setPreviewRows(null); setStage2Rows([]); setStage2SkippedIds([]) }}>Batal</Button>
           <Button loading={downloadJournal.isPending} onClick={() => downloadJournal.mutate()}>
             Unduh CSV
           </Button>

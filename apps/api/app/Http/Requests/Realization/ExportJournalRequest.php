@@ -15,9 +15,10 @@ class ExportJournalRequest extends FormRequest
     public function rules(): array
     {
         return [
-            'entry_ids'   => ['required', 'array', 'min:1'],
-            'entry_ids.*' => ['uuid', 'exists:realization_entries,id'],
-            'preview'     => ['nullable', 'boolean'],
+            'entry_ids'               => ['required', 'array', 'min:1'],
+            'entry_ids.*'             => ['uuid', 'exists:realization_entries,id'],
+            'preview'                 => ['nullable', 'boolean'],
+            'include_inventory_usage' => ['nullable', 'boolean'],
         ];
     }
 

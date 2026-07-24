@@ -1,7 +1,7 @@
 import { Fragment, useEffect, useState } from 'react'
 import { useLocation, useNavigate, useSearchParams } from 'react-router-dom'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { useCategories, useSubcategories, useItems, useUsers } from '@/hooks/useMasterData'
+import { useCategories, useSubcategories, useItems, useUsers, useVehicles, useDeleteVehicle } from '@/hooks/useMasterData'
 import { useAuthStore } from '@/store/auth.store'
 import { useToastStore } from '@/store/toast.store'
 import { api } from '@/lib/api'
@@ -14,7 +14,7 @@ import { buildMasterDataReturnTo, buildMasterDataSearchParams, buildMasterDataUr
 import type { ApiResponse, PlantationUnit, RoleCode } from '@/types'
 import { ChevronDown, ChevronRight } from 'lucide-react'
 
-type Tab = 'hierarki' | 'items' | 'kebun' | 'users'
+type Tab = 'hierarki' | 'items' | 'kebun' | 'kendaraan' | 'users'
 
 export function MasterDataPage() {
   const user     = useAuthStore((s) => s.user)
@@ -26,7 +26,7 @@ export function MasterDataPage() {
   const role     = user?.role.code as RoleCode | undefined
   const admin    = role ? isAdmin(role) : false
   const canEdit  = role ? canEditMasterData(role) : false
-  const allowedTabs: readonly Tab[] = admin ? ['hierarki', 'items', 'kebun', 'users'] : ['hierarki', 'items', 'users']
+  const allowedTabs: readonly Tab[] = admin ? ['hierarki', 'items', 'kebun', 'kendaraan', 'users'] : ['hierarki', 'items', 'kendaraan', 'users']
 
   const [tab, setTab]                   = useState<Tab>('hierarki')
   const [expandedCats, setExpandedCats] = useState<Set<string>>(new Set())
@@ -38,6 +38,7 @@ export function MasterDataPage() {
   const { data: subcategories } = useSubcategories({ is_active: undefined })
   const { data: items } = useItems({ is_active: undefined })
   const { data: users } = useUsers()
+  const { data: vehicles } = useVehicles()
   const { data: units } = useQuery({
     queryKey: ['plantation-units'],
     queryFn: async () => {
@@ -143,13 +144,14 @@ export function MasterDataPage() {
             <Button onClick={() => openForm('/master/kategori/buat')}>+ Kategori</Button>
             <Button variant="secondary" onClick={() => openForm('/master/sub-kategori/buat')}>+ Sub-Kategori</Button>
             <Button variant="secondary" onClick={() => openForm('/master/item/buat')}>+ Item Biaya</Button>
+            <Button variant="secondary" onClick={() => openForm('/master/kendaraan/buat')}>+ Kendaraan</Button>
           </div>
         )}
       </div>
 
       {/* Tabs */}
       <div className="flex gap-1 mb-5 border-b border-line">
-        {(['hierarki', 'items', ...(admin ? ['kebun'] as const : []), 'users'] as Tab[]).map((t) => (
+        {(['hierarki', 'items', ...(admin ? ['kebun'] as const : []), 'kendaraan', 'users'] as Tab[]).map((t) => (
           <button
             key={t}
             onClick={() => {
@@ -166,7 +168,9 @@ export function MasterDataPage() {
                 ? 'Item Biaya'
                 : t === 'kebun'
                   ? 'Kebun'
-                  : 'User & Role'}
+                  : t === 'kendaraan'
+                    ? 'Kendaraan'
+                    : 'User & Role'}
           </button>
         ))}
       </div>
@@ -433,6 +437,58 @@ export function MasterDataPage() {
               ))}
             </tbody>
           </table>
+        </div>
+      )}
+
+      {/* Tab: Kendaraan */}
+      {tab === 'kendaraan' && (
+        <div>
+          {canEdit && (
+            <div className="mb-4">
+              <Button onClick={() => openForm('/master/kendaraan/buat')}>+ Tambah Kendaraan</Button>
+            </div>
+          )}
+          <div className="overflow-auto border border-line rounded-drawer bg-white">
+            <table className="w-full border-collapse">
+              <thead>
+                <tr>
+                  {['No. Polisi', 'Nama/Jenis', 'Item Biaya', 'Status', ...(canEdit ? ['Aksi'] : [])].map((h) => (
+                    <th key={h} className="px-4 py-3 text-left text-[11px] font-bold uppercase tracking-wider text-[#526257] bg-[#f7faf7] sticky top-0">
+                      {h}
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {!vehicles?.length ? (
+                  <tr><td colSpan={5} className="p-6"><EmptyState /></td></tr>
+                ) : vehicles.map((v) => (
+                  <tr key={v.id} className="border-t border-line hover:bg-[#fbfdfb]">
+                    <td className="px-4 py-3 text-sm font-mono font-bold">{v.nomor_polisi}</td>
+                    <td className="px-4 py-3 text-sm">{v.nama}</td>
+                    <td className="px-4 py-3 text-sm">
+                      {v.expense_item ? `${v.expense_item.code} — ${v.expense_item.name}` : '—'}
+                    </td>
+                    <td className="px-4 py-3">
+                      <Badge variant={v.is_active ? 'approved' : 'draft'}>
+                        {v.is_active ? 'Aktif' : 'Nonaktif'}
+                      </Badge>
+                    </td>
+                    {canEdit && (
+                      <td className="px-4 py-3">
+                        <button
+                          className="text-sm text-green hover:underline font-bold"
+                          onClick={() => openForm(`/master/kendaraan/${v.id}/edit`)}
+                        >
+                          Edit
+                        </button>
+                      </td>
+                    )}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </div>
       )}
 

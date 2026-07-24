@@ -24,6 +24,8 @@ import { PdoSupplementaryDetailPage }   from '@/pages/PdoSupplementaryDetailPage
 import { LaporanPage }                  from '@/pages/LaporanPage'
 import { RekapitulasiPage }             from '@/pages/RekapitulasiPage'
 import { SettingsPage }                 from '@/pages/SettingsPage'
+import VehicleFormPage                  from '@/pages/VehicleFormPage'
+import VehicleTripLogPage               from '@/pages/VehicleTripLogPage'
 
 function RequireAuth({ children }: { children: React.ReactNode }) {
   const token = useAuthStore((s) => s.token)
@@ -57,6 +59,8 @@ export default function App() {
           <Route path="master/item/:id/edit"            element={<ItemFormPage />} />
           <Route path="master/user/buat"                element={<UserFormPage />} />
           <Route path="master/user/:id/edit"            element={<UserFormPage />} />
+          <Route path="master/kendaraan/buat"           element={<VehicleFormPage />} />
+          <Route path="master/kendaraan/:id/edit"       element={<VehicleFormPage />} />
 
           {/* PDO Bulanan */}
           <Route path="pdo"              element={<PdoListPage />} />
@@ -79,7 +83,8 @@ export default function App() {
 
           {/* Laporan & Settings */}
           <Route path="laporan"        element={<LaporanPage />} />
-          <Route path="rekapitulasi"   element={<RekapitulasiPage />} />
+          <Route path="rekapitulasi"        element={<RekapitulasiPage />} />
+          <Route path="log-trip-kendaraan"  element={<VehicleTripLogPage />} />
           <Route path="settings"       element={<SettingsPage />} />
         </Route>
 

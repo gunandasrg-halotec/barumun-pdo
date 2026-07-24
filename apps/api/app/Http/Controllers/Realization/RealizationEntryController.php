@@ -68,18 +68,26 @@ class RealizationEntryController extends Controller
     /** POST /realization-entries/export-journal */
     public function exportJournal(ExportJournalRequest $request): JsonResponse|Response
     {
-        $data       = $request->validated();
-        $entryIds   = $data['entry_ids'];
-        $isPreview  = (bool) ($data['preview'] ?? false);
-        $actor      = $request->user();
+        $data                  = $request->validated();
+        $entryIds              = $data['entry_ids'];
+        $isPreview             = (bool) ($data['preview'] ?? false);
+        $includeInventoryUsage = (bool) ($data['include_inventory_usage'] ?? false);
+        $actor                 = $request->user();
 
-        $rows = $this->journalExportService->buildRows($entryIds, $actor);
+        $rows   = $this->journalExportService->buildRows($entryIds, $actor);
+        $stage2 = $includeInventoryUsage
+            ? $this->journalExportService->buildStage2Rows($entryIds, $actor, ! $isPreview)
+            : ['rows' => [], 'skipped_entry_ids' => []];
 
         if ($isPreview) {
-            return response()->json(['success' => true, 'data' => ['rows' => $rows]]);
+            return response()->json(['success' => true, 'data' => [
+                'rows'                    => $rows,
+                'stage2_rows'             => $stage2['rows'],
+                'stage2_skipped_entry_ids' => $stage2['skipped_entry_ids'],
+            ]]);
         }
 
-        $csv = $this->journalExportService->toCsv($rows);
+        $csv = $this->journalExportService->toCsv($rows, $stage2['rows']);
         $this->journalExportService->markExported($entryIds, $actor);
 
         $filename = 'JurnalUmum-' . now()->format('Ymd-His') . '.csv';

@@ -1,7 +1,7 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '@/lib/api'
 import type {
-  ExpenseCategory, ExpenseSubcategory, ExpenseItem,
+  ExpenseCategory, ExpenseSubcategory, ExpenseItem, Vehicle, VehicleTripLog,
   ApiResponse, PaginatedResponse, AuthUser, Role,
 } from '@/types'
 
@@ -224,5 +224,100 @@ export function useDeleteUser(id: string) {
   return useMutation({
     mutationFn: () => api.delete(`/users/${id}`),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['users'] }),
+  })
+}
+
+// ─── Vehicles ─────────────────────────────────────────────────────────────────
+
+export function useVehicles(params?: Record<string, unknown>) {
+  return useQuery({
+    queryKey: ['vehicles', params],
+    queryFn: async () => {
+      const res = await api.get<ApiResponse<Vehicle[]>>('/vehicles', { params })
+      return res.data.data
+    },
+    staleTime: 5 * 60 * 1000,
+  })
+}
+
+export function useVehicle(id: string) {
+  return useQuery({
+    queryKey: ['vehicles', id],
+    queryFn: async () => {
+      const res = await api.get<ApiResponse<Vehicle>>(`/vehicles/${id}`)
+      return res.data.data
+    },
+    enabled: !!id,
+  })
+}
+
+export function useCreateVehicle() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: async (data: Record<string, unknown>) => {
+      const res = await api.post<ApiResponse<Vehicle>>('/vehicles', data)
+      return res.data.data
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['vehicles'] }),
+  })
+}
+
+export function useUpdateVehicle(id: string) {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: async (data: Record<string, unknown>) => {
+      const res = await api.put<ApiResponse<Vehicle>>(`/vehicles/${id}`, data)
+      return res.data.data
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['vehicles'] }),
+  })
+}
+
+export function useDeleteVehicle(id: string) {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: () => api.delete(`/vehicles/${id}`),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['vehicles'] }),
+  })
+}
+
+// ─── Vehicle Trip Logs ────────────────────────────────────────────────────────
+
+export function useVehicleTripLogs(pdoHeaderId?: string) {
+  return useQuery({
+    queryKey: ['vehicle-trip-logs', pdoHeaderId],
+    queryFn: async () => {
+      const res = await api.get<ApiResponse<VehicleTripLog[]>>('/vehicle-trip-logs', {
+        params: { pdo_header_id: pdoHeaderId },
+      })
+      return res.data.data
+    },
+    enabled: !!pdoHeaderId,
+  })
+}
+
+export function useCreateVehicleTripLog() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: async (data: Record<string, unknown>) => {
+      const res = await api.post<ApiResponse<VehicleTripLog>>('/vehicle-trip-logs', data)
+      return res.data.data
+    },
+    onSuccess: (_data, variables) => {
+      qc.invalidateQueries({ queryKey: ['vehicle-trip-logs', variables.pdo_header_id] })
+    },
+  })
+}
+
+export function useDeleteVehicleTripLog() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: async ({ id, pdoHeaderId }: { id: string; pdoHeaderId: string }) => {
+      await api.delete(`/vehicle-trip-logs/${id}`)
+      return pdoHeaderId
+    },
+    onSuccess: (pdoHeaderId) => {
+      qc.invalidateQueries({ queryKey: ['vehicle-trip-logs', pdoHeaderId] })
+    },
   })
 }
