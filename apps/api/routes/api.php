@@ -7,6 +7,8 @@ use App\Http\Controllers\MasterData\ExpenseItemController;
 use App\Http\Controllers\MasterData\ExpenseSubcategoryController;
 use App\Http\Controllers\MasterData\PayrollCostComponentOptionsController;
 use App\Http\Controllers\MasterData\PlantationUnitController;
+use App\Http\Controllers\MasterData\VehicleController;
+use App\Http\Controllers\VehicleTripLogController;
 use App\Http\Controllers\PDO\PdoApprovalController;
 use App\Http\Controllers\PDO\PdoCloseController;
 use App\Http\Controllers\PDO\PdoDetailAttachmentController;
@@ -57,6 +59,9 @@ Route::prefix('v1')->middleware(['auth:sanctum', 'ensure.unit.access'])->group(f
     // ── Master Data — Item Biaya ──────────────────────
     Route::get('expense-items/routine', [ExpenseItemController::class, 'routine']); // SEBELUM resource route
     Route::apiResource('expense-items', ExpenseItemController::class);
+    Route::apiResource('vehicles', VehicleController::class);
+    Route::get('vehicle-trip-logs/last-weight', [VehicleTripLogController::class, 'lastWeight']); // SEBELUM resource route
+    Route::apiResource('vehicle-trip-logs', VehicleTripLogController::class)->except(['show']);
     Route::get('payroll-cost-component-options', [PayrollCostComponentOptionsController::class, 'index']);
 
     // ── PDO Bulanan ───────────────────────────────────
@@ -118,6 +123,7 @@ Route::prefix('v1')->middleware(['auth:sanctum', 'ensure.unit.access'])->group(f
 
     // ── Realisasi Dana ────────────────────────────────
     Route::get('realization-entries', [RealizationEntryController::class, 'index']);
+    Route::post('realization-entries/export-journal', [RealizationEntryController::class, 'exportJournal']);
     Route::post('realization-entries', [RealizationEntryController::class, 'store'])->middleware('check.pdo.status');
     Route::put('realization-entries/{entry}', [RealizationEntryController::class, 'update'])->middleware('check.pdo.status');
     Route::delete('realization-entries/{entry}', [RealizationEntryController::class, 'destroy'])->middleware('check.pdo.status');

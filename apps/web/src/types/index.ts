@@ -22,6 +22,7 @@ export interface PlantationUnit {
   name: string
   is_active: boolean
   payroll_estate_external_id?: string | null
+  account_code_kas_kebun?: string | null
 }
 
 export interface AuthUser {
@@ -33,6 +34,37 @@ export interface AuthUser {
   role: Role
   plantation_unit: PlantationUnit | null
   company_id: string
+}
+
+// ─── Vehicle ─────────────────────────────────────────────────────────────────
+
+export interface Vehicle {
+  id: string
+  nomor_polisi: string
+  nama: string
+  expense_item_id: string | null
+  expense_item?: ExpenseItem
+  is_active: boolean
+  created_at: string
+  updated_at: string
+}
+
+export interface VehicleTripLog {
+  id: string
+  pdo_header_id: string
+  vehicle_id: string
+  vehicle?: Vehicle
+  trip_date: string
+  driver_name: string
+  trip_count: number
+  trip_type: 'angkut_tbs' | 'perawatan'
+  destination: string
+  weight: number
+  notes: string | null
+  recorded_by: string
+  recorder?: AuthUser
+  created_at: string
+  updated_at: string
 }
 
 // ─── Master Data ─────────────────────────────────────────────────────────────
@@ -253,6 +285,7 @@ export interface RealizationEntry {
       pdo_number: string
       period_month: number
       period_year: number
+      status: string
     }
     expense_item?: {
       name: string
@@ -263,6 +296,8 @@ export interface RealizationEntry {
       }
     }
   }
+  vehicle_id: string | null
+  vehicle?: { id: string; nomor_polisi: string; nama: string } | null
   recorded_by: string
   recorder?: AuthUser
   transaction_date: string
@@ -273,6 +308,7 @@ export interface RealizationEntry {
   explanation: string | null
   created_at: string
   attachments?: RealizationAttachment[]
+  exported_to_journal_at?: string | null
 }
 
 export interface RealizationAttachment {

@@ -12,7 +12,7 @@ import { fmt, fmtDate, fmtPeriode } from '@/lib/format'
 import { isKerani } from '@/lib/auth'
 import { api } from '@/lib/api'
 import type { PdoDetail, RoleCode } from '@/types'
-import { ArrowLeft, GitBranch, Lock, CloudDownload } from 'lucide-react'
+import { ArrowLeft, GitBranch, Lock, CloudDownload, Search } from 'lucide-react'
 import { DetailAttachmentPanel, AttachmentBadge } from '@/components/pdo/DetailAttachmentPanel'
 
 export function PdoDetailPage() {
@@ -29,6 +29,9 @@ export function PdoDetailPage() {
   const [isDownloading, setIsDownloading]           = useState(false)
   const [openAttachmentId, setOpenAttachmentId]     = useState<string | null>(null)
   const [submitWarningRows, setSubmitWarningRows]   = useState<number[]>([])
+  const [itemSearch, setItemSearch]                 = useState('')
+  const [filterAutoExternal, setFilterAutoExternal] = useState(false)
+  const [filterZeroAmount, setFilterZeroAmount]     = useState(false)
 
   const toggleAttachment = (detailId: string) =>
     setOpenAttachmentId((prev) => (prev === detailId ? null : detailId))
@@ -115,6 +118,19 @@ export function PdoDetailPage() {
   const totalReal    = allDetails.reduce((s, d) => s + (d.total_realized ?? 0), 0)
   const saldo        = totalTransf - totalReal
 
+  const hasActiveFilter = !!itemSearch || filterAutoExternal || filterZeroAmount
+
+  const matchesItemFilter = (d: PdoDetail): boolean => {
+    if (filterAutoExternal && d.expense_item?.mode_input !== 'auto_external') return false
+    if (filterZeroAmount && Number(d.amount) !== 0) return false
+    if (itemSearch) {
+      const q = itemSearch.toLowerCase()
+      const haystack = `${d.expense_item?.code ?? ''} ${d.expense_item?.name ?? ''} ${d.description ?? ''}`.toLowerCase()
+      if (!haystack.includes(q)) return false
+    }
+    return true
+  }
+
   return (
     <div>
       {/* Hero */}
@@ -179,6 +195,44 @@ export function PdoDetailPage() {
       {/* Detail Table — grouped by kategori > sub-kategori, collapsible */}
       <div className="card">
         <h3 className="text-[17px] font-[850] mb-4">Rencana Biaya</h3>
+
+        {(!!details?.length || suppGroups.length > 0) && (
+          <div className="flex items-center gap-2 mb-3 flex-wrap">
+            <div className="relative flex-1 min-w-[220px] max-w-[320px]">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted" />
+              <input
+                className="input-base pl-9 w-full"
+                placeholder="Cari kode/nama item..."
+                value={itemSearch}
+                onChange={(e) => setItemSearch(e.target.value)}
+              />
+            </div>
+            <button
+              type="button"
+              className={`badge ${filterAutoExternal ? 'badge-approved' : 'badge-draft'} cursor-pointer`}
+              onClick={() => setFilterAutoExternal((v) => !v)}
+            >
+              Tampilkan item biaya otomatis
+            </button>
+            <button
+              type="button"
+              className={`badge ${filterZeroAmount ? 'badge-approved' : 'badge-draft'} cursor-pointer`}
+              onClick={() => setFilterZeroAmount((v) => !v)}
+            >
+              Tampilkan item belum ada biaya
+            </button>
+            {hasActiveFilter && (
+              <button
+                type="button"
+                className="text-xs text-muted underline"
+                onClick={() => { setItemSearch(''); setFilterAutoExternal(false); setFilterZeroAmount(false) }}
+              >
+                Reset filter
+              </button>
+            )}
+          </div>
+        )}
+
         {!details?.length && !suppGroups.length ? (
           <EmptyState message="Tidak ada item biaya." />
         ) : (() => {
@@ -195,7 +249,7 @@ export function PdoDetailPage() {
             }[]
           }
           const catMap = new Map<string, CatGroup>()
-          for (const d of (details ?? [])) {
+          for (const d of (details ?? []).filter(matchesItemFilter)) {
             const sub  = d.expense_item?.subcategory
             const cat  = sub?.category
             const catKey   = cat?.id  ?? '__no_cat'
@@ -216,13 +270,17 @@ export function PdoDetailPage() {
           const groups = [...catMap.values()].sort((a, b) => a.catOrder - b.catOrder)
           groups.forEach((g) => g.subs.sort((a, b) => a.subOrder - b.subOrder))
 
+          const filteredSuppGroups = suppGroups
+            .map((sg) => ({ ...sg, details: sg.details.filter(matchesItemFilter) }))
+            .filter((sg) => sg.details.length > 0)
+
           return (
-            <div className="overflow-auto">
+            <div className="overflow-auto max-h-[70vh]">
               <table className="w-full border-collapse" style={{ minWidth: 860 }}>
                 <thead>
                   <tr>
                     {['Kategori / Item Biaya', 'Deskripsi', 'Vol', 'Satuan', 'Rate', 'Jumlah', 'Transfer', 'Realisasi', 'Saldo', ''].map((h) => (
-                      <th key={h} className="px-3 py-2.5 text-left text-[11px] font-bold uppercase tracking-wider text-muted bg-[#f7faf7] sticky top-0">
+                      <th key={h} className="px-3 py-2.5 text-left text-[11px] font-bold uppercase tracking-wider text-muted bg-[#f7faf7] sticky top-0 z-10">
                         {h}
                       </th>
                     ))}
@@ -319,7 +377,7 @@ export function PdoDetailPage() {
                 </tbody>
 
                 {/* ── Tambahan section: merged items from PDO Tambahan ── */}
-                {suppGroups.length > 0 && (
+                {filteredSuppGroups.length > 0 && (
                   <tbody>
                     {/* Divider row */}
                     <tr>
@@ -334,7 +392,7 @@ export function PdoDetailPage() {
                       </td>
                     </tr>
 
-                    {suppGroups.map((sg) => (
+                    {filteredSuppGroups.map((sg) => (
                       <>
                         {/* Per-PDOT sub-header */}
                         <tr key={`supp-hdr-${sg.supplementary.id}`}>

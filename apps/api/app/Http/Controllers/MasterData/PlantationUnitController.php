@@ -26,7 +26,7 @@ class PlantationUnitController extends Controller
 
         return response()->json([
             'success' => true,
-            'data'    => $query->get(['id', 'code', 'name', 'payroll_estate_external_id']),
+            'data'    => $query->get(['id', 'code', 'name', 'payroll_estate_external_id', 'account_code_kas_kebun']),
         ]);
     }
 

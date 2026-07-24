@@ -20,6 +20,8 @@ class StorePdoRequest extends FormRequest
             'period_month'       => ['required', 'integer', 'min:1', 'max:12'],
             'period_year'        => ['required', 'integer', 'min:2020', 'max:2099'],
             'notes'              => ['nullable', 'string'],
+            'source_pdo_id'      => ['nullable', 'uuid', 'exists:pdo_headers,id'],
+            'copy_amounts'       => ['nullable', 'boolean'],
         ];
     }
 }

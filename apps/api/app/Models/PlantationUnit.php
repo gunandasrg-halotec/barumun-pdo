@@ -21,6 +21,7 @@ class PlantationUnit extends Model
         'code',
         'name',
         'payroll_estate_external_id',
+        'account_code_kas_kebun',
         'is_active',
     ];
 

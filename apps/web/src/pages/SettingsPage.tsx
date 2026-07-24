@@ -30,7 +30,7 @@ export function SettingsPage() {
   const settingMap = Object.fromEntries(settings?.map((s) => [s.key, s.value]) ?? [])
 
   const [threshold, setThreshold] = useState({ bukti: '', penjelasan: '' })
-  const [gateway, setGateway]     = useState({ url: '', username: '', password: '' })
+  const [gateway, setGateway]     = useState({ url: '', username: '', password: '', deviceId: '' })
   const [reminder, setReminder]   = useState({ date: '1', hour: '8' })
   const [templateBodies, setTemplateBodies] = useState<Record<string, string>>({})
 
@@ -41,9 +41,10 @@ export function SettingsPage() {
       penjelasan: settingMap['threshold_explanation_amount'] ?? '500000',
     })
     setGateway({
-      url:      settingMap['wa_gateway_url']      ?? '',
-      username: settingMap['wa_gateway_username'] ?? '',
-      password: settingMap['wa_gateway_password'] ?? '',
+      url:      settingMap['wa_gateway_url']       ?? '',
+      username: settingMap['wa_gateway_username']  ?? '',
+      password: settingMap['wa_gateway_password']  ?? '',
+      deviceId: settingMap['wa_gateway_device_id'] ?? '',
     })
     setReminder({
       date: settingMap['reminder_day_of_month'] ?? '1',
@@ -173,14 +174,27 @@ export function SettingsPage() {
             </div>
             <p className="text-[11px] text-muted mt-1">Disimpan terenkripsi. Kosongkan jika tidak ingin mengubah password.</p>
           </div>
+          <div>
+            <label className="block text-[12px] font-[850] text-muted mb-1.5">Device ID</label>
+            <input
+              type="text"
+              className="input-base"
+              value={gateway.deviceId}
+              onChange={(e) => setGateway((g) => ({ ...g, deviceId: e.target.value }))}
+              placeholder="barumun"
+              autoComplete="off"
+            />
+            <p className="text-[11px] text-muted mt-1">Dikirim sebagai header <code className="bg-gray-100 px-1 rounded">X-Device-Id</code> ke gateway.</p>
+          </div>
         </div>
         <div className="flex gap-2 mt-4">
           <Button
             loading={updateSettings.isPending}
             onClick={() => {
               const payload: Record<string, string> = {
-                wa_gateway_url:      gateway.url,
-                wa_gateway_username: gateway.username,
+                wa_gateway_url:       gateway.url,
+                wa_gateway_username:  gateway.username,
+                wa_gateway_device_id: gateway.deviceId,
               }
               // Jangan kirim password jika masih masked atau kosong
               if (gateway.password && gateway.password !== '••••••••') {

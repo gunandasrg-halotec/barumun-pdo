@@ -135,6 +135,14 @@ class User extends Authenticatable
     }
 
     /**
+     * Role yang bisa export realisasi ke jurnal umum (Jurnal by Mekari).
+     */
+    public function canExportJournal(): bool
+    {
+        return $this->hasAnyRole(['STAFF_KEUANGAN', 'MANAJER_KEUANGAN', 'DIREKTUR_KEUANGAN']);
+    }
+
+    /**
      * BR-REAL-005: kantong realisasi yang boleh dipakai role ini.
      * KERANI → kantong rek_kebun. STAFF_PURCHASING & MANAJER_KEUANGAN →
      * kantong pribadi+vendor. Role lain → null (tidak boleh realisasi).

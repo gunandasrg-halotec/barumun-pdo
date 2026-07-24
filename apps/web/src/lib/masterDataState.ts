@@ -1,4 +1,4 @@
-export type MasterDataTab = 'hierarki' | 'items' | 'kebun' | 'users'
+export type MasterDataTab = 'hierarki' | 'items' | 'kebun' | 'kendaraan' | 'users'
 
 type MasterDataViewState = {
   tab: MasterDataTab

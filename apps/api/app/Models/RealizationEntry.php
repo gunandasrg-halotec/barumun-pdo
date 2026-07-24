@@ -29,6 +29,7 @@ class RealizationEntry extends Model
 
     protected $fillable = [
         'pdo_detail_id',
+        'vehicle_id',
         'recorded_by',
         'transaction_date',
         'amount',
@@ -37,13 +38,16 @@ class RealizationEntry extends Model
         'funding_source',
         'explanation',
         'settlement_group',
+        'exported_to_journal_at',
+        'exported_to_journal_by',
     ];
 
     protected function casts(): array
     {
         return [
-            'transaction_date' => 'date',
-            'amount'           => 'integer',
+            'transaction_date'       => 'date',
+            'amount'                 => 'integer',
+            'exported_to_journal_at' => 'datetime',
         ];
     }
 
@@ -60,5 +64,15 @@ class RealizationEntry extends Model
     public function attachments(): HasMany
     {
         return $this->hasMany(RealizationAttachment::class);
+    }
+
+    public function journalExporter(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'exported_to_journal_by');
+    }
+
+    public function vehicle(): BelongsTo
+    {
+        return $this->belongsTo(Vehicle::class, 'vehicle_id');
     }
 }

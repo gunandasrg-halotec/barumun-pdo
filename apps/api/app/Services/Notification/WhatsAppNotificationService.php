@@ -427,6 +427,7 @@ class WhatsAppNotificationService
         $baseUrl  = SystemSetting::getValue($companyId, SystemSetting::KEY_WA_GATEWAY_URL);
         $username = SystemSetting::getValue($companyId, SystemSetting::KEY_WA_GATEWAY_USERNAME);
         $password = SystemSetting::getValue($companyId, SystemSetting::KEY_WA_GATEWAY_PASSWORD);
+        $deviceId = SystemSetting::getValue($companyId, SystemSetting::KEY_WA_GATEWAY_DEVICE_ID);
 
         if (! $baseUrl) {
             Log::warning('WhatsApp gateway URL belum dikonfigurasi.');
@@ -456,6 +457,7 @@ class WhatsAppNotificationService
 
             try {
                 Http::withBasicAuth($username, $password)
+                    ->withHeaders(['X-Device-Id' => $deviceId])
                     ->timeout(5)
                     ->post($endpoint, ['phone' => $phone, 'message' => $message]);
             } catch (\Exception $e) {

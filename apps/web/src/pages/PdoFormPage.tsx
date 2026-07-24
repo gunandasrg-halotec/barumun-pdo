@@ -1,5 +1,5 @@
 import { useEffect, useCallback, useState } from 'react'
-import { useNavigate, useParams } from 'react-router-dom'
+import { useNavigate, useParams, useLocation } from 'react-router-dom'
 import { useForm, useFieldArray } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
@@ -13,7 +13,7 @@ import { AttachmentSection } from '@/components/pdo/DetailAttachmentPanel'
 import { useItems, useSubcategories, useCategories } from '@/hooks/useMasterData'
 import { useBulkPullExternalCost, usePdo, usePullExternalCost } from '@/hooks/usePdo'
 import { fmt } from '@/lib/format'
-import { ArrowLeft, Plus, Trash2, LayoutList, Paperclip, CloudDownload } from 'lucide-react'
+import { ArrowLeft, Plus, Trash2, LayoutList, Paperclip, CloudDownload, Search } from 'lucide-react'
 import type { ApiResponse, PdoDetail, PdoHeader, PlantationUnit } from '@/types'
 
 const detailSchema = z.object({
@@ -54,16 +54,25 @@ const YEARS  = Array.from({ length: 5 }, (_, i) => new Date().getFullYear() - i 
 export function PdoFormPage() {
   const { id }   = useParams<{ id: string }>()
   const navigate = useNavigate()
+  const location = useLocation()
   const toast    = useToastStore((s) => s.push)
   const qc       = useQueryClient()
   const user     = useAuthStore((s) => s.user)
   const isEdit   = !!id
+
+  const createState     = (location.state ?? {}) as { sourcePdoId?: string; sourcePdoNumber?: string; copyAmounts?: boolean }
+  const sourcePdoId     = isEdit ? null : (createState.sourcePdoId ?? null)
+  const sourcePdoNumber = isEdit ? null : (createState.sourcePdoNumber ?? null)
+  const sourceCopyAmounts = isEdit ? false : (createState.copyAmounts ?? false)
 
   const [rowSelections,    setRowSelections]   = useState<RowSelection[]>([])
   const [detailSnapshots,  setDetailSnapshots] = useState<DetailSnapshot[]>([])
   const [pullErrors,       setPullErrors]      = useState<Record<number, string>>({})
   const [pullingDetailId,  setPullingDetailId] = useState<string | null>(null)
   const [collapsedGroups,  setCollapsedGroups] = useState<Set<string>>(new Set())
+  const [itemSearch, setItemSearch]                   = useState('')
+  const [filterAutoExternal, setFilterAutoExternal]   = useState(false)
+  const [filterZeroAmount, setFilterZeroAmount]       = useState(false)
 
   const { data: units } = useQuery({
     queryKey: ['plantation-units'],
@@ -96,6 +105,33 @@ export function PdoFormPage() {
   })
 
   const { fields, prepend, remove } = useFieldArray({ control, name: 'details' })
+
+  // Sarankan Bulan otomatis = bulan setelah PDO final terakhir unit ini, agar
+  // user tidak salah pilih periode yang sudah ada PDO final-nya (BR-PDO-001).
+  const watchedUnitId = watch('plantation_unit_id')
+
+  const { data: latestFinalPdo } = useQuery({
+    queryKey: ['latest-final-pdo', watchedUnitId],
+    queryFn: async () => {
+      const res = await api.get<ApiResponse<PdoHeader[]>>('/pdo', {
+        params: { status: 'final', plantation_unit_id: watchedUnitId },
+      })
+      return res.data.data[0] ?? null
+    },
+    enabled: !isEdit && !!watchedUnitId,
+  })
+
+  useEffect(() => {
+    if (isEdit || !latestFinalPdo) return
+    let nextMonth = latestFinalPdo.period_month + 1
+    let nextYear  = latestFinalPdo.period_year
+    if (nextMonth > 12) {
+      nextMonth = 1
+      nextYear += 1
+    }
+    setValue('period_month', nextMonth)
+    setValue('period_year', nextYear)
+  }, [latestFinalPdo, isEdit, setValue])
 
   const detailValues = watch('details')
   const totalAmount  = detailValues?.reduce((sum, d) => sum + (Number(d.amount) || 0), 0) ?? 0
@@ -201,27 +237,48 @@ export function PdoFormPage() {
     mutationFn: (data: Form) => {
       if (isEdit) return api.put(`/pdo/${id}`, data)
       const { plantation_unit_id, period_month, period_year, notes } = data
-      return api.post('/pdo', { plantation_unit_id, period_month, period_year, notes })
+      const body: Record<string, unknown> = { plantation_unit_id, period_month, period_year, notes }
+      if (sourcePdoId) {
+        body.source_pdo_id = sourcePdoId
+        body.copy_amounts  = sourceCopyAmounts
+      }
+      return api.post('/pdo', body)
     },
     onSuccess: (res) => {
-      const created = (res.data as ApiResponse<PdoHeader>).data
-      toast(isEdit ? 'PDO berhasil diperbarui' : 'PDO berhasil dibuat — item rutin telah disisipkan otomatis')
+      const result  = res.data as ApiResponse<PdoHeader> & { skipped_count?: number }
+      const created = result.data
+      if (isEdit) {
+        toast('PDO berhasil diperbarui')
+      } else if (sourcePdoId) {
+        let msg = `PDO berhasil dibuat — item dari PDO ${sourcePdoNumber} telah disalin`
+        if ((result.skipped_count ?? 0) > 0) {
+          msg += `. ${result.skipped_count} item dilewati karena item biaya tidak aktif di master data.`
+        }
+        toast(msg)
+      } else {
+        toast('PDO berhasil dibuat — item rutin telah disisipkan otomatis')
+      }
       qc.invalidateQueries({ queryKey: ['pdo'] })
       navigate(`/pdo/${created.id}`)
     },
-    onError: () => toast('Gagal menyimpan PDO', 'error'),
+    onError: (err: unknown) => toast(getApiErrorMessage(err), 'error'),
   })
 
   const submit = useMutation({
     mutationFn: async (data: Form) => {
+      const body: Record<string, unknown> = {
+        plantation_unit_id: data.plantation_unit_id,
+        period_month: data.period_month,
+        period_year:  data.period_year,
+        notes:        data.notes,
+      }
+      if (sourcePdoId) {
+        body.source_pdo_id = sourcePdoId
+        body.copy_amounts  = sourceCopyAmounts
+      }
       const res = isEdit
         ? await api.put(`/pdo/${id}`, data)
-        : await api.post('/pdo', {
-            plantation_unit_id: data.plantation_unit_id,
-            period_month: data.period_month,
-            period_year:  data.period_year,
-            notes:        data.notes,
-          })
+        : await api.post('/pdo', body)
       const header = (res.data as ApiResponse<PdoHeader>).data
       await api.post(`/pdo/${header.id}/submit`, {
         submission_date: new Date().toISOString().split('T')[0],
@@ -458,6 +515,22 @@ export function PdoFormPage() {
       return next
     })
   }, [])
+
+  const hasActiveFilter = !!itemSearch || filterAutoExternal || filterZeroAmount
+
+  const matchesFilter = (idx: number): boolean => {
+    const detail = detailValues?.[idx]
+    if (!detail) return false
+    const item = items?.find((i) => i.id === detail.expense_item_id)
+    if (filterAutoExternal && item?.mode_input !== 'auto_external') return false
+    if (filterZeroAmount && Number(detail.amount) !== 0) return false
+    if (itemSearch) {
+      const q = itemSearch.toLowerCase()
+      const haystack = `${item?.code ?? ''} ${item?.name ?? ''} ${detail.description ?? ''}`.toLowerCase()
+      if (!haystack.includes(q)) return false
+    }
+    return true
+  }
 
   // Build grouped structure preserving original field indices
   type GroupItem = { fieldId: string; idx: number }
@@ -708,11 +781,20 @@ export function PdoFormPage() {
         </div>
 
         {!isEdit && (
-          <div className="card mb-4 bg-[#f7faf7] border border-dashed border-[#b8d4b8]">
-            <p className="text-sm text-muted text-center py-3">
-              Item biaya akan disisipkan otomatis dari daftar item rutin setelah PDO disimpan.
-            </p>
-          </div>
+          sourcePdoId ? (
+            <div className="card mb-4 bg-[#edf7f2] border border-[#9FE1CB]">
+              <p className="text-sm text-[#0F6E56] text-center py-3">
+                Item biaya akan disalin dari PDO <span className="font-bold">{sourcePdoNumber}</span>.
+                {!sourceCopyAmounts && <span className="text-[#0F6E56]/70"> Jumlah biaya tidak disalin — isi manual setelah PDO dibuat.</span>}
+              </p>
+            </div>
+          ) : (
+            <div className="card mb-4 bg-[#f7faf7] border border-dashed border-[#b8d4b8]">
+              <p className="text-sm text-muted text-center py-3">
+                Item biaya akan disisipkan otomatis dari daftar item rutin setelah PDO disimpan.
+              </p>
+            </div>
+          )
         )}
 
         {isEdit && (
@@ -747,6 +829,43 @@ export function PdoFormPage() {
               </p>
             )}
 
+            {fields.length > 0 && (
+              <div className="flex items-center gap-2 mb-4 flex-wrap">
+                <div className="relative flex-1 min-w-[220px] max-w-[320px]">
+                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted" />
+                  <input
+                    className="input-base pl-9 w-full"
+                    placeholder="Cari kode/nama item..."
+                    value={itemSearch}
+                    onChange={(e) => setItemSearch(e.target.value)}
+                  />
+                </div>
+                <button
+                  type="button"
+                  className={`badge ${filterAutoExternal ? 'badge-approved' : 'badge-draft'} cursor-pointer`}
+                  onClick={() => setFilterAutoExternal((v) => !v)}
+                >
+                  Tampilkan item biaya otomatis
+                </button>
+                <button
+                  type="button"
+                  className={`badge ${filterZeroAmount ? 'badge-approved' : 'badge-draft'} cursor-pointer`}
+                  onClick={() => setFilterZeroAmount((v) => !v)}
+                >
+                  Tampilkan item belum ada biaya
+                </button>
+                {hasActiveFilter && (
+                  <button
+                    type="button"
+                    className="text-xs text-muted underline"
+                    onClick={() => { setItemSearch(''); setFilterAutoExternal(false); setFilterZeroAmount(false) }}
+                  >
+                    Reset filter
+                  </button>
+                )}
+              </div>
+            )}
+
             {fields.length === 0 ? (
               <p className="text-muted text-sm text-center py-6">
                 Klik "Tambah Item" untuk memulai input rencana biaya.
@@ -754,16 +873,22 @@ export function PdoFormPage() {
             ) : (
               <div className="flex flex-col gap-2">
                 {/* Ungrouped rows (newly added, no category selected yet) */}
-                {ungrouped.length > 0 && (
+                {ungrouped.filter(({ idx }) => matchesFilter(idx)).length > 0 && (
                   <div className="flex flex-col gap-3">
-                    {ungrouped.map(({ fieldId, idx }) => renderDetailRow(fieldId, idx))}
+                    {ungrouped.filter(({ idx }) => matchesFilter(idx)).map(({ fieldId, idx }) => renderDetailRow(fieldId, idx))}
                   </div>
                 )}
 
                 {/* Grouped rows: collapsible by category → sub-kategori */}
                 {sortedCats.map((cg) => {
                   const catCollapsed = collapsedGroups.has(`cat_${cg.catKey}`)
-                  const sortedSubs   = [...cg.subMap.values()].sort((a, b) => a.subOrder - b.subOrder)
+                  const sortedSubs   = [...cg.subMap.values()]
+                    .map((sg) => ({ ...sg, items: sg.items.filter(({ idx }) => matchesFilter(idx)) }))
+                    .filter((sg) => sg.items.length > 0)
+                    .sort((a, b) => a.subOrder - b.subOrder)
+
+                  if (sortedSubs.length === 0) return null
+
                   const catTotal     = sortedSubs.reduce(
                     (s, sg) => s + sg.items.reduce(
                       (ss, { idx }) => ss + (Number(detailValues?.[idx]?.amount) || 0),

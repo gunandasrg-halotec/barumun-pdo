@@ -17,7 +17,10 @@ export const useToastStore = create<ToastState>((set) => ({
   push: (message, type = 'success') => {
     const id = crypto.randomUUID()
     set((s) => ({ toasts: [...s.toasts, { id, message, type }] }))
-    setTimeout(() => set((s) => ({ toasts: s.toasts.filter((t) => t.id !== id) })), 2400)
+    // Error butuh waktu lebih lama utk dibaca (pesan biasanya lebih panjang/penting)
+    // dan tetap bisa ditutup manual kapan saja lewat tombol close.
+    const duration = type === 'error' ? 8000 : 3000
+    setTimeout(() => set((s) => ({ toasts: s.toasts.filter((t) => t.id !== id) })), duration)
   },
   remove: (id) => set((s) => ({ toasts: s.toasts.filter((t) => t.id !== id) })),
 }))

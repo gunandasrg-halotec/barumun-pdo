@@ -10,6 +10,7 @@ use App\Models\ExpenseSubcategory;
 use App\Models\PdoHeader;
 use App\Models\PlantationUnit;
 use App\Models\User;
+use App\Models\Vehicle;
 use App\Services\Payroll\PayrollApiService;
 use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Support\Facades\DB;
@@ -336,7 +337,12 @@ class MasterDataService
         $old = $unit->toArray();
 
         $unit->update([
-            'payroll_estate_external_id' => $data['payroll_estate_external_id'] ?? null,
+            'payroll_estate_external_id' => array_key_exists('payroll_estate_external_id', $data)
+                ? $data['payroll_estate_external_id']
+                : $unit->payroll_estate_external_id,
+            'account_code_kas_kebun' => array_key_exists('account_code_kas_kebun', $data)
+                ? $data['account_code_kas_kebun']
+                : $unit->account_code_kas_kebun,
         ]);
 
         AuditLog::record(
@@ -431,6 +437,83 @@ class MasterDataService
             actor: $actor,
             entityType: 'expense_items',
             entityId: $item->id,
+            action: 'DELETE',
+            oldValues: $old,
+            newValues: null
+        );
+    }
+
+    // ─────────────────────────────────────────────────────
+    // VEHICLE
+    // ─────────────────────────────────────────────────────
+
+    public function listVehicles(array $filters = []): Collection
+    {
+        return Vehicle::with('expenseItem')
+            ->when(isset($filters['is_active']), fn ($q) => $q->where('is_active', $filters['is_active']))
+            ->when(isset($filters['expense_item_id']), fn ($q) => $q->where('expense_item_id', $filters['expense_item_id']))
+            ->when(isset($filters['has_bbm_realization']) && $filters['has_bbm_realization'], function ($q) {
+                $q->whereHas('realizationEntries.pdoDetail.expenseItem', fn ($qq) => $qq->whereIn('code', ['BBM-TRK-001', 'BBM-TRK-002']));
+            })
+            ->orderBy('nama')
+            ->orderBy('nomor_polisi')
+            ->get();
+    }
+
+    public function findVehicle(string $id): Vehicle
+    {
+        return Vehicle::with('expenseItem')->findOrFail($id);
+    }
+
+    public function createVehicle(array $data, User $actor): Vehicle
+    {
+        $vehicle = Vehicle::create($data);
+
+        AuditLog::record(
+            actor: $actor,
+            entityType: 'vehicles',
+            entityId: $vehicle->id,
+            action: 'INSERT',
+            oldValues: null,
+            newValues: $vehicle->toArray()
+        );
+
+        return $vehicle->load('expenseItem');
+    }
+
+    public function updateVehicle(Vehicle $vehicle, array $data, User $actor): Vehicle
+    {
+        $old = $vehicle->toArray();
+        $vehicle->update($data);
+
+        AuditLog::record(
+            actor: $actor,
+            entityType: 'vehicles',
+            entityId: $vehicle->id,
+            action: 'UPDATE',
+            oldValues: $old,
+            newValues: $vehicle->fresh()->toArray()
+        );
+
+        return $vehicle->fresh()->load('expenseItem');
+    }
+
+    public function deleteVehicle(Vehicle $vehicle, User $actor): void
+    {
+        if ($vehicle->isUsedInRealization()) {
+            abort(response()->json([
+                'success' => false,
+                'error'   => ['code' => 'VEHICLE_IN_USE', 'message' => 'Kendaraan ini sudah memiliki data realisasi. Nonaktifkan kendaraan melalui menu edit jika diperlukan.'],
+            ], 409));
+        }
+
+        $old = $vehicle->toArray();
+        $vehicle->forceDelete();
+
+        AuditLog::record(
+            actor: $actor,
+            entityType: 'vehicles',
+            entityId: $vehicle->id,
             action: 'DELETE',
             oldValues: $old,
             newValues: null
