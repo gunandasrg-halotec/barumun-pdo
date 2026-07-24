@@ -14,6 +14,7 @@ import { useToastStore } from '@/store/toast.store'
 import { fmt, fmtDate } from '@/lib/format'
 import type { ApiResponse, PlantationUnit, PdoHeader, RealizationEntry, AuthUser } from '@/types'
 import { Download, Search, Plus, Upload } from 'lucide-react'
+import { useVehicles } from '@/hooks/useMasterData'
 import { DateRangePickerButton } from '@/components/ui/DateRangePickerButton'
 import type { RecapResponse } from '@/types/recap'
 
@@ -32,14 +33,24 @@ function isPribadiVendorRole(user: AuthUser | undefined): boolean {
 }
 
 // ── Form schema Input Realisasi ──────────────────────────────────────────────
+const INVENTORY_ITEM_CODES = ['BBM-TRK-001', 'BBM-TRK-002', 'PHD-SPK-001', 'PBB-TRK-001', 'PBB-TRK-002']
+
 const realizationSchema = z.object({
   pdo_detail_id:    z.string().uuid('Pilih item biaya'),
+  vehicle_id:       z.string().nullable().optional(),
   transaction_date: z.string().min(1, 'Tanggal wajib diisi'),
   amount:           z.coerce.number().min(1, 'Jumlah harus > 0'),
   payment_method:   z.enum(['tunai', 'transfer']),
   funding_source:   z.enum(['kas_kebun', 'rekening_kebun', 'rekening_utama']),
   proof_number:     z.string().min(1, 'No. referensi wajib diisi'),
   explanation:      z.string().nullable().optional(),
+}).superRefine((data, ctx) => {
+  // vehicle_id wajib untuk 5 item persediaan kendaraan
+  // (kode item divalidasi ulang di backend; validasi frontend hanya untuk UX)
+  // Note: kode item tidak tersedia langsung di form data, sehingga validasi
+  // ini dilakukan di level component setelah selectedItemCode dihitung.
+  // Validasi ketat ada di backend StoreRealizationEntryRequest.
+  void data; void ctx
 })
 type RealizationForm = z.infer<typeof realizationSchema>
 
@@ -92,6 +103,7 @@ export function RekapitulasiPage() {
 
   // ── Modal state ──────────────────────────────────────────────────────────
   const [inputOpen, setInputOpen]         = useState(false)
+  const [editingEntry, setEditingEntry]   = useState<RealizationEntry | null>(null)
   const [apiError,  setApiError]          = useState<string | null>(null)
   const [uploadId,  setUploadId]          = useState<string | null>(null)
   const [file,      setFile]              = useState<File | null>(null)
@@ -195,6 +207,8 @@ export function RekapitulasiPage() {
   })
 
   useEffect(() => {
+    // Saat edit, proof_number & vehicle_id sudah diisi dari entri lama — jangan ditimpa.
+    if (editingEntry) return
     if (!selectedPdoDetailId || !activePdo || !pdoRealizationEntries) return
     const item     = availableItems.find((d) => d.pdo_detail_id === selectedPdoDetailId)
     const itemCode = item?.expense_item?.code ?? 'NOITEM'
@@ -203,7 +217,53 @@ export function RekapitulasiPage() {
     ).length
     const sequence = existingCount + 1
     setValue('proof_number', `${activePdo.pdo_number}/${itemCode}/${sequence}`)
-  }, [selectedPdoDetailId, pdoRealizationEntries, activePdo, availableItems, setValue])
+    // Reset vehicle_id saat item berganti
+    setValue('vehicle_id', null)
+  }, [selectedPdoDetailId, pdoRealizationEntries, activePdo, availableItems, setValue, editingEntry])
+
+  // ── Vehicle select: tampilkan jika item termasuk 5 item persediaan kendaraan ──
+  const selectedItem     = availableItems.find((d) => d.pdo_detail_id === selectedPdoDetailId)
+  const selectedItemCode = editingEntry
+    ? (editingEntry.pdo_detail?.expense_item?.code ?? '')
+    : (selectedItem?.expense_item?.code ?? '')
+  const isInventoryItem  = INVENTORY_ITEM_CODES.includes(selectedItemCode)
+
+  const canEditRealization = role === 'KERANI'
+  const openEditRealization = (entry: RealizationEntry) => {
+    setEditingEntry(entry)
+    setApiError(null)
+    reset({
+      pdo_detail_id:    entry.pdo_detail_id,
+      vehicle_id:       entry.vehicle_id,
+      transaction_date: entry.transaction_date.split('T')[0],
+      amount:           entry.amount,
+      payment_method:   entry.payment_method,
+      funding_source:   entry.funding_source,
+      proof_number:     entry.proof_number,
+      explanation:      entry.explanation,
+    })
+    setInputOpen(true)
+    setDetailItem(null)
+    setAggregateGroup(null)
+  }
+  const closeInputModal = () => {
+    setInputOpen(false)
+    setEditingEntry(null)
+    setApiError(null)
+    reset({
+      transaction_date: new Date().toISOString().split('T')[0],
+      payment_method:   isPribadiVendorRole(user ?? undefined) ? 'transfer' : 'tunai',
+      funding_source:   isPribadiVendorRole(user ?? undefined) ? 'rekening_utama' : 'kas_kebun',
+    })
+  }
+
+  // Semua kendaraan aktif — filter has_bbm_realization TIDAK berlaku di sini,
+  // itu khusus utk dropdown Log Trip Kendaraan. Di form realisasi, realisasi
+  // BBM pertama untuk kendaraan tsb justru dicatat di sini, jadi kendaraan
+  // yang belum pernah ada realisasi BBM pun harus tetap muncul.
+  const { data: eligibleVehicles } = useVehicles(
+    isInventoryItem ? { is_active: true } : undefined
+  )
 
   useEffect(() => {
     if (isPribadiVendorRole(user ?? undefined)) {
@@ -217,16 +277,22 @@ export function RekapitulasiPage() {
 
   const saveRealization = useMutation({
     mutationFn: (data: RealizationForm) =>
-      api.post<ApiResponse<RealizationEntry>>('/realization-entries', data),
+      editingEntry
+        ? api.put<ApiResponse<RealizationEntry>>(`/realization-entries/${editingEntry.id}`, data)
+        : api.post<ApiResponse<RealizationEntry>>('/realization-entries', data),
     onSuccess: (res) => {
+      const wasEditing = !!editingEntry
       setApiError(null)
-      toast('Realisasi berhasil dicatat')
+      toast(wasEditing ? 'Realisasi berhasil diperbarui' : 'Realisasi berhasil dicatat')
       qc.invalidateQueries({ queryKey: ['recap'] })
       qc.invalidateQueries({ queryKey: ['realizations'] })
+      qc.invalidateQueries({ queryKey: ['realisasi-detail'] })
+      qc.invalidateQueries({ queryKey: ['realisasi-aggregate'] })
       const entry = res.data.data
+      setEditingEntry(null)
       setInputOpen(false)
       reset()
-      setUploadId(entry.id)
+      if (!wasEditing) setUploadId(entry.id)
     },
     onError: (error: any) => {
       const message = error?.response?.data?.error?.message || error?.response?.data?.message || error?.message || 'Gagal menyimpan realisasi'
@@ -515,14 +581,14 @@ export function RekapitulasiPage() {
         </div>
       )}
 
-      {/* ── Modal Input Realisasi ───────────────────────────────────────────── */}
-      <Modal open={inputOpen} onClose={() => { setInputOpen(false); reset(); setApiError(null) }} title="Input Realisasi Biaya">
-        {!activePdo ? (
+      {/* ── Modal Input/Edit Realisasi ───────────────────────────────────────── */}
+      <Modal open={inputOpen} onClose={closeInputModal} title={editingEntry ? 'Edit Realisasi Biaya' : 'Input Realisasi Biaya'}>
+        {!activePdo && !editingEntry ? (
           <p className="text-sm text-muted">Tidak ada PDO aktif (status Final) untuk periode dan unit ini.</p>
         ) : (
           <form onSubmit={handleSubmit((d) => saveRealization.mutate(d))} className="flex flex-col gap-4">
             <div className="p-3 bg-[#f7faf7] border border-line rounded text-sm">
-              PDO: <span className="font-bold">{activePdo.pdo_number}</span>
+              PDO: <span className="font-bold">{editingEntry ? editingEntry.pdo_detail?.pdo_header?.pdo_number : activePdo?.pdo_number}</span>
             </div>
 
             {/* Sisa kantong — prominent, shown as soon as data is loaded */}
@@ -547,17 +613,27 @@ export function RekapitulasiPage() {
 
             <div>
               <label className="label">Item Biaya</label>
-              <select {...register('pdo_detail_id')} className="input-base">
-                <option value="">Pilih item...</option>
-                {availableItems.map((d) => (
-                  <option key={d.pdo_detail_id} value={d.pdo_detail_id}>
-                    {d.expense_item?.name ?? d.description} — Saldo: {fmt(d.saldo)}
-                  </option>
-                ))}
-              </select>
-              {errors.pdo_detail_id && <p className="field-error">{errors.pdo_detail_id.message}</p>}
-              {availableItems.length === 0 && (
-                <p className="text-xs text-muted mt-1">Tidak ada item yang bisa Anda realisasi untuk PDO ini.</p>
+              {editingEntry ? (
+                <input
+                  className="input-base bg-[#f7faf7]"
+                  disabled
+                  value={editingEntry.pdo_detail?.expense_item?.name ?? '—'}
+                />
+              ) : (
+                <>
+                  <select {...register('pdo_detail_id')} className="input-base">
+                    <option value="">Pilih item...</option>
+                    {availableItems.map((d) => (
+                      <option key={d.pdo_detail_id} value={d.pdo_detail_id}>
+                        {d.expense_item?.name ?? d.description} — Saldo: {fmt(d.saldo)}
+                      </option>
+                    ))}
+                  </select>
+                  {errors.pdo_detail_id && <p className="field-error">{errors.pdo_detail_id.message}</p>}
+                  {availableItems.length === 0 && (
+                    <p className="text-xs text-muted mt-1">Tidak ada item yang bisa Anda realisasi untuk PDO ini.</p>
+                  )}
+                </>
               )}
             </div>
 
@@ -597,6 +673,27 @@ export function RekapitulasiPage() {
               </div>
             </div>
 
+            {isInventoryItem && (
+              <div>
+                <label className="label">
+                  Kendaraan <span className="text-red-500">*</span>
+                </label>
+                <select {...register('vehicle_id')} className="input-base">
+                  <option value="">— Pilih kendaraan —</option>
+                  {eligibleVehicles?.map((v) => (
+                    <option key={v.id} value={v.id}>
+                      {v.nomor_polisi} — {v.nama}
+                    </option>
+                  ))}
+                </select>
+                {(!eligibleVehicles || eligibleVehicles.length === 0) && (
+                  <p className="text-xs text-amber-600 mt-1">
+                    Belum ada kendaraan aktif. Tambahkan data kendaraan terlebih dahulu di Master Data.
+                  </p>
+                )}
+              </div>
+            )}
+
             <div>
               <label className="label">No. Referensi / Kuitansi</label>
               <input {...register('proof_number')} className="input-base" placeholder="KWT/2026/001" />
@@ -609,8 +706,10 @@ export function RekapitulasiPage() {
             </div>
 
             <div className="flex justify-end gap-2 pt-2">
-              <Button type="button" variant="secondary" onClick={() => { setInputOpen(false); reset() }}>Batal</Button>
-              <Button type="submit" loading={saveRealization.isPending}>Simpan Realisasi</Button>
+              <Button type="button" variant="secondary" onClick={closeInputModal}>Batal</Button>
+              <Button type="submit" loading={saveRealization.isPending}>
+                {editingEntry ? 'Simpan Perubahan' : 'Simpan Realisasi'}
+              </Button>
             </div>
           </form>
         )}
@@ -664,7 +763,7 @@ export function RekapitulasiPage() {
               <table className="w-full border-collapse text-sm">
                 <thead>
                   <tr>
-                    {['No. Ref', 'Tanggal', 'Jumlah', 'Metode', 'Sumber Dana', 'Dicatat Oleh'].map((h) => (
+                    {['No. Ref', 'Tanggal', 'Jumlah', 'Metode', 'Sumber Dana', 'Dicatat Oleh', ''].map((h) => (
                       <th key={h} className="px-3 py-2 text-left text-[11px] font-bold uppercase tracking-wider bg-[#f7faf7] border border-line">
                         {h}
                       </th>
@@ -680,6 +779,17 @@ export function RekapitulasiPage() {
                       <td className="px-3 py-2">{PAYMENT_LABEL[r.payment_method]}</td>
                       <td className="px-3 py-2">{FUNDING_LABEL[r.funding_source] ?? r.funding_source}</td>
                       <td className="px-3 py-2">{r.recorder?.full_name ?? '—'}</td>
+                      <td className="px-3 py-2">
+                        {canEditRealization && r.pdo_detail?.pdo_header?.status !== 'closed' && (
+                          <button
+                            type="button"
+                            className="text-xs font-bold text-[#0F6E56] hover:underline"
+                            onClick={() => openEditRealization(r)}
+                          >
+                            Edit
+                          </button>
+                        )}
+                      </td>
                     </tr>
                   ))}
                 </tbody>

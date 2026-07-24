@@ -106,6 +106,33 @@ export function PdoFormPage() {
 
   const { fields, prepend, remove } = useFieldArray({ control, name: 'details' })
 
+  // Sarankan Bulan otomatis = bulan setelah PDO final terakhir unit ini, agar
+  // user tidak salah pilih periode yang sudah ada PDO final-nya (BR-PDO-001).
+  const watchedUnitId = watch('plantation_unit_id')
+
+  const { data: latestFinalPdo } = useQuery({
+    queryKey: ['latest-final-pdo', watchedUnitId],
+    queryFn: async () => {
+      const res = await api.get<ApiResponse<PdoHeader[]>>('/pdo', {
+        params: { status: 'final', plantation_unit_id: watchedUnitId },
+      })
+      return res.data.data[0] ?? null
+    },
+    enabled: !isEdit && !!watchedUnitId,
+  })
+
+  useEffect(() => {
+    if (isEdit || !latestFinalPdo) return
+    let nextMonth = latestFinalPdo.period_month + 1
+    let nextYear  = latestFinalPdo.period_year
+    if (nextMonth > 12) {
+      nextMonth = 1
+      nextYear += 1
+    }
+    setValue('period_month', nextMonth)
+    setValue('period_year', nextYear)
+  }, [latestFinalPdo, isEdit, setValue])
+
   const detailValues = watch('details')
   const totalAmount  = detailValues?.reduce((sum, d) => sum + (Number(d.amount) || 0), 0) ?? 0
 
@@ -234,7 +261,7 @@ export function PdoFormPage() {
       qc.invalidateQueries({ queryKey: ['pdo'] })
       navigate(`/pdo/${created.id}`)
     },
-    onError: () => toast('Gagal menyimpan PDO', 'error'),
+    onError: (err: unknown) => toast(getApiErrorMessage(err), 'error'),
   })
 
   const submit = useMutation({
