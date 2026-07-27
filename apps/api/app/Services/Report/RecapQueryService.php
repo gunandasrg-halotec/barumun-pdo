@@ -82,6 +82,7 @@ class RecapQueryService
                 CASE WHEN ei.is_deduction THEN -pd.amount ELSE pd.amount END AS pengajuan,
                 ei.is_deduction,
                 COALESCE(te_agg.total_transfer, 0)      AS total_transfer,
+                COALESCE(te_kebun_agg.total_transfer_kebun, 0) AS total_transfer_kebun,
                 COALESCE(re_agg.total_realization, 0)   AS total_realization
             FROM pdo_details pd
             JOIN pdo_headers ph             ON ph.id = pd.pdo_header_id
@@ -94,6 +95,12 @@ class RecapQueryService
                 WHERE status = 'committed'
                 GROUP BY pdo_detail_id
             ) te_agg ON te_agg.pdo_detail_id = pd.id
+            LEFT JOIN (
+                SELECT pdo_detail_id, SUM(amount) AS total_transfer_kebun
+                FROM transfer_entries
+                WHERE status = 'committed' AND transfer_destination = 'rek_kebun'
+                GROUP BY pdo_detail_id
+            ) te_kebun_agg ON te_kebun_agg.pdo_detail_id = pd.id
             LEFT JOIN (
                 SELECT re.pdo_detail_id, SUM(re.amount) AS total_realization
                 FROM realization_entries re
@@ -174,11 +181,14 @@ class RecapQueryService
                 ];
             }
 
-            $subPos    = $subIndex[$catId][$subId];
-            $pengajuan = (int) $row->pengajuan;
-            $transfer  = (int) $row->total_transfer;
-            $real      = (int) $row->total_realization;
-            $saldo     = $transfer - $real;
+            $subPos       = $subIndex[$catId][$subId];
+            $pengajuan    = (int) $row->pengajuan;
+            $transfer     = (int) $row->total_transfer;
+            $transferKebunItem = (int) $row->total_transfer_kebun;
+            $real         = (int) $row->total_realization;
+            // Saldo dihitung dari transfer ke rek_kebun saja (bukan total_transfer
+            // semua destination), supaya sum(saldo item) = saldo_kebun (kantong level).
+            $saldo        = $transferKebunItem - $real;
 
             // ── Item ──────────────────────────────────────────────────────────
             $itemCounter++;
