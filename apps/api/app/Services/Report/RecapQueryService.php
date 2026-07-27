@@ -95,7 +95,7 @@ class RecapQueryService
             LEFT JOIN (
                 SELECT re.pdo_detail_id, SUM(re.amount) AS total_realization
                 FROM realization_entries re
-                WHERE 1 = 1
+                WHERE re.funding_source IN ('kas_kebun', 'rekening_kebun')
                     {$dateFilterSql}
                 GROUP BY re.pdo_detail_id
             ) re_agg ON re_agg.pdo_detail_id = pd.id
