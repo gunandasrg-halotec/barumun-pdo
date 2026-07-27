@@ -116,13 +116,11 @@ class RecapDirectExport implements WithEvents, ShouldAutoSize
                             $this->applyNumberFormat($sheet, $row, ['D', 'E', 'F', 'G']);
                             $sheet->getStyle("A{$row}")->getAlignment()->setHorizontal(Alignment::HORIZONTAL_CENTER);
 
-                            // Saldo per item = formula Transfer-Realisasi, KECUALI item
-                            // potongan (is_deduction): saldonya sengaja tetap nilai statis
-                            // 0 (bukan formula), karena potongan tidak pernah direalisasi
-                            // secara terpisah — lihat RecapQueryService::buildHierarchy().
-                            if (empty($item['is_deduction'])) {
-                                $sheet->setCellValue("G{$row}", "=E{$row}-F{$row}");
-                            }
+                            // Saldo per item = formula Transfer-Realisasi. Untuk item
+                            // potongan, RecapQueryService sudah meng-set Realisasi = Transfer
+                            // (uang muka yang sudah direalisasi periode lalu), sehingga
+                            // formula ini otomatis menghasilkan 0 tanpa perlakuan khusus.
+                            $sheet->setCellValue("G{$row}", "=E{$row}-F{$row}");
 
                             $row++;
                         }

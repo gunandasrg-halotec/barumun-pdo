@@ -112,7 +112,7 @@ export function RecapTable({ data, onRealizationClick }: Props) {
                     <td className="px-3 py-1.5 text-right border border-[#e5e7eb]">{idr(item.amount)}</td>
                     <td className="px-3 py-1.5 text-right border border-[#e5e7eb]">{idr(item.total_transfer)}</td>
                     <td className="px-3 py-1.5 text-right border border-[#e5e7eb]">
-                      {item.total_realization > 0 && onRealizationClick ? (
+                      {item.total_realization > 0 && onRealizationClick && !item.is_deduction ? (
                         <button
                           className="text-green font-semibold hover:underline w-full text-right"
                           onClick={() => onRealizationClick(item.pdo_detail_id, item.item_name)}

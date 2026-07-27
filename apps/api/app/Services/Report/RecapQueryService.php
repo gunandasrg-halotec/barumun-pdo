@@ -15,7 +15,60 @@ class RecapQueryService
         $startDate  = $filters['start_date']  ?? null;
         $endDate    = $filters['end_date']    ?? null;
         $kantong    = $filters['kantong']     ?? 'all'; // 'all' | 'kebun' | 'pribadi'
-        $isSqlite   = DB::getDriverName() === 'sqlite';
+
+        // Baris untuk tabel (bisa dibatasi ke 1 kategori lewat $categoryId).
+        $rows = $this->fetchDetailRows($year, $month, $unitId, $categoryId, $startDate, $endDate);
+
+        // Baris untuk KPI (SELALU seluruh PDO, tidak terpengaruh filter kategori tabel) —
+        // kalau tidak ada filter kategori, ini persis sama dengan $rows, jadi tidak perlu
+        // query kedua. KPI dihitung dengan SUM manual di sini (bukan query agregat
+        // terpisah) supaya KPI dijamin selalu = penjumlahan item, termasuk override
+        // realisasi item potongan (lihat resolveRealization()).
+        $kpiRows = $categoryId === null
+            ? $rows
+            : $this->fetchDetailRows($year, $month, $unitId, null, $startDate, $endDate);
+
+        $transferKebun    = 0;
+        $transferPribadi  = 0;
+        $realisasiKebun   = 0;
+        $realisasiPribadi = 0;
+
+        foreach ($kpiRows as $row) {
+            $isDeduction = (bool) $row->is_deduction;
+            $tKebun      = (int) $row->total_transfer_kebun;
+            $tPribadi    = (int) $row->total_transfer_pribadi;
+
+            $transferKebun   += $tKebun;
+            $transferPribadi += $tPribadi;
+            $realisasiKebun   += $this->resolveRealization($isDeduction, $tKebun,   (int) $row->total_realization);
+            $realisasiPribadi += $this->resolveRealization($isDeduction, $tPribadi, (int) $row->total_realization_pribadi);
+        }
+
+        return $this->buildHierarchy($rows, $transferKebun, $transferPribadi, $realisasiKebun, $realisasiPribadi, $kantong);
+    }
+
+    /**
+     * Realisasi yang dipakai untuk perhitungan (baik KPI maupun tabel item).
+     *
+     * Item potongan (is_deduction, misal POTONGAN PANJAR) merepresentasikan uang
+     * muka/panjar yang SUDAH dibayarkan (direalisasikan) periode sebelumnya — bukan
+     * dana yang belum terpakai. Supaya baris & subtotalnya tidak menampilkan saldo
+     * negatif yang menyesatkan, realisasi potongan dianggap SAMA DENGAN transfer-nya
+     * (yang juga negatif), sehingga Saldo = Transfer - Realisasi = 0 secara alami.
+     */
+    private function resolveRealization(bool $isDeduction, int $transfer, int $realRaw): int
+    {
+        return $isDeduction ? $transfer : $realRaw;
+    }
+
+    /**
+     * Ambil baris per pdo_detail dengan agregat transfer/realisasi (kebun & pribadi
+     * scope terpisah) + flag is_deduction. $categoryId null = semua kategori (dipakai
+     * untuk hitung KPI PDO-wide, terlepas dari filter kategori tabel).
+     */
+    private function fetchDetailRows(int $year, int $month, string $unitId, ?string $categoryId, ?string $startDate, ?string $endDate): array
+    {
+        $isSqlite = DB::getDriverName() === 'sqlite';
 
         $dateFilterSql = $isSqlite
             ? 'AND (:start_date IS NULL OR re.transaction_date >= :start_date2)
@@ -36,44 +89,13 @@ class RecapQueryService
             ? 'AND (:category_id IS NULL OR ec.id = :category_id2)'
             : 'AND (CAST(:category_id AS uuid) IS NULL OR ec.id = CAST(:category_id2 AS uuid))';
 
-        // ── Kantong split (PDO-level) ─────────────────────────────────────────
-        $kantongTotals = DB::selectOne('
-            SELECT
-                COALESCE(SUM(CASE WHEN te.transfer_destination = \'rek_kebun\' THEN te.amount ELSE 0 END), 0)          AS transfer_kebun,
-                COALESCE(SUM(CASE WHEN te.transfer_destination IN (\'pribadi\', \'vendor\') THEN te.amount ELSE 0 END), 0) AS transfer_pribadi
-            FROM transfer_entries te
-            JOIN pdo_details pd ON pd.id = te.pdo_detail_id
-            JOIN pdo_headers ph ON ph.id = pd.pdo_header_id
-            WHERE ph.period_year = :year AND ph.period_month = :month AND ph.plantation_unit_id = :unit_id
-                AND te.status = \'committed\'
-        ', ['year' => $year, 'month' => $month, 'unit_id' => $unitId]);
-
-        $realisasi = DB::selectOne("
-            SELECT
-                COALESCE(SUM(CASE WHEN re.funding_source IN ('kas_kebun', 'rekening_kebun') THEN re.amount ELSE 0 END), 0) AS realisasi_kebun,
-                COALESCE(SUM(CASE WHEN re.funding_source = 'rekening_utama' THEN re.amount ELSE 0 END), 0)                    AS realisasi_pribadi
-            FROM realization_entries re
-            JOIN pdo_details pd ON pd.id = re.pdo_detail_id
-            JOIN pdo_headers ph ON ph.id = pd.pdo_header_id
-            WHERE ph.period_year = :year AND ph.period_month = :month AND ph.plantation_unit_id = :unit_id
-                {$dateFilterSql}
-        ", [
-            'year'       => $year,
-            'month'      => $month,
-            'unit_id'    => $unitId,
-            'start_date'  => $startDate,
-            'start_date2' => $startDate,
-            'end_date'    => $endDate,
-            'end_date2'   => $endDate,
-        ]);
-
         // total_transfer/total_realization are pre-aggregated per pdo_detail_id in subqueries
         // (not joined directly) to avoid a join fan-out: joining transfer_entries AND
         // realization_entries onto pdo_details in one query multiplies rows whenever a detail
         // has more than one row on either side, and SUM(DISTINCT amount) — the previous
         // workaround — silently drops legitimate duplicate-amount entries instead of
         // duplicate rows, undercounting totals like "3x Rp 120.000 => Rp 120.000".
-        $rows = DB::select("
+        return DB::select("
             SELECT
                 ec.id            AS category_id,
                 ec.code          AS category_code,
@@ -154,13 +176,6 @@ class RecapQueryService
             'category_id'  => $categoryId,
             'category_id2' => $categoryId,
         ]);
-
-        $transferKebun   = (int) ($kantongTotals->transfer_kebun   ?? 0);
-        $transferPribadi = (int) ($kantongTotals->transfer_pribadi ?? 0);
-        $realisasiKebun  = (int) ($realisasi->realisasi_kebun  ?? 0);
-        $realisasiPribadi= (int) ($realisasi->realisasi_pribadi ?? 0);
-
-        return $this->buildHierarchy($rows, $transferKebun, $transferPribadi, $realisasiKebun, $realisasiPribadi, $kantong);
     }
 
     private function buildHierarchy(array $rows, int $transferKebun, int $transferPribadi, int $realisasiKebun, int $realisasiPribadi, string $kantong = 'all'): array
@@ -175,17 +190,19 @@ class RecapQueryService
         $grandTotalRealization = 0;
 
         foreach ($rows as $row) {
-            $pengajuan         = (int) $row->pengajuan;
-            $transferAll       = (int) $row->total_transfer;
-            $transferKebunItem = (int) $row->total_transfer_kebun;
+            $pengajuan           = (int) $row->pengajuan;
+            $transferAll         = (int) $row->total_transfer;
+            $transferKebunItem   = (int) $row->total_transfer_kebun;
             $transferPribadiItem = (int) $row->total_transfer_pribadi;
-            $realKebunItem     = (int) $row->total_realization;
-            $realPribadiItem   = (int) $row->total_realization_pribadi;
+            $isDeduction         = (bool) $row->is_deduction;
+
+            $realKebunItem   = $this->resolveRealization($isDeduction, $transferKebunItem,   (int) $row->total_realization);
+            $realPribadiItem = $this->resolveRealization($isDeduction, $transferPribadiItem, (int) $row->total_realization_pribadi);
 
             // Kolom yang ditampilkan tergantung filter kantong: 'kebun' hanya
             // transfer/realisasi ke rek_kebun, 'pribadi' hanya pribadi/vendor,
             // 'all' menampilkan total_transfer semua destination (informational)
-            // tapi saldo tetap dihitung dari sisi kas kebun saja.
+            // tapi realisasi tetap dihitung dari sisi kas kebun saja.
             if ($kantong === 'kebun') {
                 $transfer = $transferKebunItem;
                 $real     = $realKebunItem;
@@ -202,17 +219,10 @@ class RecapQueryService
                 $transfer = $transferAll;
                 $real     = $realKebunItem;
             }
-            // Saldo TRUE (dipakai untuk roll-up subtotal/grand total, supaya tetap
-            // konsisten dengan KPI transfer_kebun/realisasi_kebun) berbeda dari
-            // saldo yang DITAMPILKAN di baris item. Item potongan (is_deduction)
-            // adalah penyesuaian yang otomatis "selesai" saat PDO commit — tidak
-            // pernah ada proses realisasi terpisah untuknya — sehingga menampilkan
-            // saldo negatif di baris itemnya menyesatkan (seolah ada sisa dana yang
-            // belum direalisasi). Baris item ditampilkan 0, tapi kontribusi aslinya
-            // tetap dihitung di subtotal/grand total lewat $saldo (bukan $displaySaldo).
-            $saldo        = $transfer - $real;
-            $isDeduction  = (bool) $row->is_deduction;
-            $displaySaldo = $isDeduction ? 0 : $saldo;
+            // Saldo = Transfer - Realisasi seperti biasa. Untuk item potongan, $real
+            // sudah di-resolve sama dengan $transfer (lihat resolveRealization()),
+            // sehingga Saldo otomatis 0 tanpa perlu override terpisah.
+            $saldo = $transfer - $real;
 
             $catId = $row->category_id;
             $subId = $row->subcategory_id;
@@ -263,13 +273,11 @@ class RecapQueryService
                 'amount'           => $pengajuan,
                 'total_transfer'   => $transfer,
                 'total_realization'=> $real,
-                'saldo'            => $displaySaldo,
+                'saldo'            => $saldo,
                 'is_deduction'     => $isDeduction,
             ];
 
-            // Roll-up sub-category (pakai $saldo TRUE, bukan $displaySaldo, supaya
-            // subtotal tetap = subtotal_transfer - subtotal_realization walaupun
-            // baris item potongan ditampilkan 0)
+            // Roll-up sub-category
             $categories[$catPos]['subcategories'][$subPos]['subtotal_amount']       += $pengajuan;
             $categories[$catPos]['subcategories'][$subPos]['subtotal_transfer']     += $transfer;
             $categories[$catPos]['subcategories'][$subPos]['subtotal_realization']  += $real;
