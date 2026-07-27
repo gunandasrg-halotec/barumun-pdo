@@ -35,6 +35,7 @@ class RecapQueryService
             JOIN pdo_details pd ON pd.id = te.pdo_detail_id
             JOIN pdo_headers ph ON ph.id = pd.pdo_header_id
             WHERE ph.period_year = :year AND ph.period_month = :month AND ph.plantation_unit_id = :unit_id
+                AND te.status = \'committed\'
         ', ['year' => $year, 'month' => $month, 'unit_id' => $unitId]);
 
         $realisasi = DB::selectOne("
@@ -90,6 +91,7 @@ class RecapQueryService
             LEFT JOIN (
                 SELECT pdo_detail_id, SUM(amount) AS total_transfer
                 FROM transfer_entries
+                WHERE status = 'committed'
                 GROUP BY pdo_detail_id
             ) te_agg ON te_agg.pdo_detail_id = pd.id
             LEFT JOIN (
