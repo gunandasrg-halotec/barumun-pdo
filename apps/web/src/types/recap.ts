@@ -9,6 +9,7 @@ export interface RecapItem {
   total_transfer: number
   total_realization: number
   saldo: number
+  is_deduction: boolean
 }
 
 export interface RecapSubcategory {

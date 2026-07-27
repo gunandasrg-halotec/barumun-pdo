@@ -202,7 +202,17 @@ class RecapQueryService
                 $transfer = $transferAll;
                 $real     = $realKebunItem;
             }
-            $saldo = $transfer - $real;
+            // Saldo TRUE (dipakai untuk roll-up subtotal/grand total, supaya tetap
+            // konsisten dengan KPI transfer_kebun/realisasi_kebun) berbeda dari
+            // saldo yang DITAMPILKAN di baris item. Item potongan (is_deduction)
+            // adalah penyesuaian yang otomatis "selesai" saat PDO commit — tidak
+            // pernah ada proses realisasi terpisah untuknya — sehingga menampilkan
+            // saldo negatif di baris itemnya menyesatkan (seolah ada sisa dana yang
+            // belum direalisasi). Baris item ditampilkan 0, tapi kontribusi aslinya
+            // tetap dihitung di subtotal/grand total lewat $saldo (bukan $displaySaldo).
+            $saldo        = $transfer - $real;
+            $isDeduction  = (bool) $row->is_deduction;
+            $displaySaldo = $isDeduction ? 0 : $saldo;
 
             $catId = $row->category_id;
             $subId = $row->subcategory_id;
@@ -253,10 +263,13 @@ class RecapQueryService
                 'amount'           => $pengajuan,
                 'total_transfer'   => $transfer,
                 'total_realization'=> $real,
-                'saldo'            => $saldo,
+                'saldo'            => $displaySaldo,
+                'is_deduction'     => $isDeduction,
             ];
 
-            // Roll-up sub-category
+            // Roll-up sub-category (pakai $saldo TRUE, bukan $displaySaldo, supaya
+            // subtotal tetap = subtotal_transfer - subtotal_realization walaupun
+            // baris item potongan ditampilkan 0)
             $categories[$catPos]['subcategories'][$subPos]['subtotal_amount']       += $pengajuan;
             $categories[$catPos]['subcategories'][$subPos]['subtotal_transfer']     += $transfer;
             $categories[$catPos]['subcategories'][$subPos]['subtotal_realization']  += $real;

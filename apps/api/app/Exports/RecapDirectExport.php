@@ -52,7 +52,20 @@ class RecapDirectExport implements WithEvents, ShouldAutoSize
                 $this->applyStyle($sheet, "A{$row}:G{$row}", ['font' => ['bold' => true], 'fill' => self::FILL_HEADER, 'border' => Border::BORDER_THIN, 'align' => Alignment::HORIZONTAL_CENTER]);
                 $row++;
 
-                foreach ($this->recap['categories'] as $cat) {
+                // Pass 1: tulis semua baris dengan NILAI apa adanya (seperti sebelumnya),
+                // sambil merekam baris kategori/subkategori/item supaya bisa ditimpa
+                // dengan FORMULA pada pass 2 — perlu 2 pass karena baris kategori/
+                // subkategori ditulis SEBELUM baris item-item di bawahnya, jadi rentang
+                // barisnya baru diketahui setelah semua item selesai ditulis.
+                $categoryRows    = []; // catIdx => row number
+                $subcatRowsByCat = []; // catIdx => [subcat row numbers]
+                $subcatItemRange = []; // subcat row number => [startItemRow, endItemRow]
+
+                foreach ($this->recap['categories'] as $catIdx => $cat) {
+                    $catRow = $row;
+                    $categoryRows[$catIdx] = $catRow;
+                    $subcatRowsByCat[$catIdx] = [];
+
                     // Category row
                     $sheet->fromArray([[
                         $cat['no'],
@@ -68,6 +81,9 @@ class RecapDirectExport implements WithEvents, ShouldAutoSize
                     $row++;
 
                     foreach ($cat['subcategories'] as $sub) {
+                        $subRow = $row;
+                        $subcatRowsByCat[$catIdx][] = $subRow;
+
                         // Sub-category row
                         $sheet->fromArray([[
                             '',
@@ -82,6 +98,8 @@ class RecapDirectExport implements WithEvents, ShouldAutoSize
                         $this->applyNumberFormat($sheet, $row, ['D', 'E', 'F', 'G']);
                         $row++;
 
+                        $itemStartRow = $row;
+
                         foreach ($sub['items'] as $item) {
                             $sheet->fromArray([[
                                 $item['no'],
@@ -95,10 +113,26 @@ class RecapDirectExport implements WithEvents, ShouldAutoSize
                             $this->applyStyle($sheet, "A{$row}:G{$row}", ['border' => Border::BORDER_THIN]);
                             $this->applyNumberFormat($sheet, $row, ['D', 'E', 'F', 'G']);
                             $sheet->getStyle("A{$row}")->getAlignment()->setHorizontal(Alignment::HORIZONTAL_CENTER);
+
+                            // Saldo per item = formula Transfer-Realisasi, KECUALI item
+                            // potongan (is_deduction): saldonya sengaja tetap nilai statis
+                            // 0 (bukan formula), karena potongan tidak pernah direalisasi
+                            // secara terpisah — lihat RecapQueryService::buildHierarchy().
+                            if (empty($item['is_deduction'])) {
+                                $sheet->setCellValue("G{$row}", "=E{$row}-F{$row}");
+                            }
+
                             $row++;
+                        }
+
+                        $itemEndRow = $row - 1;
+                        if ($itemEndRow >= $itemStartRow) {
+                            $subcatItemRange[$subRow] = [$itemStartRow, $itemEndRow];
                         }
                     }
                 }
+
+                $grandRow = $row;
 
                 // Grand total row
                 $sheet->fromArray([[
@@ -110,6 +144,38 @@ class RecapDirectExport implements WithEvents, ShouldAutoSize
                 ]], null, "A{$row}");
                 $this->applyStyle($sheet, "A{$row}:G{$row}", ['font' => ['bold' => true, 'size' => 11], 'fill' => self::FILL_GRAND, 'border' => Border::BORDER_MEDIUM]);
                 $this->applyNumberFormat($sheet, $row, ['D', 'E', 'F', 'G']);
+
+                // Pass 2: timpa Pengajuan/Total Transfer/Total Realisasi kategori &
+                // subkategori dengan formula SUM, dan Saldo dengan formula
+                // Transfer-Realisasi (bukan SUM kolom Saldo) — supaya subtotal tetap
+                // konsisten dengan KPI walau ada baris item potongan yang Saldo-nya
+                // sengaja ditampilkan 0 (lihat catatan di pass 1).
+                foreach ($subcatItemRange as $subRow => [$startRow, $endRow]) {
+                    foreach (['D', 'E', 'F'] as $col) {
+                        $sheet->setCellValue("{$col}{$subRow}", "=SUM({$col}{$startRow}:{$col}{$endRow})");
+                    }
+                    $sheet->setCellValue("G{$subRow}", "=E{$subRow}-F{$subRow}");
+                }
+
+                foreach ($subcatRowsByCat as $catIdx => $subRows) {
+                    $catRow = $categoryRows[$catIdx];
+                    if (empty($subRows)) {
+                        continue;
+                    }
+                    foreach (['D', 'E', 'F'] as $col) {
+                        $refs = implode(',', array_map(fn ($r) => "{$col}{$r}", $subRows));
+                        $sheet->setCellValue("{$col}{$catRow}", "=SUM({$refs})");
+                    }
+                    $sheet->setCellValue("G{$catRow}", "=E{$catRow}-F{$catRow}");
+                }
+
+                if (!empty($categoryRows)) {
+                    foreach (['D', 'E', 'F'] as $col) {
+                        $refs = implode(',', array_map(fn ($r) => "{$col}{$r}", $categoryRows));
+                        $sheet->setCellValue("{$col}{$grandRow}", "=SUM({$refs})");
+                    }
+                    $sheet->setCellValue("G{$grandRow}", "=E{$grandRow}-F{$grandRow}");
+                }
             },
         ];
     }
