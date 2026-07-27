@@ -66,7 +66,9 @@ class RecapDirectExport implements WithEvents, ShouldAutoSize
                     $categoryRows[$catIdx] = $catRow;
                     $subcatRowsByCat[$catIdx] = [];
 
-                    // Category row
+                    // Category row (strictNullComparison=true: fromArray's default loose
+                    // comparison treats 0 == null as equal and SKIPS writing zero values —
+                    // must use strict comparison so legitimate 0 amounts are written)
                     $sheet->fromArray([[
                         $cat['no'],
                         $cat['category_code'],
@@ -75,7 +77,7 @@ class RecapDirectExport implements WithEvents, ShouldAutoSize
                         $cat['subtotal_transfer'],
                         $cat['subtotal_realization'],
                         $cat['subtotal_saldo'],
-                    ]], null, "A{$row}");
+                    ]], null, "A{$row}", true);
                     $this->applyStyle($sheet, "A{$row}:G{$row}", ['font' => ['bold' => true], 'fill' => self::FILL_CAT, 'border' => Border::BORDER_THIN]);
                     $this->applyNumberFormat($sheet, $row, ['D', 'E', 'F', 'G']);
                     $row++;
@@ -93,7 +95,7 @@ class RecapDirectExport implements WithEvents, ShouldAutoSize
                             $sub['subtotal_transfer'],
                             $sub['subtotal_realization'],
                             $sub['subtotal_saldo'],
-                        ]], null, "A{$row}");
+                        ]], null, "A{$row}", true);
                         $this->applyStyle($sheet, "A{$row}:G{$row}", ['font' => ['bold' => true, 'italic' => true], 'fill' => self::FILL_SUB, 'border' => Border::BORDER_THIN]);
                         $this->applyNumberFormat($sheet, $row, ['D', 'E', 'F', 'G']);
                         $row++;
@@ -109,7 +111,7 @@ class RecapDirectExport implements WithEvents, ShouldAutoSize
                                 $item['total_transfer'],
                                 $item['total_realization'],
                                 $item['saldo'],
-                            ]], null, "A{$row}");
+                            ]], null, "A{$row}", true);
                             $this->applyStyle($sheet, "A{$row}:G{$row}", ['border' => Border::BORDER_THIN]);
                             $this->applyNumberFormat($sheet, $row, ['D', 'E', 'F', 'G']);
                             $sheet->getStyle("A{$row}")->getAlignment()->setHorizontal(Alignment::HORIZONTAL_CENTER);
@@ -141,7 +143,7 @@ class RecapDirectExport implements WithEvents, ShouldAutoSize
                     $this->recap['grand_total_transfer'],
                     $this->recap['grand_total_realization'],
                     $this->recap['grand_total_saldo'],
-                ]], null, "A{$row}");
+                ]], null, "A{$row}", true);
                 $this->applyStyle($sheet, "A{$row}:G{$row}", ['font' => ['bold' => true, 'size' => 11], 'fill' => self::FILL_GRAND, 'border' => Border::BORDER_MEDIUM]);
                 $this->applyNumberFormat($sheet, $row, ['D', 'E', 'F', 'G']);
 

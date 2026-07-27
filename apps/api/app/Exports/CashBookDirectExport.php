@@ -45,14 +45,14 @@ class CashBookDirectExport implements WithEvents, ShouldAutoSize
                 $row++;
 
                 // Saldo awal
-                $sheet->fromArray([['Saldo Awal', '', '', '', $this->cashBook['opening_balance']]], null, "A{$row}");
+                $sheet->fromArray([['Saldo Awal', '', '', '', $this->cashBook['opening_balance']]], null, "A{$row}", true);
                 $this->applyStyle($sheet, "A{$row}:E{$row}", ['font' => ['bold' => true], 'fill' => self::FILL_SALDO, 'border' => Border::BORDER_THIN]);
                 $this->applyNumberFormat($sheet, $row, ['E']);
                 $row++;
                 $row++;
 
                 // Column headings
-                $sheet->fromArray([['Tanggal', 'No. Ref', 'Uraian', 'Penerimaan', 'Pengeluaran', 'Saldo']], null, "A{$row}");
+                $sheet->fromArray([['Tanggal', 'No. Ref', 'Uraian', 'Penerimaan', 'Pengeluaran', 'Saldo']], null, "A{$row}", true);
                 $this->applyStyle($sheet, "A{$row}:F{$row}", ['font' => ['bold' => true], 'fill' => self::FILL_HEADER, 'border' => Border::BORDER_THIN, 'align' => Alignment::HORIZONTAL_CENTER]);
                 $row++;
 
@@ -64,7 +64,7 @@ class CashBookDirectExport implements WithEvents, ShouldAutoSize
                         $r['type'] === 'penerimaan'  ? $r['amount'] : null,
                         $r['type'] === 'pengeluaran' ? $r['amount'] : null,
                         $r['balance'],
-                    ]], null, "A{$row}");
+                    ]], null, "A{$row}", true);
                     $this->applyStyle($sheet, "A{$row}:F{$row}", ['border' => Border::BORDER_THIN]);
                     $this->applyNumberFormat($sheet, $row, ['D', 'E', 'F']);
                     $row++;
@@ -76,7 +76,7 @@ class CashBookDirectExport implements WithEvents, ShouldAutoSize
                     $this->cashBook['total_penerimaan'],
                     $this->cashBook['total_pengeluaran'],
                     $this->cashBook['closing_balance'],
-                ]], null, "A{$row}");
+                ]], null, "A{$row}", true);
                 $this->applyStyle($sheet, "A{$row}:F{$row}", ['font' => ['bold' => true, 'size' => 11], 'fill' => self::FILL_SALDO, 'border' => Border::BORDER_MEDIUM]);
                 $this->applyNumberFormat($sheet, $row, ['D', 'E', 'F']);
             },
