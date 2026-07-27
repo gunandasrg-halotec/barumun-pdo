@@ -14,6 +14,7 @@ class RecapQueryService
         $categoryId = $filters['category_id'] ?? null;
         $startDate  = $filters['start_date']  ?? null;
         $endDate    = $filters['end_date']    ?? null;
+        $kantong    = $filters['kantong']     ?? 'all'; // 'all' | 'kebun' | 'pribadi'
         $isSqlite   = DB::getDriverName() === 'sqlite';
 
         $dateFilterSql = $isSqlite
@@ -22,12 +23,21 @@ class RecapQueryService
             : 'AND (CAST(:start_date AS date) IS NULL OR re.transaction_date >= CAST(:start_date2 AS date))
                 AND (CAST(:end_date AS date) IS NULL OR re.transaction_date <= CAST(:end_date2 AS date))';
 
+        // Subquery re_pribadi_agg pakai placeholder terpisah (start_date3/end_date3) —
+        // sama-sama muncul dalam 1 query string dengan re_agg, dan PDO tidak reliable
+        // untuk named parameter yang diulang lintas subquery berbeda dalam 1 statement.
+        $dateFilterSqlPribadi = $isSqlite
+            ? 'AND (:start_date3 IS NULL OR re.transaction_date >= :start_date4)
+                AND (:end_date3 IS NULL OR re.transaction_date <= :end_date4)'
+            : 'AND (CAST(:start_date3 AS date) IS NULL OR re.transaction_date >= CAST(:start_date4 AS date))
+                AND (CAST(:end_date3 AS date) IS NULL OR re.transaction_date <= CAST(:end_date4 AS date))';
+
         $categoryFilterSql = $isSqlite
             ? 'AND (:category_id IS NULL OR ec.id = :category_id2)'
             : 'AND (CAST(:category_id AS uuid) IS NULL OR ec.id = CAST(:category_id2 AS uuid))';
 
         // ── Kantong split (PDO-level) ─────────────────────────────────────────
-        $kantong = DB::selectOne('
+        $kantongTotals = DB::selectOne('
             SELECT
                 COALESCE(SUM(CASE WHEN te.transfer_destination = \'rek_kebun\' THEN te.amount ELSE 0 END), 0)          AS transfer_kebun,
                 COALESCE(SUM(CASE WHEN te.transfer_destination IN (\'pribadi\', \'vendor\') THEN te.amount ELSE 0 END), 0) AS transfer_pribadi
@@ -82,8 +92,10 @@ class RecapQueryService
                 CASE WHEN ei.is_deduction THEN -pd.amount ELSE pd.amount END AS pengajuan,
                 ei.is_deduction,
                 COALESCE(te_agg.total_transfer, 0)      AS total_transfer,
-                COALESCE(te_kebun_agg.total_transfer_kebun, 0) AS total_transfer_kebun,
-                COALESCE(re_agg.total_realization, 0)   AS total_realization
+                COALESCE(te_kebun_agg.total_transfer_kebun, 0)     AS total_transfer_kebun,
+                COALESCE(te_pribadi_agg.total_transfer_pribadi, 0) AS total_transfer_pribadi,
+                COALESCE(re_agg.total_realization, 0)   AS total_realization,
+                COALESCE(re_pribadi_agg.total_realization_pribadi, 0) AS total_realization_pribadi
             FROM pdo_details pd
             JOIN pdo_headers ph             ON ph.id = pd.pdo_header_id
             JOIN expense_items ei           ON ei.id = pd.expense_item_id
@@ -102,12 +114,25 @@ class RecapQueryService
                 GROUP BY pdo_detail_id
             ) te_kebun_agg ON te_kebun_agg.pdo_detail_id = pd.id
             LEFT JOIN (
+                SELECT pdo_detail_id, SUM(amount) AS total_transfer_pribadi
+                FROM transfer_entries
+                WHERE status = 'committed' AND transfer_destination IN ('pribadi', 'vendor')
+                GROUP BY pdo_detail_id
+            ) te_pribadi_agg ON te_pribadi_agg.pdo_detail_id = pd.id
+            LEFT JOIN (
                 SELECT re.pdo_detail_id, SUM(re.amount) AS total_realization
                 FROM realization_entries re
                 WHERE re.funding_source IN ('kas_kebun', 'rekening_kebun')
                     {$dateFilterSql}
                 GROUP BY re.pdo_detail_id
             ) re_agg ON re_agg.pdo_detail_id = pd.id
+            LEFT JOIN (
+                SELECT re.pdo_detail_id, SUM(re.amount) AS total_realization_pribadi
+                FROM realization_entries re
+                WHERE re.funding_source = 'rekening_utama'
+                    {$dateFilterSqlPribadi}
+                GROUP BY re.pdo_detail_id
+            ) re_pribadi_agg ON re_pribadi_agg.pdo_detail_id = pd.id
             WHERE ph.period_year  = :year
               AND ph.period_month = :month
               AND ph.plantation_unit_id = :unit_id
@@ -119,6 +144,10 @@ class RecapQueryService
             'start_date2'  => $startDate,
             'end_date'     => $endDate,
             'end_date2'    => $endDate,
+            'start_date3'  => $startDate,
+            'start_date4'  => $startDate,
+            'end_date3'    => $endDate,
+            'end_date4'    => $endDate,
             'year'        => $year,
             'month'       => $month,
             'unit_id'     => $unitId,
@@ -126,15 +155,15 @@ class RecapQueryService
             'category_id2' => $categoryId,
         ]);
 
-        $transferKebun   = (int) ($kantong->transfer_kebun   ?? 0);
-        $transferPribadi = (int) ($kantong->transfer_pribadi ?? 0);
+        $transferKebun   = (int) ($kantongTotals->transfer_kebun   ?? 0);
+        $transferPribadi = (int) ($kantongTotals->transfer_pribadi ?? 0);
         $realisasiKebun  = (int) ($realisasi->realisasi_kebun  ?? 0);
         $realisasiPribadi= (int) ($realisasi->realisasi_pribadi ?? 0);
 
-        return $this->buildHierarchy($rows, $transferKebun, $transferPribadi, $realisasiKebun, $realisasiPribadi);
+        return $this->buildHierarchy($rows, $transferKebun, $transferPribadi, $realisasiKebun, $realisasiPribadi, $kantong);
     }
 
-    private function buildHierarchy(array $rows, int $transferKebun, int $transferPribadi, int $realisasiKebun, int $realisasiPribadi): array
+    private function buildHierarchy(array $rows, int $transferKebun, int $transferPribadi, int $realisasiKebun, int $realisasiPribadi, string $kantong = 'all'): array
     {
         $categories  = [];
         $catIndex    = [];
@@ -146,6 +175,35 @@ class RecapQueryService
         $grandTotalRealization = 0;
 
         foreach ($rows as $row) {
+            $pengajuan         = (int) $row->pengajuan;
+            $transferAll       = (int) $row->total_transfer;
+            $transferKebunItem = (int) $row->total_transfer_kebun;
+            $transferPribadiItem = (int) $row->total_transfer_pribadi;
+            $realKebunItem     = (int) $row->total_realization;
+            $realPribadiItem   = (int) $row->total_realization_pribadi;
+
+            // Kolom yang ditampilkan tergantung filter kantong: 'kebun' hanya
+            // transfer/realisasi ke rek_kebun, 'pribadi' hanya pribadi/vendor,
+            // 'all' menampilkan total_transfer semua destination (informational)
+            // tapi saldo tetap dihitung dari sisi kas kebun saja.
+            if ($kantong === 'kebun') {
+                $transfer = $transferKebunItem;
+                $real     = $realKebunItem;
+                if ($transfer === 0 && $real === 0) {
+                    continue;
+                }
+            } elseif ($kantong === 'pribadi') {
+                $transfer = $transferPribadiItem;
+                $real     = $realPribadiItem;
+                if ($transfer === 0 && $real === 0) {
+                    continue;
+                }
+            } else {
+                $transfer = $transferAll;
+                $real     = $realKebunItem;
+            }
+            $saldo = $transfer - $real;
+
             $catId = $row->category_id;
             $subId = $row->subcategory_id;
 
@@ -181,14 +239,7 @@ class RecapQueryService
                 ];
             }
 
-            $subPos       = $subIndex[$catId][$subId];
-            $pengajuan    = (int) $row->pengajuan;
-            $transfer     = (int) $row->total_transfer;
-            $transferKebunItem = (int) $row->total_transfer_kebun;
-            $real         = (int) $row->total_realization;
-            // Saldo dihitung dari transfer ke rek_kebun saja (bukan total_transfer
-            // semua destination), supaya sum(saldo item) = saldo_kebun (kantong level).
-            $saldo        = $transferKebunItem - $real;
+            $subPos = $subIndex[$catId][$subId];
 
             // ── Item ──────────────────────────────────────────────────────────
             $itemCounter++;

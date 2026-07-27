@@ -94,6 +94,7 @@ export function RekapitulasiPage() {
   const [unitId,            setUnitId]            = useState(user?.plantation_unit?.id ?? '')
   const [categoryId]                              = useState('')
   const [realizationFilter, setRealizationFilter] = useState<'all' | 'has' | 'no'>('all')
+  const [kantongFilter,     setKantongFilter]     = useState<'all' | 'kebun' | 'pribadi'>('all')
   const [search,            setSearch]            = useState('')
   const [startDate,         setStartDate]         = useState('')
   const [endDate,           setEndDate]           = useState('')
@@ -151,6 +152,7 @@ export function RekapitulasiPage() {
       category_id:  categoryId    || undefined,
       start_date:   validStartDate,
       end_date:     validEndDate,
+      kantong:      kantongFilter,
     },
     !!resolvedUnitId,
   )
@@ -409,9 +411,10 @@ export function RekapitulasiPage() {
     try {
       const isHarian = activeTab === 'harian'
       const params: Record<string, string | number> = { period_year: year, period_month: month, unit_id: resolvedUnitId }
-      if (!isHarian && categoryId) params.category_id = categoryId
-      if (validStartDate)          params.start_date  = validStartDate
-      if (validEndDate)            params.end_date    = validEndDate
+      if (!isHarian && categoryId)         params.category_id = categoryId
+      if (!isHarian && kantongFilter !== 'all') params.kantong = kantongFilter
+      if (validStartDate)                  params.start_date  = validStartDate
+      if (validEndDate)                    params.end_date    = validEndDate
       const res = await api.get(isHarian ? '/reports/cashbook/export' : '/reports/recap/export', { params, responseType: 'blob' })
       const url = URL.createObjectURL(res.data)
       const a   = document.createElement('a')
@@ -511,6 +514,17 @@ export function RekapitulasiPage() {
               <option value="all">Semua</option>
               <option value="has">Sudah ada realisasi</option>
               <option value="no">Belum ada realisasi</option>
+            </select>
+          </div>
+        )}
+
+        {activeTab === 'rekap' && (
+          <div>
+            <label className="label">Kantong</label>
+            <select className="input-base" value={kantongFilter} onChange={(e) => setKantongFilter(e.target.value as 'all' | 'kebun' | 'pribadi')}>
+              <option value="all">Semua</option>
+              <option value="kebun">Kas Kebun</option>
+              <option value="pribadi">Pribadi / Vendor</option>
             </select>
           </div>
         )}

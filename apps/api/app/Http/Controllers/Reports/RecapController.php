@@ -26,6 +26,7 @@ class RecapController extends Controller
             'category_id'  => ['nullable', 'uuid'],
             'start_date'   => ['nullable', 'date_format:Y-m-d'],
             'end_date'     => ['nullable', 'date_format:Y-m-d'],
+            'kantong'      => ['nullable', 'in:all,kebun,pribadi'],
         ]);
 
         $user = $request->user();
@@ -47,6 +48,7 @@ class RecapController extends Controller
             'category_id'  => $request->input('category_id'),
             'start_date'   => $request->input('start_date') ?: null,
             'end_date'     => $request->input('end_date')   ?: null,
+            'kantong'      => $request->input('kantong', 'all'),
         ];
 
         $recap = $this->service->getRecapData($filters);
@@ -77,6 +79,7 @@ class RecapController extends Controller
             'category_id'  => ['nullable', 'uuid'],
             'start_date'   => ['nullable', 'date_format:Y-m-d'],
             'end_date'     => ['nullable', 'date_format:Y-m-d'],
+            'kantong'      => ['nullable', 'in:all,kebun,pribadi'],
         ]);
 
         $user   = $request->user();
@@ -86,6 +89,8 @@ class RecapController extends Controller
             abort(422, 'Unit kebun wajib dipilih.');
         }
 
+        $kantong = $request->input('kantong', 'all');
+
         $filters = [
             'period_year'  => $request->integer('period_year'),
             'period_month' => $request->integer('period_month'),
@@ -93,6 +98,7 @@ class RecapController extends Controller
             'category_id'  => $request->input('category_id'),
             'start_date'   => $request->input('start_date') ?: null,
             'end_date'     => $request->input('end_date')   ?: null,
+            'kantong'      => $kantong,
         ];
 
         $recap      = $this->service->getRecapData($filters);
@@ -102,7 +108,8 @@ class RecapController extends Controller
         $dateSuffix = ($filters['start_date'] || $filters['end_date'])
             ? '_' . ($filters['start_date'] ?? '') . '_sd_' . ($filters['end_date'] ?? '')
             : '';
-        $filename   = "BukuKasKebun_{$year}_{$month}" . ($unit ? "_{$unit->code}" : '') . $dateSuffix . '.xlsx';
+        $kantongSuffix = $kantong !== 'all' ? '_' . $kantong : '';
+        $filename   = "BukuKasKebun_{$year}_{$month}" . ($unit ? "_{$unit->code}" : '') . $kantongSuffix . $dateSuffix . '.xlsx';
 
         return Excel::download(new RecapDirectExport($recap, $unit, $month, $year), $filename);
     }

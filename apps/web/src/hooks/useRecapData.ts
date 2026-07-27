@@ -10,6 +10,7 @@ export interface RecapFilters {
   category_id?: string
   start_date?: string
   end_date?: string
+  kantong?: 'all' | 'kebun' | 'pribadi'
 }
 
 export function useRecapData(filters: RecapFilters, enabled = true) {
@@ -24,6 +25,7 @@ export function useRecapData(filters: RecapFilters, enabled = true) {
       if (filters.category_id) params.category_id = filters.category_id
       if (filters.start_date)  params.start_date  = filters.start_date
       if (filters.end_date)    params.end_date    = filters.end_date
+      if (filters.kantong)     params.kantong     = filters.kantong
 
       const res = await api.get<ApiResponse<RecapResponse>>('/reports/recap', { params })
       return res.data.data
