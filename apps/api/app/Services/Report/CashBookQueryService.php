@@ -17,11 +17,13 @@ class CashBookQueryService
     /**
      * Buku kas harian kronologis untuk "kantong" kas kebun 1 unit dalam 1 periode PDO.
      *
-     * Penerimaan = TransferEntry ke rek_kebun; pengeluaran = RealizationEntry dengan
-     * funding_source kas_kebun/rekening_kebun, DITAMBAH penyesuaian item potongan
-     * (lihat buildDeductionAdjustments()). Saldo awal dihitung kumulatif sejak
-     * transaksi paling pertama unit ini (lintas periode), bukan reset tiap bulan,
-     * supaya saldo berjalan (running balance) mencerminkan kas kebun yang sesungguhnya.
+     * Penerimaan = TransferEntry ke rek_kebun, digabung per tanggal. Pengeluaran =
+     * RealizationEntry dengan funding_source kas_kebun/rekening_kebun, digabung per
+     * (subkategori, tanggal transaksi) — lihat buildExpenseRows() — supaya baris
+     * tidak terlalu banyak, dan item Potongan Panjar (down payment yang sudah
+     * direalisasikan periode sebelumnya) dinetkan ke grup tanggal paling awal dalam
+     * subkategori yang sama. Saldo awal dihitung kumulatif sejak transaksi paling
+     * pertama unit ini (lintas periode), bukan reset tiap bulan.
      */
     public function getCashBookData(array $filters): array
     {
@@ -75,27 +77,9 @@ class CashBookQueryService
             })
             ->values();
 
-        $expenses = RealizationEntry::query()
-            ->whereIn('funding_source', self::EXPENSE_FUNDING_SOURCES)
-            ->whereHas('pdoDetail.pdoHeader', fn ($q) => $q
-                ->where('plantation_unit_id', $unitId)
-                ->where('period_year', $year)
-                ->where('period_month', $month))
-            ->whereBetween('transaction_date', [$effectiveStart->toDateString(), $effectiveEnd->toDateString()])
-            ->with('pdoDetail.expenseItem')
-            ->get()
-            ->map(fn (RealizationEntry $r) => [
-                'date'        => $r->transaction_date->toDateString(),
-                'type'        => 'pengeluaran',
-                'reference'   => $r->proof_number,
-                'description' => $this->buildExpenseDescription($r),
-                'amount'      => (int) $r->amount,
-                'created_at'  => $r->created_at,
-            ]);
+        $expenseRows = $this->buildExpenseRows($unitId, $year, $month, $effectiveStart, $effectiveEnd);
 
-        $deductionAdjustments = $this->buildDeductionAdjustments($unitId, $year, $month, $startDate, $endDate, $effectiveStart, $effectiveEnd);
-
-        $rows = $receipts->concat($expenses)->concat($deductionAdjustments)
+        $rows = $receipts->concat($expenseRows)
             ->sortBy([['date', 'asc'], ['created_at', 'asc']])
             ->values();
 
@@ -108,10 +92,6 @@ class CashBookQueryService
                 $balance += $row['amount'];
                 $totalPenerimaan += $row['amount'];
             } else {
-                // Baris penyesuaian potongan punya amount NEGATIF (lihat
-                // buildDeductionAdjustments()) — balance -= (negatif) menambah balance
-                // kembali, dan totalPengeluaran += (negatif) mengurangi total pengeluaran,
-                // dengan efek yang sama seperti baris pengeluaran biasa (formula tetap sama).
                 $balance -= $row['amount'];
                 $totalPengeluaran += $row['amount'];
             }
@@ -131,60 +111,98 @@ class CashBookQueryService
     }
 
     /**
-     * Item potongan (misal POTONGAN PANJAR) merepresentasikan uang muka/panjar yang
-     * SUDAH direalisasikan (dibayar tunai) pada periode sebelumnya. Karena sistem
-     * tidak bisa membebankan potongan itu ke item spesifik saat kerani mencatat
-     * realisasi, kerani tetap mencatat realisasi PENUH sesuai anggaran tiap item,
-     * sehingga total realisasi periode ini jadi lebih besar dari transfer riil yang
-     * diterima — padahal sebagian dari realisasi itu bukan pengeluaran kas BARU
-     * periode ini, melainkan duplikasi pencatatan dari kas yang sudah keluar
-     * sebelumnya. Baris penyesuaian ini (pengeluaran NEGATIF, senilai transfer
-     * potongan yang juga negatif) menetralkan duplikasi tersebut, supaya Total
-     * Pengeluaran & Saldo Akhir Buku Kas Harian konsisten dengan Rekap Buku Kas
-     * (lihat RecapQueryService::resolveRealization()).
+     * Baris pengeluaran Buku Kas Harian, digabung per (subkategori, tanggal
+     * transaksi) supaya tabel tidak terlalu panjang — item-item dalam 1
+     * subkategori yang direalisasikan di tanggal yang sama (mis. GAJI + CATU
+     * BERAS) jadi 1 baris.
+     *
+     * Item Potongan Panjar (down payment yang SUDAH direalisasikan periode
+     * sebelumnya — direpresentasikan sebagai TransferEntry negatif, bukan
+     * RealizationEntry, sehingga tidak pernah muncul sebagai baris pengeluaran
+     * sendiri) dinetkan (dikurangkan) HANYA ke grup tanggal PALING AWAL dalam
+     * subkategori yang sama — mewakili "biaya bulan lalu yang di-settle bulan
+     * ini". Grup tanggal berikutnya dalam subkategori yang sama (mis. Panjar
+     * Gaji yang direalisasikan pertengahan bulan) tidak lagi dikurangi.
      */
-    private function buildDeductionAdjustments(string $unitId, int $year, int $month, ?string $startDate, ?string $endDate, Carbon $effectiveStart, Carbon $effectiveEnd)
+    private function buildExpenseRows(string $unitId, int $year, int $month, Carbon $effectiveStart, Carbon $effectiveEnd): array
     {
-        $query = TransferEntry::query()
+        $entries = RealizationEntry::query()
+            ->whereIn('funding_source', self::EXPENSE_FUNDING_SOURCES)
+            ->whereHas('pdoDetail.pdoHeader', fn ($q) => $q
+                ->where('plantation_unit_id', $unitId)
+                ->where('period_year', $year)
+                ->where('period_month', $month))
+            ->whereBetween('transaction_date', [$effectiveStart->toDateString(), $effectiveEnd->toDateString()])
+            ->with('pdoDetail.expenseItem.subcategory')
+            ->get();
+
+        $deductionBySubcategory = TransferEntry::query()
             ->whereIn('transfer_destination', self::RECEIPT_DESTINATIONS)
             ->whereHas('pdoDetail.expenseItem', fn ($q) => $q->where('is_deduction', true))
             ->whereHas('pdoDetail.pdoHeader', fn ($q) => $q
                 ->where('plantation_unit_id', $unitId)
                 ->where('period_year', $year)
                 ->where('period_month', $month))
-            ->with('pdoDetail.expenseItem');
+            ->with('pdoDetail.expenseItem')
+            ->get()
+            ->groupBy(fn (TransferEntry $t) => $t->pdoDetail?->expenseItem?->subcategory_id)
+            ->map(fn ($group) => (int) $group->sum('amount')); // negatif
 
-        if ($startDate || $endDate) {
-            $query->whereBetween('transfer_date', [$effectiveStart->toDateString(), $effectiveEnd->toDateString()]);
-        }
+        $rows = [];
 
-        return $query->get()->map(fn (TransferEntry $t) => [
-            'date'        => $t->transfer_date->toDateString(),
-            'type'        => 'pengeluaran',
-            'reference'   => null,
-            'description' => 'Penyesuaian potongan (sudah direalisasi periode sebelumnya) - ' . ($t->pdoDetail?->expenseItem?->name ?? 'Potongan'),
-            'amount'      => (int) $t->amount, // negatif
-            'created_at'  => $t->created_at,
-        ]);
-    }
+        $entries
+            ->groupBy(fn (RealizationEntry $r) => $r->pdoDetail?->expenseItem?->subcategory_id ?? 'unknown')
+            ->each(function ($subcategoryEntries, $subcategoryId) use (&$rows, $deductionBySubcategory) {
+                $deductionRemaining = (int) ($deductionBySubcategory[$subcategoryId] ?? 0); // negatif atau 0
 
-    /** Uraian pengeluaran = kode item + nama item + catatan (jika ada). */
-    private function buildExpenseDescription(RealizationEntry $r): string
-    {
-        $item = $r->pdoDetail?->expenseItem;
+                $dateGroups = $subcategoryEntries
+                    ->groupBy(fn (RealizationEntry $r) => $r->transaction_date->toDateString())
+                    ->sortKeys(); // tanggal paling awal duluan
 
-        $parts = array_filter([
-            $item?->code,
-            $item?->name,
-            $r->explanation,
-        ], fn ($v) => filled($v));
+                foreach ($dateGroups as $date => $group) {
+                    $itemNames = $group
+                        ->map(fn (RealizationEntry $r) => $r->pdoDetail?->expenseItem?->name ?? 'Realisasi')
+                        ->unique()
+                        ->values();
 
-        return $parts ? implode(' - ', $parts) : 'Realisasi';
+                    $references = $group
+                        ->map(fn (RealizationEntry $r) => $r->proof_number)
+                        ->filter()
+                        ->unique()
+                        ->values();
+
+                    $amount = (int) $group->sum('amount');
+
+                    // Netkan potongan HANYA ke grup tanggal paling awal dalam
+                    // subkategori ini, lalu "habiskan" supaya tidak dipakai lagi
+                    // untuk grup tanggal berikutnya.
+                    if ($deductionRemaining !== 0) {
+                        $amount += $deductionRemaining; // deductionRemaining negatif
+                        $deductionRemaining = 0;
+                    }
+
+                    $rows[] = [
+                        'date'        => $date,
+                        'type'        => 'pengeluaran',
+                        'reference'   => $references->isNotEmpty() ? $references->implode("\n") : null,
+                        'description' => 'Pembayaran untuk : ' . $itemNames->implode(', '),
+                        'amount'      => $amount,
+                        'created_at'  => $group->min('created_at'),
+                    ];
+                }
+            });
+
+        return $rows;
     }
 
     /**
      * Saldo kumulatif kas kebun unit ini dari seluruh transaksi SEBELUM $before
      * (lintas semua periode PDO), dipakai sebagai saldo awal (opening balance).
+     *
+     * Potongan periode-periode sebelumnya juga dinetkan di sini (mengurangi
+     * totalExpenses, karena dana itu sebenarnya sudah keluar sebelum periode
+     * tsb, bukan pengeluaran baru) — supaya saldo berjalan tetap akurat lintas
+     * periode, konsisten dengan penetapan di buildExpenseRows().
      */
     private function cumulativeBalanceBefore(string $unitId, Carbon $before): int
     {
@@ -200,16 +218,13 @@ class CashBookQueryService
             ->where('transaction_date', '<', $before->toDateString())
             ->sum('amount');
 
-        // Netkan penyesuaian potongan periode-periode sebelumnya juga (lihat
-        // buildDeductionAdjustments()), supaya saldo awal konsisten dengan cara
-        // saldo berjalan dihitung di periode berjalan.
-        $totalDeductionAdjustment = (int) TransferEntry::query()
+        $totalDeduction = (int) TransferEntry::query()
             ->whereIn('transfer_destination', self::RECEIPT_DESTINATIONS)
             ->whereHas('pdoDetail.expenseItem', fn ($q) => $q->where('is_deduction', true))
             ->whereHas('pdoDetail.pdoHeader', fn ($q) => $q->where('plantation_unit_id', $unitId))
             ->where('transfer_date', '<', $before->toDateString())
             ->sum('amount'); // negatif
 
-        return $totalReceipts - ($totalExpenses + $totalDeductionAdjustment);
+        return $totalReceipts - ($totalExpenses + $totalDeduction);
     }
 }

@@ -67,6 +67,10 @@ class CashBookDirectExport implements WithEvents, ShouldAutoSize
                     ]], null, "A{$row}", true);
                     $this->applyStyle($sheet, "A{$row}:F{$row}", ['border' => Border::BORDER_THIN]);
                     $this->applyNumberFormat($sheet, $row, ['D', 'E', 'F']);
+                    // No. Ref bisa berisi banyak nomor bukti dipisah newline (baris
+                    // pengeluaran gabungan per subkategori+tanggal) — wrap text supaya
+                    // semua baris tampil, bukan terpotong dalam 1 baris sel.
+                    $sheet->getStyle("B{$row}")->getAlignment()->setWrapText(true);
                     $row++;
                 }
 
