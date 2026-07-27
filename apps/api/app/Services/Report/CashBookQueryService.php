@@ -40,15 +40,22 @@ class CashBookQueryService
 
         // Penerimaan digabung per tanggal transfer — 1 baris per tanggal, jumlah
         // dijumlahkan, dan uraian mendaftar semua item biaya yang didanai hari itu.
-        $receipts = TransferEntry::query()
+        // Tidak difilter oleh tanggal transfer (hanya oleh periode PDO) agar
+        // konsisten dengan Rekap Buku Kas yang juga tidak memfilter transfer_date.
+        // Jika user set date range eksplisit, filter transfer_date diterapkan.
+        $receiptsQuery = TransferEntry::query()
             ->whereIn('transfer_destination', self::RECEIPT_DESTINATIONS)
             ->whereHas('pdoDetail.pdoHeader', fn ($q) => $q
                 ->where('plantation_unit_id', $unitId)
                 ->where('period_year', $year)
                 ->where('period_month', $month))
-            ->whereBetween('transfer_date', [$effectiveStart->toDateString(), $effectiveEnd->toDateString()])
-            ->with('pdoDetail.expenseItem')
-            ->get()
+            ->with('pdoDetail.expenseItem');
+
+        if ($startDate || $endDate) {
+            $receiptsQuery->whereBetween('transfer_date', [$effectiveStart->toDateString(), $effectiveEnd->toDateString()]);
+        }
+
+        $receipts = $receiptsQuery->get()
             ->groupBy(fn (TransferEntry $t) => $t->transfer_date->toDateString())
             ->map(function ($group, $date) {
                 $itemNames = $group
