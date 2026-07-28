@@ -379,6 +379,7 @@ export interface DashboardUnitSummary {
   total_amount:          number
   total_transferred:     number
   total_realized:        number
+  balance:               number
   transferred_rek_kebun: number
   transferred_pribadi:   number
   transferred_vendor:    number

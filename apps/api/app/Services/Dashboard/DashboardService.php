@@ -74,10 +74,29 @@ class DashboardService
               {$unitClause}
         ", $params);
 
+        // Item potongan (mis. POTONGAN PANJAR) = down payment yang SUDAH
+        // direalisasikan (dibayar tunai) periode sebelumnya, direpresentasikan
+        // sebagai TransferEntry NEGATIF (bukan RealizationEntry) — sehingga
+        // SUM(re.amount) polos di atas overstate total_realized (dan understate
+        // saldo) dibanding Rekap Buku Kas & Buku Kas Harian. Netkan di sini,
+        // konsisten dengan RecapQueryService::resolveRealization().
+        $deductionStats = DB::selectOne("
+            SELECT COALESCE(SUM(te.amount), 0) AS total_deduction
+            FROM pdo_headers ph
+            LEFT JOIN pdo_details pd   ON pd.pdo_header_id = ph.id
+            LEFT JOIN expense_items ei ON ei.id = pd.expense_item_id
+            LEFT JOIN transfer_entries te ON te.pdo_detail_id = pd.id AND te.status = 'committed'
+            WHERE ph.company_id = ?
+              AND ph.period_month = ?
+              AND ph.period_year  = ?
+              AND ei.is_deduction = TRUE
+              {$unitClause}
+        ", $params);
+
         $monthlyStats = (object) [
             'total_amount' => $amountStats->total_amount,
             'total_transferred' => $transferStats->total_transferred,
-            'total_realized' => $realizationStats->total_realized,
+            'total_realized' => (int) $realizationStats->total_realized + (int) $deductionStats->total_deduction,
             'items_without_proof' => $realizationStats->items_without_proof,
         ];
 
@@ -138,7 +157,29 @@ class DashboardService
               {$unitClause}
             GROUP BY pu.id
         ", $params);
-        $realizedByUnit = collect($unitRealizedRows)->pluck('total_realized', 'unit_id');
+        $realizedRawByUnit = collect($unitRealizedRows)->pluck('total_realized', 'unit_id');
+
+        // Netkan potongan per unit juga (lihat penjelasan di $deductionStats atas).
+        $unitDeductionRows = DB::select("
+            SELECT
+                pu.id AS unit_id,
+                COALESCE(SUM(te.amount), 0) AS total_deduction
+            FROM pdo_headers ph
+            LEFT JOIN plantation_units pu ON pu.id = ph.plantation_unit_id
+            LEFT JOIN pdo_details pd   ON pd.pdo_header_id = ph.id
+            LEFT JOIN expense_items ei ON ei.id = pd.expense_item_id
+            LEFT JOIN transfer_entries te ON te.pdo_detail_id = pd.id AND te.status = 'committed'
+            WHERE ph.company_id = ?
+              AND ph.period_month = ?
+              AND ph.period_year  = ?
+              AND ei.is_deduction = TRUE
+              {$unitClause}
+            GROUP BY pu.id
+        ", $params);
+        $deductionByUnit = collect($unitDeductionRows)->pluck('total_deduction', 'unit_id');
+
+        $realizedByUnit = $realizedRawByUnit->keys()->merge($deductionByUnit->keys())->unique()
+            ->mapWithKeys(fn ($id) => [$id => (int) ($realizedRawByUnit[$id] ?? 0) + (int) ($deductionByUnit[$id] ?? 0)]);
 
         // Transfer per unit per destination
         $unitDestRows = DB::select("
@@ -170,16 +211,19 @@ class DashboardService
                 return null;
             }
             $t = $transferByUnit[$r->unit_id] ?? [];
-            $rekKebun = (int) ($t['rek_kebun'] ?? 0);
-            $pribadi  = (int) ($t['pribadi']   ?? 0);
-            $vendor   = (int) ($t['vendor']    ?? 0);
+            $rekKebun       = (int) ($t['rek_kebun'] ?? 0);
+            $pribadi        = (int) ($t['pribadi']   ?? 0);
+            $vendor         = (int) ($t['vendor']    ?? 0);
+            $totalTransfer  = $rekKebun + $pribadi + $vendor;
+            $totalRealized  = (int) ($realizedByUnit[$r->unit_id] ?? 0);
             return [
                 'unit_id'               => $r->unit_id,
                 'unit_code'             => $r->unit_code,
                 'unit_name'             => $r->unit_name,
                 'total_amount'          => (int) $r->total_amount,
-                'total_transferred'     => $rekKebun + $pribadi + $vendor,
-                'total_realized'        => (int) ($realizedByUnit[$r->unit_id] ?? 0),
+                'total_transferred'     => $totalTransfer,
+                'total_realized'        => $totalRealized,
+                'balance'               => $totalTransfer - $totalRealized,
                 'transferred_rek_kebun' => $rekKebun,
                 'transferred_pribadi'   => $pribadi,
                 'transferred_vendor'    => $vendor,
@@ -230,7 +274,12 @@ class DashboardService
                 ec.include_in_recap,
                 COALESCE(SUM(CASE WHEN ei.is_deduction THEN -pd.amount ELSE pd.amount END), 0) AS total_budget,
                 COALESCE(SUM(te_agg.total_transferred), 0) AS total_transferred,
-                COALESCE(SUM(re_agg.total_realized), 0)    AS total_realized
+                -- Item potongan (is_deduction) tidak pernah punya realization_entries
+                -- (direpresentasikan sebagai TransferEntry negatif) — netkan lewat
+                -- te_agg supaya total_realized konsisten dengan
+                -- RecapQueryService::resolveRealization().
+                COALESCE(SUM(re_agg.total_realized), 0)
+                    + COALESCE(SUM(CASE WHEN ei.is_deduction THEN te_agg.total_transferred ELSE 0 END), 0) AS total_realized
             FROM expense_categories ec
             JOIN expense_subcategories esc ON esc.category_id = ec.id
             JOIN expense_items ei ON ei.subcategory_id = esc.id
@@ -239,6 +288,7 @@ class DashboardService
             LEFT JOIN (
                 SELECT pdo_detail_id, SUM(amount) AS total_transferred
                 FROM transfer_entries
+                WHERE status = 'committed'
                 GROUP BY pdo_detail_id
             ) te_agg ON te_agg.pdo_detail_id = pd.id
             LEFT JOIN (

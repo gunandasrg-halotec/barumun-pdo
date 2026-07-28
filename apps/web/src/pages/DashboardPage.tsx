@@ -13,7 +13,7 @@ import { isKerani } from '@/lib/auth'
 import type { ApiResponse, PlantationUnit, RoleCode } from '@/types'
 import { BarChart2, AlertCircle, ChevronDown } from 'lucide-react'
 
-type ModalType = 'pengajuan' | 'transfer' | 'realisasi' | null
+type ModalType = 'pengajuan' | 'transfer' | 'realisasi' | 'saldo' | null
 
 const MONTHS = [
   '', 'Januari', 'Februari', 'Maret', 'April', 'Mei', 'Juni',
@@ -83,6 +83,10 @@ export function DashboardPage() {
   const handleRealisasiClick = () => {
     if (isSingleUnit) navigate('/realisasi')
     else setActiveModal('realisasi')
+  }
+  const handleSaldoClick = () => {
+    if (isSingleUnit) navigate('/rekapitulasi')
+    else setActiveModal('saldo')
   }
 
   return (
@@ -216,7 +220,9 @@ export function DashboardPage() {
           <KpiCard
             label="Saldo"
             value={fmtShort(summary?.balance)}
-            hint={`${summary?.total_amount ? Math.round(((summary.total_realized ?? 0) / summary.total_amount) * 100) : 0}% terealisasi`}
+            hint={isSingleUnit ? 'Klik untuk Rekap Buku Kas' : 'Klik untuk detail per kebun'}
+            clickable
+            onClick={handleSaldoClick}
           />
           <KpiCard
             label="Item Belum Bukti"
@@ -410,6 +416,37 @@ export function DashboardPage() {
               <tr key={u.unit_id} className="border-t border-line hover:bg-[#fbfdfb]">
                 <td className="px-3 py-2 font-bold">{u.unit_code} — {u.unit_name}</td>
                 <td className="px-3 py-2 text-right">{fmt(u.total_realized)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+        <div className="flex justify-end mt-4">
+          <Button variant="secondary" onClick={() => setActiveModal(null)}>Tutup</Button>
+        </div>
+      </Modal>
+
+      {/* ── Modal Saldo per Kebun ── */}
+      <Modal
+        open={activeModal === 'saldo'}
+        onClose={() => setActiveModal(null)}
+        title={`Saldo per Kebun — ${MONTHS[month]} ${year}`}
+        width="w-[560px]"
+      >
+        <table className="w-full border-collapse text-sm">
+          <thead>
+            <tr>
+              {['Unit Kebun', 'Saldo'].map((h) => (
+                <th key={h} className="px-3 py-2 text-left text-[11px] font-bold uppercase tracking-wider text-muted bg-[#f7faf7]">{h}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {!summary?.by_unit?.length ? (
+              <tr><td colSpan={2} className="px-3 py-6 text-center text-muted">Tidak ada data</td></tr>
+            ) : summary.by_unit.map((u) => (
+              <tr key={u.unit_id} className="border-t border-line hover:bg-[#fbfdfb]">
+                <td className="px-3 py-2 font-bold">{u.unit_code} — {u.unit_name}</td>
+                <td className={`px-3 py-2 text-right ${u.balance < 0 ? 'text-red-600' : ''}`}>{fmt(u.balance)}</td>
               </tr>
             ))}
           </tbody>
