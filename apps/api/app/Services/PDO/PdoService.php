@@ -41,20 +41,44 @@ class PdoService
                     ->join('pdo_details', 'pdo_details.id', '=', 'transfer_entries.pdo_detail_id')
                     ->where('transfer_entries.status', \App\Models\TransferEntry::STATUS_COMMITTED)
                     ->whereColumn('pdo_details.pdo_header_id', 'pdo_headers.id'),
-                'total_realized' => \DB::table('realization_entries')
-                    ->selectRaw('COALESCE(SUM(realization_entries.amount), 0)')
-                    ->join('pdo_details', 'pdo_details.id', '=', 'realization_entries.pdo_detail_id')
-                    ->whereColumn('pdo_details.pdo_header_id', 'pdo_headers.id'),
             ])
+            // total_realized & balance dinetkan dengan item potongan (mis. POTONGAN
+            // PANJAR) — down payment yang SUDAH direalisasikan (dibayar tunai) pada
+            // periode sebelumnya. Potongan direpresentasikan sebagai TransferEntry
+            // NEGATIF (bukan RealizationEntry), sehingga SUM(realization_entries.amount)
+            // polos akan overstate total_realized (dan understate balance/saldo)
+            // dibanding Rekap Buku Kas & Buku Kas Harian. Lihat penjelasan lengkap di
+            // RecapQueryService::resolveRealization() dan CashBookQueryService.
+            ->addSelect(\DB::raw("(
+                COALESCE((SELECT SUM(re.amount) FROM realization_entries re
+                          JOIN pdo_details pd ON pd.id = re.pdo_detail_id
+                          WHERE pd.pdo_header_id = pdo_headers.id), 0)
+                +
+                COALESCE((SELECT SUM(te.amount) FROM transfer_entries te
+                          JOIN pdo_details pd ON pd.id = te.pdo_detail_id
+                          JOIN expense_items ei ON ei.id = pd.expense_item_id
+                          WHERE pd.pdo_header_id = pdo_headers.id
+                            AND te.status = 'committed'
+                            AND ei.is_deduction = TRUE), 0)
+            ) as total_realized"))
             ->addSelect(\DB::raw("(
                 COALESCE((SELECT SUM(te.amount) FROM transfer_entries te
                           JOIN pdo_details pd ON pd.id = te.pdo_detail_id
                           WHERE pd.pdo_header_id = pdo_headers.id
                             AND te.status = 'committed'), 0)
                 -
-                COALESCE((SELECT SUM(re.amount) FROM realization_entries re
-                          JOIN pdo_details pd ON pd.id = re.pdo_detail_id
-                          WHERE pd.pdo_header_id = pdo_headers.id), 0)
+                (
+                    COALESCE((SELECT SUM(re.amount) FROM realization_entries re
+                              JOIN pdo_details pd ON pd.id = re.pdo_detail_id
+                              WHERE pd.pdo_header_id = pdo_headers.id), 0)
+                    +
+                    COALESCE((SELECT SUM(te2.amount) FROM transfer_entries te2
+                              JOIN pdo_details pd2 ON pd2.id = te2.pdo_detail_id
+                              JOIN expense_items ei2 ON ei2.id = pd2.expense_item_id
+                              WHERE pd2.pdo_header_id = pdo_headers.id
+                                AND te2.status = 'committed'
+                                AND ei2.is_deduction = TRUE), 0)
+                )
             ) as balance"))
             ->when(!empty($filters['search']), fn ($q) => $q->where('pdo_number', 'ilike', '%' . $filters['search'] . '%'))
             ->when(!empty($filters['status']), fn ($q) => $q->where('status', $filters['status']))
