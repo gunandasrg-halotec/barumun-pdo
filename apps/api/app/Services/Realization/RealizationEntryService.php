@@ -92,10 +92,9 @@ class RealizationEntryService
         // Hitung kantong PDO-level untuk group ini
         $totalKantong = $this->totalKantongForGroup($pdo, $group);
 
-        // Total realisasi seluruh item untuk group ini (PDO-level)
-        $totalRealizedGroup = (int) RealizationEntry::whereHas('pdoDetail', fn ($q) => $q->where('pdo_header_id', $pdo->id))
-            ->where('settlement_group', $group)
-            ->sum('amount');
+        // Total realisasi seluruh item untuk group ini (PDO-level), sudah dinetkan
+        // dengan potongan (lihat totalRealizedForGroup()).
+        $totalRealizedGroup = $this->totalRealizedForGroup($pdo, $group);
 
         $remainingKantong = $totalKantong - $totalRealizedGroup;
 
@@ -152,6 +151,38 @@ class RealizationEntryService
         return (int) TransferEntry::whereHas('pdoDetail', fn ($q) => $q->where('pdo_header_id', $pdo->id))
             ->whereIn('transfer_destination', $destinations)
             ->sum('amount');
+    }
+
+    /**
+     * Total realisasi kantong milik group ini untuk seluruh PDO, dinetkan dengan
+     * item potongan (mis. POTONGAN PANJAR) — down payment yang SUDAH direalisasikan
+     * (dibayar tunai) pada periode sebelumnya. Karena sistem tidak bisa membebankan
+     * potongan itu ke item spesifik saat kerani mencatat realisasi, kerani mencatat
+     * realisasi PENUH sesuai anggaran tiap item, sehingga realization_entries
+     * mendata lebih besar dari kas yang benar-benar keluar BARU periode ini.
+     *
+     * Potongan direpresentasikan sebagai TransferEntry NEGATIF (bukan
+     * RealizationEntry), sehingga tidak pernah ikut ter-sum di query
+     * RealizationEntry di atas — perlu ditambahkan manual di sini supaya
+     * "Sisa Dana" konsisten dengan Rekap Buku Kas & Buku Kas Harian (lihat
+     * RecapQueryService::resolveRealization() dan CashBookQueryService).
+     */
+    private function totalRealizedForGroup(PdoHeader $pdo, string $group): int
+    {
+        $trueRealized = (int) RealizationEntry::whereHas('pdoDetail', fn ($q) => $q->where('pdo_header_id', $pdo->id))
+            ->where('settlement_group', $group)
+            ->sum('amount');
+
+        $destinations = $group === RealizationEntry::SETTLEMENT_KEBUN
+            ? ['rek_kebun']
+            : ['pribadi', 'vendor'];
+
+        $deductionAdjustment = (int) TransferEntry::whereIn('transfer_destination', $destinations)
+            ->whereHas('pdoDetail', fn ($q) => $q->where('pdo_header_id', $pdo->id))
+            ->whereHas('pdoDetail.expenseItem', fn ($q) => $q->where('is_deduction', true))
+            ->sum('amount'); // negatif
+
+        return $trueRealized + $deductionAdjustment;
     }
 
     /**
@@ -217,9 +248,7 @@ class RealizationEntryService
             // BR-REAL-002: total realisasi kantong actor (PDO-level) tidak boleh melebihi
             // total transfer ke kantong tersebut (saldo kas kebun / saldo pribadi-vendor).
             $totalKantong       = $this->totalKantongForGroup($pdo, $group);
-            $totalRealizedGroup = (int) RealizationEntry::whereHas('pdoDetail', fn ($q) => $q->where('pdo_header_id', $pdo->id))
-                ->where('settlement_group', $group)
-                ->sum('amount');
+            $totalRealizedGroup = $this->totalRealizedForGroup($pdo, $group);
             $newGroupTotal = $totalRealizedGroup + $data['amount'];
 
             if ($newGroupTotal > $totalKantong) {
