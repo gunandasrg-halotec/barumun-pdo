@@ -224,6 +224,20 @@ class RecapQueryService
             // sehingga Saldo otomatis 0 tanpa perlu override terpisah.
             $saldo = $transfer - $real;
 
+            // Status overbudget SELALU dihitung per-kantong yang benar (transfer_kebun
+            // vs realisasi_kebun, dan/atau transfer_pribadi vs realisasi_pribadi),
+            // TIDAK berdasarkan kolom Transfer yang ditampilkan (yang di mode 'all'
+            // mencampur semua tujuan sebagai informasi saja). Ini supaya item yang
+            // overspend di kantong kebun tetap terdeteksi walau total_transfer
+            // gabungan (semua tujuan) masih terlihat besar.
+            $isOverbudgetKebun   = $transferKebunItem   < $realKebunItem;
+            $isOverbudgetPribadi = $transferPribadiItem < $realPribadiItem;
+            $isOverbudget = $kantong === 'kebun'
+                ? $isOverbudgetKebun
+                : ($kantong === 'pribadi'
+                    ? $isOverbudgetPribadi
+                    : ($isOverbudgetKebun || $isOverbudgetPribadi));
+
             $catId = $row->category_id;
             $subId = $row->subcategory_id;
 
@@ -275,6 +289,7 @@ class RecapQueryService
                 'total_realization'=> $real,
                 'saldo'            => $saldo,
                 'is_deduction'     => $isDeduction,
+                'is_overbudget'    => $isOverbudget,
             ];
 
             // Roll-up sub-category

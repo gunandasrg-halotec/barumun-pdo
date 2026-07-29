@@ -10,6 +10,7 @@ export interface RecapItem {
   total_realization: number
   saldo: number
   is_deduction: boolean
+  is_overbudget: boolean
 }
 
 export interface RecapSubcategory {

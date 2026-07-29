@@ -392,7 +392,7 @@ export function RekapitulasiPage() {
                   (realizationFilter === 'has' && item.total_realization > 0) ||
                   (realizationFilter === 'no'  && item.total_realization === 0)
                 ))
-              const matchOverbudget = !overbudgetOnly || item.saldo < 0
+              const matchOverbudget = !overbudgetOnly || item.is_overbudget
               return matchSearch && matchFilter && matchOverbudget
             })
             return { ...sub, items }
