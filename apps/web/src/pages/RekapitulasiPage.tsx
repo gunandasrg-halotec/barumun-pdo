@@ -95,6 +95,7 @@ export function RekapitulasiPage() {
   const [categoryId]                              = useState('')
   const [realizationFilter, setRealizationFilter] = useState<'all' | 'has' | 'no'>('all')
   const [kantongFilter,     setKantongFilter]     = useState<'all' | 'kebun' | 'pribadi'>('all')
+  const [overbudgetOnly,    setOverbudgetOnly]    = useState(false)
   const [search,            setSearch]            = useState('')
   const [startDate,         setStartDate]         = useState('')
   const [endDate,           setEndDate]           = useState('')
@@ -391,7 +392,8 @@ export function RekapitulasiPage() {
                   (realizationFilter === 'has' && item.total_realization > 0) ||
                   (realizationFilter === 'no'  && item.total_realization === 0)
                 ))
-              return matchSearch && matchFilter
+              const matchOverbudget = !overbudgetOnly || item.saldo < 0
+              return matchSearch && matchFilter && matchOverbudget
             })
             return { ...sub, items }
           })
@@ -401,7 +403,7 @@ export function RekapitulasiPage() {
       .filter((cat) => cat.subcategories.length > 0)
 
     return { ...recap, categories }
-  }, [recap, search, realizationFilter])
+  }, [recap, search, realizationFilter, overbudgetOnly])
 
   const [excelLoading, setExcelLoading] = useState(false)
 
@@ -526,6 +528,21 @@ export function RekapitulasiPage() {
               <option value="kebun">Kas Kebun</option>
               <option value="pribadi">Pribadi / Vendor</option>
             </select>
+          </div>
+        )}
+
+        {activeTab === 'rekap' && (
+          <div className="flex flex-col">
+            <label className="label">&nbsp;</label>
+            <label className="flex items-center gap-2 h-[38px] text-sm font-semibold text-ink cursor-pointer select-none">
+              <input
+                type="checkbox"
+                className="w-4 h-4 accent-[#1D9E75]"
+                checked={overbudgetOnly}
+                onChange={(e) => setOverbudgetOnly(e.target.checked)}
+              />
+              Hanya item overbudget
+            </label>
           </div>
         )}
 
