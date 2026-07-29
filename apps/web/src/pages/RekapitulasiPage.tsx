@@ -57,7 +57,10 @@ type RealizationForm = z.infer<typeof realizationSchema>
 
 interface RealizationAvailableItem {
   pdo_detail_id:  string
-  expense_item:   { id: string; code: string; name: string } | null
+  expense_item:   {
+    id: string; code: string; name: string
+    subcategory?: { id: string; name: string; category?: { id: string; name: string } } | null
+  } | null
   description:    string
   bucket:         number
   realized_group: number
@@ -763,7 +766,7 @@ export function RekapitulasiPage() {
                     <option value="">Pilih item...</option>
                     {availableItems.map((d) => (
                       <option key={d.pdo_detail_id} value={d.pdo_detail_id}>
-                        {d.expense_item?.name ?? d.description} — Saldo: {fmt(d.saldo)}
+                        {[d.expense_item?.subcategory?.category?.name, d.expense_item?.subcategory?.name, d.expense_item?.name ?? d.description].filter(Boolean).join(' — ')} — Saldo: {fmt(d.saldo)}
                       </option>
                     ))}
                   </select>

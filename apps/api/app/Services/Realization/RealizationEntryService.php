@@ -86,7 +86,7 @@ class RealizationEntryService
         }
 
         $details = $pdo->details()
-            ->with(['expenseItem', 'transferEntries', 'realizationEntries'])
+            ->with(['expenseItem.subcategory.category', 'transferEntries', 'realizationEntries'])
             ->get();
 
         // Hitung kantong PDO-level untuk group ini
@@ -121,9 +121,22 @@ class RealizationEntryService
             $totalRealized = (int) $detail->realizationEntries->sum('amount');
             $saldo         = $detail->amount - $totalRealized;
 
+            $item = $detail->expenseItem;
             $result[] = [
                 'pdo_detail_id'  => $detail->id,
-                'expense_item'   => $detail->expenseItem?->only(['id', 'code', 'name']),
+                'expense_item'   => $item ? [
+                    'id'   => $item->id,
+                    'code' => $item->code,
+                    'name' => $item->name,
+                    'subcategory' => $item->subcategory ? [
+                        'id'   => $item->subcategory->id,
+                        'name' => $item->subcategory->name,
+                        'category' => $item->subcategory->category ? [
+                            'id'   => $item->subcategory->category->id,
+                            'name' => $item->subcategory->category->name,
+                        ] : null,
+                    ] : null,
+                ] : null,
                 'description'    => $detail->description,
                 'bucket'         => $detail->amount,
                 'realized_group' => $totalRealized,
