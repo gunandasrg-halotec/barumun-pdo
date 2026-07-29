@@ -133,7 +133,7 @@ class CashBookQueryService
                 ->where('period_year', $year)
                 ->where('period_month', $month))
             ->whereBetween('transaction_date', [$effectiveStart->toDateString(), $effectiveEnd->toDateString()])
-            ->with('pdoDetail.expenseItem.subcategory')
+            ->with('pdoDetail.expenseItem.subcategory.category')
             ->get();
 
         $deductionBySubcategory = TransferEntry::query()
@@ -160,10 +160,19 @@ class CashBookQueryService
                     ->sortKeys(); // tanggal paling awal duluan
 
                 foreach ($dateGroups as $date => $group) {
-                    $itemNames = $group
-                        ->map(fn (RealizationEntry $r) => $r->pdoDetail?->expenseItem?->name ?? 'Realisasi')
-                        ->unique()
-                        ->values();
+                    $lines = $group->map(function (RealizationEntry $r) {
+                        $item = $r->pdoDetail?->expenseItem;
+                        $cat  = $item?->subcategory?->category?->name;
+                        $sub  = $item?->subcategory?->name;
+                        $name = $item?->name ?? 'Realisasi';
+
+                        $label = implode(' — ', array_filter([$cat, $sub, $name]));
+                        if (! empty($r->explanation)) {
+                            $label .= ' (' . $r->explanation . ')';
+                        }
+
+                        return $label;
+                    })->values();
 
                     $references = $group
                         ->map(fn (RealizationEntry $r) => $r->proof_number)
@@ -185,7 +194,7 @@ class CashBookQueryService
                         'date'        => $date,
                         'type'        => 'pengeluaran',
                         'reference'   => $references->isNotEmpty() ? $references->implode("\n") : null,
-                        'description' => 'Pembayaran untuk : ' . $itemNames->implode(', '),
+                        'description' => $lines->implode("\n"),
                         'amount'      => $amount,
                         'created_at'  => $group->min('created_at'),
                     ];

@@ -715,7 +715,7 @@ export function RekapitulasiPage() {
                   <tr key={`${r.date}-${i}`} className="border-t border-line hover:bg-[#fbfdfb]">
                     <td className="px-3 py-2 whitespace-nowrap">{fmtDate(r.date)}</td>
                     <td className="px-3 py-2 font-mono text-xs whitespace-pre-line">{r.reference ?? '—'}</td>
-                    <td className="px-3 py-2">{r.description}</td>
+                    <td className="px-3 py-2 whitespace-pre-line">{r.description}</td>
                     <td className="px-3 py-2 text-right tabular-nums text-[#0F6E56] font-bold">
                       {r.type === 'penerimaan' ? fmt(r.amount) : ''}
                     </td>
