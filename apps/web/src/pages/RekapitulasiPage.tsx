@@ -88,6 +88,15 @@ export function RekapitulasiPage() {
 
   const isCrossUnit = CROSS_UNIT_ROLES.includes(role)
 
+  const kebunRoles      = ['KERANI', 'ASISTEN_KEBUN', 'MANAJER_KEBUN']
+  const purchasingRoles = ['STAFF_PURCHASING']
+  const defaultKantong: 'all' | 'kebun' | 'pribadi' = kebunRoles.includes(role)
+    ? 'kebun'
+    : purchasingRoles.includes(role)
+      ? 'pribadi'
+      : 'all'
+  const kantongLocked = kebunRoles.includes(role) || purchasingRoles.includes(role)
+
   // ── Tab: Rekap Buku Kas (per-item, mengikuti PDO) vs Buku Kas Harian (kronologis) ──
   const [activeTab, setActiveTab] = useState<'rekap' | 'harian'>('rekap')
 
@@ -97,7 +106,7 @@ export function RekapitulasiPage() {
   const [unitId,            setUnitId]            = useState(user?.plantation_unit?.id ?? '')
   const [categoryId]                              = useState('')
   const [realizationFilter, setRealizationFilter] = useState<'all' | 'has' | 'no'>('all')
-  const [kantongFilter,     setKantongFilter]     = useState<'all' | 'kebun' | 'pribadi'>('all')
+  const [kantongFilter,     setKantongFilter]     = useState<'all' | 'kebun' | 'pribadi'>(defaultKantong)
   const [overbudgetOnly,    setOverbudgetOnly]    = useState(false)
   const [search,            setSearch]            = useState('')
   const [startDate,         setStartDate]         = useState('')
@@ -526,7 +535,7 @@ export function RekapitulasiPage() {
         {activeTab === 'rekap' && (
           <div>
             <label className="label">Kantong</label>
-            <select className="input-base" value={kantongFilter} onChange={(e) => setKantongFilter(e.target.value as 'all' | 'kebun' | 'pribadi')}>
+            <select className="input-base" value={kantongFilter} disabled={kantongLocked} onChange={(e) => setKantongFilter(e.target.value as 'all' | 'kebun' | 'pribadi')}>
               <option value="all">Semua</option>
               <option value="kebun">Kas Kebun</option>
               <option value="pribadi">Pribadi / Vendor</option>
