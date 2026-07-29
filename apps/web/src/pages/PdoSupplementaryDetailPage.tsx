@@ -191,7 +191,16 @@ export function PdoSupplementaryDetailPage() {
               <tbody>
                 {details.map((d) => (
                   <tr key={d.id} className="border-t border-line hover:bg-[#fbfdfb]">
-                    <td className="px-3 py-2 text-sm font-bold">{d.expense_item?.name ?? '—'}</td>
+                    <td className="px-3 py-2 text-sm font-bold">
+                      {(() => {
+                        const item = d.expense_item
+                        const sub  = item?.subcategory
+                        const cat  = sub?.category
+                        if (!item) return '—'
+                        const parts = [cat?.name, sub?.name, item.name].filter(Boolean)
+                        return parts.join(' — ')
+                      })()}
+                    </td>
                     <td className="px-3 py-2 text-sm">{d.description}</td>
                     <td className="px-3 py-2 text-sm">{d.quantity ?? '—'}</td>
                     <td className="px-3 py-2 text-sm">{d.unit ?? '—'}</td>

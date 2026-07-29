@@ -26,7 +26,7 @@ class PdoSupplementaryService
 
     public function find(string $id): PdoSupplementaryHeader
     {
-        return PdoSupplementaryHeader::with(['parentPdo', 'plantationUnit', 'creator', 'details.expenseItem'])
+        return PdoSupplementaryHeader::with(['parentPdo', 'plantationUnit', 'creator', 'details.expenseItem.subcategory.category'])
             ->findOrFail($id);
     }
 

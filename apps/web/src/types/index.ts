@@ -359,7 +359,13 @@ export interface PdoSupplementaryDetail {
   id: string
   pdo_supplementary_header_id: string
   expense_item_id: string
-  expense_item?: { id: string; name: string; code: string }
+  expense_item?: {
+    id: string; name: string; code: string
+    subcategory?: {
+      id: string; name: string; code: string
+      category?: { id: string; name: string; code: string }
+    }
+  }
   account_number: string | null
   description: string
   quantity: number | null
