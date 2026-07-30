@@ -201,8 +201,9 @@ class RecapQueryService
 
             // Kolom yang ditampilkan tergantung filter kantong: 'kebun' hanya
             // transfer/realisasi ke rek_kebun, 'pribadi' hanya pribadi/vendor,
-            // 'all' menampilkan total_transfer semua destination (informational)
-            // tapi realisasi tetap dihitung dari sisi kas kebun saja.
+            // 'all' menjumlahkan transfer & realisasi dari KEDUA kantong supaya
+            // saldo tetap konsisten dengan tampilan per-kantong (item yang saldo
+            // 0 di kantong pribadi harus tetap 0 saat filter kantong = semua).
             if ($kantong === 'kebun') {
                 $transfer = $transferKebunItem;
                 $real     = $realKebunItem;
@@ -217,7 +218,7 @@ class RecapQueryService
                 }
             } else {
                 $transfer = $transferAll;
-                $real     = $realKebunItem;
+                $real     = $realKebunItem + $realPribadiItem;
             }
             // Saldo = Transfer - Realisasi seperti biasa. Untuk item potongan, $real
             // sudah di-resolve sama dengan $transfer (lihat resolveRealization()),
