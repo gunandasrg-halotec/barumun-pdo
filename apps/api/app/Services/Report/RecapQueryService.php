@@ -6,6 +6,8 @@ use Illuminate\Support\Facades\DB;
 
 class RecapQueryService
 {
+    public function __construct(private readonly CashBookQueryService $cashBookQueryService) {}
+
     public function getRecapData(array $filters): array
     {
         $year       = $filters['period_year'];
@@ -44,7 +46,11 @@ class RecapQueryService
             $realisasiPribadi += $this->resolveRealization($isDeduction, $tPribadi, (int) $row->total_realization_pribadi);
         }
 
-        return $this->buildHierarchy($rows, $transferKebun, $transferPribadi, $realisasiKebun, $realisasiPribadi, $kantong);
+        // Saldo awal kas kebun di AWAL periode PDO ini — KPI tetap, tidak
+        // terpengaruh $startDate/$endDate (yang hanya memfilter baris tabel).
+        $saldoAwal = $unitId ? $this->cashBookQueryService->openingBalanceForPeriod($unitId, (int) $year, (int) $month) : 0;
+
+        return $this->buildHierarchy($rows, $transferKebun, $transferPribadi, $realisasiKebun, $realisasiPribadi, $kantong, $saldoAwal);
     }
 
     /**
@@ -178,7 +184,7 @@ class RecapQueryService
         ]);
     }
 
-    private function buildHierarchy(array $rows, int $transferKebun, int $transferPribadi, int $realisasiKebun, int $realisasiPribadi, string $kantong = 'all'): array
+    private function buildHierarchy(array $rows, int $transferKebun, int $transferPribadi, int $realisasiKebun, int $realisasiPribadi, string $kantong = 'all', int $saldoAwal = 0): array
     {
         $categories  = [];
         $catIndex    = [];
@@ -322,6 +328,8 @@ class RecapQueryService
             'realisasi_pribadi'             => $realisasiPribadi,
             'saldo_kebun'                   => $transferKebun - $realisasiKebun,
             'saldo_pribadi'                 => $transferPribadi - $realisasiPribadi,
+            'saldo_awal'                    => $saldoAwal,
+            'saldo_kas_kebun_saat_ini'      => $saldoAwal + $transferKebun - $realisasiKebun,
             'categories'                    => $categories,
         ];
     }

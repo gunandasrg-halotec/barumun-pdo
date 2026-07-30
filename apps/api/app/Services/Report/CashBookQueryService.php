@@ -4,6 +4,7 @@ namespace App\Services\Report;
 
 use App\Models\RealizationEntry;
 use App\Models\TransferEntry;
+use App\Models\UnitOpeningBalance;
 use Carbon\Carbon;
 
 class CashBookQueryService
@@ -111,6 +112,30 @@ class CashBookQueryService
     }
 
     /**
+     * Saldo kas kebun unit ini di AWAL periode PDO (year/month) — dipakai sebagai
+     * KPI "Saldo Awal" di halaman Rekap, TIDAK terpengaruh filter tanggal
+     * (start_date/end_date) yang dipakai di tabel Buku Kas Harian.
+     */
+    public function openingBalanceForPeriod(string $unitId, int $year, int $month): int
+    {
+        $periodStart = Carbon::createFromDate($year, $month, 1)->startOfMonth();
+
+        return $this->cumulativeBalanceBefore($unitId, $periodStart);
+    }
+
+    /**
+     * Saldo kas kebun kumulatif unit ini per AKHIR periode PDO (year/month) —
+     * dipakai untuk KPI "Saldo Kas Kebun" di Dashboard, supaya konsisten dengan
+     * saldo akhir (closing balance) di Buku Kas Harian bulan yang sama.
+     */
+    public function closingBalanceForPeriod(string $unitId, int $year, int $month): int
+    {
+        $nextMonthStart = Carbon::createFromDate($year, $month, 1)->startOfMonth()->addMonthNoOverflow();
+
+        return $this->cumulativeBalanceBefore($unitId, $nextMonthStart);
+    }
+
+    /**
      * Baris pengeluaran Buku Kas Harian, digabung per (subkategori, tanggal
      * transaksi) supaya tabel tidak terlalu panjang — item-item dalam 1
      * subkategori yang direalisasikan di tanggal yang sama (mis. GAJI + CATU
@@ -208,6 +233,10 @@ class CashBookQueryService
      * Saldo kumulatif kas kebun unit ini dari seluruh transaksi SEBELUM $before
      * (lintas semua periode PDO), dipakai sebagai saldo awal (opening balance).
      *
+     * Ditambah saldo awal (seed) per unit — saldo kas kebun akhir Juni 2026
+     * sebelum sistem PDO dipakai, lihat UnitOpeningBalance — supaya saldo
+     * berjalan akurat sejak titik mulai pemakaian sistem, bukan mulai dari nol.
+     *
      * Potongan periode-periode sebelumnya juga dinetkan di sini (mengurangi
      * totalExpenses, karena dana itu sebenarnya sudah keluar sebelum periode
      * tsb, bukan pengeluaran baru) — supaya saldo berjalan tetap akurat lintas
@@ -215,6 +244,8 @@ class CashBookQueryService
      */
     private function cumulativeBalanceBefore(string $unitId, Carbon $before): int
     {
+        $seed = UnitOpeningBalance::amountForUnit($unitId);
+
         $totalReceipts = (int) TransferEntry::query()
             ->whereIn('transfer_destination', self::RECEIPT_DESTINATIONS)
             ->whereHas('pdoDetail.pdoHeader', fn ($q) => $q->where('plantation_unit_id', $unitId))
@@ -234,6 +265,6 @@ class CashBookQueryService
             ->where('transfer_date', '<', $before->toDateString())
             ->sum('amount'); // negatif
 
-        return $totalReceipts - ($totalExpenses + $totalDeduction);
+        return $seed + $totalReceipts - ($totalExpenses + $totalDeduction);
     }
 }

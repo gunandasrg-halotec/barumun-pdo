@@ -29,6 +29,7 @@ const PdoSupplementaryDetailPage = lazy(() => import('@/pages/PdoSupplementaryDe
 const LaporanPage                = lazy(() => import('@/pages/LaporanPage').then((m) => ({ default: m.LaporanPage })))
 const RekapitulasiPage           = lazy(() => import('@/pages/RekapitulasiPage').then((m) => ({ default: m.RekapitulasiPage })))
 const SettingsPage               = lazy(() => import('@/pages/SettingsPage').then((m) => ({ default: m.SettingsPage })))
+const SaldoAwalPage              = lazy(() => import('@/pages/SaldoAwalPage').then((m) => ({ default: m.SaldoAwalPage })))
 const VehicleFormPage            = lazy(() => import('@/pages/VehicleFormPage'))
 const VehicleTripLogPage         = lazy(() => import('@/pages/VehicleTripLogPage'))
 
@@ -100,6 +101,7 @@ export default function App() {
             <Route path="rekapitulasi"        element={<RekapitulasiPage />} />
             <Route path="log-trip-kendaraan"  element={<VehicleTripLogPage />} />
             <Route path="settings"       element={<SettingsPage />} />
+            <Route path="saldo-awal"     element={<SaldoAwalPage />} />
           </Route>
 
           <Route path="*" element={<Navigate to="/dashboard" replace />} />

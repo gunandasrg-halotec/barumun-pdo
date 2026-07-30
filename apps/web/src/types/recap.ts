@@ -47,6 +47,8 @@ export interface RecapResponse {
   realisasi_pribadi: number
   saldo_kebun: number
   saldo_pribadi: number
+  saldo_awal: number
+  saldo_kas_kebun_saat_ini: number
   categories: RecapCategory[]
 }
 

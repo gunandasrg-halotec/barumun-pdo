@@ -614,6 +614,20 @@ export function RekapitulasiPage() {
                 </div>
               ))}
             </div>
+            {/* Row 1b: Saldo Awal + Saldo Kas Kebun Saat Ini (kumulatif, tidak terpengaruh filter tanggal) */}
+            <div className="grid grid-cols-2 border-b border-line">
+              {[
+                { label: 'Saldo Awal Kas Kebun',        value: recap.saldo_awal ?? 0 },
+                { label: 'Saldo Kas Kebun Saat Ini',    value: recap.saldo_kas_kebun_saat_ini ?? 0 },
+              ].map((k) => (
+                <div key={k.label} className="p-4 text-center border-r border-line last:border-r-0">
+                  <div className="text-[10px] font-[850] text-muted uppercase tracking-wider mb-1">{k.label}</div>
+                  <div className={`text-[17px] font-[950] ${k.value < 0 ? 'text-red-600' : 'text-ink'}`}>
+                    {new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', maximumFractionDigits: 0 }).format(k.value)}
+                  </div>
+                </div>
+              ))}
+            </div>
             {/* Row 2: Kas Kebun (3 cols) + Pribadi/Vendor (3 cols) */}
             <div className="grid grid-cols-6">
               {/* Kas Kebun */}

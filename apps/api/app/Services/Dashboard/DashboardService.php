@@ -4,10 +4,13 @@ namespace App\Services\Dashboard;
 
 use App\Models\PdoHeader;
 use App\Models\User;
+use App\Services\Report\CashBookQueryService;
 use Illuminate\Support\Facades\DB;
 
 class DashboardService
 {
+    public function __construct(private readonly CashBookQueryService $cashBookQueryService) {}
+
     public function summary(User $user, array $filters = []): array
     {
         $companyId  = $user->company_id;
@@ -181,6 +184,26 @@ class DashboardService
         $realizedByUnit = $realizedRawByUnit->keys()->merge($deductionByUnit->keys())->unique()
             ->mapWithKeys(fn ($id) => [$id => (int) ($realizedRawByUnit[$id] ?? 0) + (int) ($deductionByUnit[$id] ?? 0)]);
 
+        // Realisasi kantong Pribadi/Vendor per unit (funding_source rekening_utama) —
+        // dipisah dari kebun karena saldo Kas Kebun sekarang dihitung kumulatif
+        // (lihat kebunClosingBalance di bawah), sedangkan Pribadi/Vendor tetap
+        // per-periode (tidak membawa saldo lintas bulan).
+        $unitPribadiRealizedRows = DB::select("
+            SELECT
+                pu.id AS unit_id,
+                COALESCE(SUM(re.amount), 0) AS total_realized
+            FROM pdo_headers ph
+            LEFT JOIN plantation_units pu ON pu.id = ph.plantation_unit_id
+            LEFT JOIN pdo_details pd ON pd.pdo_header_id = ph.id
+            LEFT JOIN realization_entries re ON re.pdo_detail_id = pd.id AND re.funding_source = 'rekening_utama'
+            WHERE ph.company_id = ?
+              AND ph.period_month = ?
+              AND ph.period_year  = ?
+              {$unitClause}
+            GROUP BY pu.id
+        ", $params);
+        $pribadiRealizedByUnit = collect($unitPribadiRealizedRows)->pluck('total_realized', 'unit_id');
+
         // Transfer per unit per destination
         $unitDestRows = DB::select("
             SELECT
@@ -205,7 +228,7 @@ class DashboardService
             $transferByUnit[$row->unit_id][$row->transfer_destination] = (int) $row->subtotal;
         }
 
-        $byUnit = array_values(array_filter(array_map(function ($r) use ($transferByUnit, $realizedByUnit) {
+        $byUnit = array_values(array_filter(array_map(function ($r) use ($transferByUnit, $realizedByUnit, $pribadiRealizedByUnit, $year, $month) {
             // Skip rows dengan unit_id NULL
             if (! $r->unit_id) {
                 return null;
@@ -216,6 +239,16 @@ class DashboardService
             $vendor         = (int) ($t['vendor']    ?? 0);
             $totalTransfer  = $rekKebun + $pribadi + $vendor;
             $totalRealized  = (int) ($realizedByUnit[$r->unit_id] ?? 0);
+
+            // Saldo Kas Kebun dihitung KUMULATIF (termasuk saldo awal per unit),
+            // bukan hanya transfer-realisasi bulan ini — lihat UnitOpeningBalance
+            // & CashBookQueryService::closingBalanceForPeriod().
+            $kebunClosingBalance = $this->cashBookQueryService->closingBalanceForPeriod($r->unit_id, (int) $year, (int) $month);
+
+            // Pribadi/Vendor tetap per-periode (tidak membawa saldo lintas bulan).
+            $pribadiRealized = (int) ($pribadiRealizedByUnit[$r->unit_id] ?? 0);
+            $pribadiBalance  = ($pribadi + $vendor) - $pribadiRealized;
+
             return [
                 'unit_id'               => $r->unit_id,
                 'unit_code'             => $r->unit_code,
@@ -223,12 +256,17 @@ class DashboardService
                 'total_amount'          => (int) $r->total_amount,
                 'total_transferred'     => $totalTransfer,
                 'total_realized'        => $totalRealized,
-                'balance'               => $totalTransfer - $totalRealized,
+                'balance'               => $kebunClosingBalance + $pribadiBalance,
                 'transferred_rek_kebun' => $rekKebun,
                 'transferred_pribadi'   => $pribadi,
                 'transferred_vendor'    => $vendor,
             ];
         }, $unitRows)));
+
+        // Total saldo = jumlah saldo tiap unit (masing-masing sudah kumulatif untuk
+        // kantong Kas Kebun, lihat $byUnit di atas) — bukan totalTransferred -
+        // totalRealized bulan ini saja.
+        $totalBalance = array_sum(array_column($byUnit, 'balance'));
 
         return [
             'period'              => ['month' => (int) $month, 'year' => (int) $year],
@@ -236,7 +274,7 @@ class DashboardService
             'total_amount'        => (int) $monthlyStats->total_amount,
             'total_transferred'   => $totalTransferred,
             'total_realized'      => $totalRealized,
-            'balance'             => $totalTransferred - $totalRealized,
+            'balance'             => $totalBalance,
             'items_without_proof' => (int) $monthlyStats->items_without_proof,
             'pending_pdo_count'   => $pendingForUser,
             'transferred_by_destination' => [

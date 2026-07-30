@@ -22,6 +22,7 @@ use App\Http\Controllers\Reports\CashBookController;
 use App\Http\Controllers\Reports\RecapController;
 use App\Http\Controllers\Reports\ReportController;
 use App\Http\Controllers\Settings\SystemSettingController;
+use App\Http\Controllers\Settings\UnitOpeningBalanceController;
 use App\Http\Controllers\Transfer\TransferEntryController;
 use App\Http\Controllers\Users\UserController;
 use Illuminate\Support\Facades\Route;
@@ -170,5 +171,9 @@ Route::prefix('v1')->middleware(['auth:sanctum', 'ensure.unit.access'])->group(f
 
     Route::get('notification-templates', [SystemSettingController::class, 'templates']);
     Route::put('notification-templates/{template}', [SystemSettingController::class, 'updateTemplate']);
+
+    // ── Saldo Awal Kas Kebun (MANAJER_KEUANGAN / DIREKTUR_KEUANGAN only) ──
+    Route::get('unit-opening-balances', [UnitOpeningBalanceController::class, 'index']);
+    Route::put('unit-opening-balances/{unit}', [UnitOpeningBalanceController::class, 'update']);
 
 });
