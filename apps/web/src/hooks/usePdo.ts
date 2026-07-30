@@ -236,7 +236,10 @@ export function useClosePdo(pdoId: string) {
   const qc = useQueryClient()
   return useMutation({
     mutationFn: async (data: { closure_date: string; notes?: string }) => {
-      const res = await api.post<ApiResponse<PdoHeader>>(`/pdo/${pdoId}/close`, data)
+      const res = await api.post<ApiResponse<PdoHeader>>(`/pdo/${pdoId}/close`, {
+        closed_date:   data.closure_date,
+        closure_notes: data.notes,
+      })
       return res.data.data
     },
     onSuccess: () => qc.invalidateQueries({ queryKey: ['pdo'] }),
