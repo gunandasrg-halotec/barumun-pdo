@@ -47,12 +47,19 @@ class CashBookQueryService
         // Tidak difilter oleh tanggal transfer (hanya oleh periode PDO) agar
         // konsisten dengan Rekap Buku Kas yang juga tidak memfilter transfer_date.
         // Jika user set date range eksplisit, filter transfer_date diterapkan.
+        // Transfer item Potongan Panjar (is_deduction) BUKAN transfer dana baru dari
+        // HO — itu representasi down payment yang sudah direalisasikan periode
+        // sebelumnya, dan sudah dinetkan ke baris pengeluaran lewat
+        // buildExpenseRows()/deductionBySubcategory. Kalau tidak dikecualikan di
+        // sini, jumlahnya (negatif) akan ikut ter-jumlah sebagai "Penerimaan" di
+        // tanggal transfer-nya, sehingga baris Penerimaan bisa tampil negatif.
         $receiptsQuery = TransferEntry::query()
             ->whereIn('transfer_destination', self::RECEIPT_DESTINATIONS)
             ->whereHas('pdoDetail.pdoHeader', fn ($q) => $q
                 ->where('plantation_unit_id', $unitId)
                 ->where('period_year', $year)
                 ->where('period_month', $month))
+            ->whereHas('pdoDetail.expenseItem', fn ($q) => $q->where('is_deduction', false))
             ->with('pdoDetail.expenseItem');
 
         if ($startDate || $endDate) {
