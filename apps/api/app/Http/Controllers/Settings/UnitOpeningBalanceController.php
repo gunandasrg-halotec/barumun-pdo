@@ -25,15 +25,19 @@ class UnitOpeningBalanceController extends Controller
             ->get()
             ->keyBy('plantation_unit_id');
 
-        $data = $units->map(fn ($unit) => [
-            'plantation_unit_id' => $unit->id,
-            'unit_code'          => $unit->code,
-            'unit_name'          => $unit->name,
-            'amount'             => (int) ($balances[$unit->id]->amount ?? 0),
-            'as_of_date'         => $balances[$unit->id]->as_of_date?->toDateString(),
-            'notes'              => $balances[$unit->id]->notes ?? null,
-            'updated_at'         => $balances[$unit->id]->updated_at?->toIso8601String(),
-        ]);
+        $data = $units->map(function ($unit) use ($balances) {
+            $balance = $balances->get($unit->id);
+
+            return [
+                'plantation_unit_id' => $unit->id,
+                'unit_code'          => $unit->code,
+                'unit_name'          => $unit->name,
+                'amount'             => (int) ($balance?->amount ?? 0),
+                'as_of_date'         => $balance?->as_of_date?->toDateString(),
+                'notes'              => $balance?->notes,
+                'updated_at'         => $balance?->updated_at?->toIso8601String(),
+            ];
+        });
 
         return response()->json(['success' => true, 'data' => $data]);
     }
