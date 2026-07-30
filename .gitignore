@@ -7,7 +7,6 @@ docker-compose.override.yml
 
 # Frontend build output & TypeScript artifacts
 apps/web/dist/
-apps/web/package-lock.json
 apps/web/tsconfig.node.tsbuildinfo
 apps/web/tsconfig.tsbuildinfo
 apps/web/vite.config.d.ts
