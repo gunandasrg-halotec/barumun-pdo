@@ -507,8 +507,11 @@ class WhatsAppNotificationService
                     if ($item['saldo'] <= 0) {
                         continue;
                     }
-                    $items[] = ['name' => $item['item_name'], 'saldo' => $item['saldo']];
-                    $total  += $item['saldo'];
+                    // Nama lengkap (Kategori — Sub-kategori — Item) karena banyak item
+                    // dengan nama sama di sub-kategori berbeda (mis. "GAJI").
+                    $fullName = implode(' — ', [$category['category_name'], $subcategory['subcategory_name'], $item['item_name']]);
+                    $items[]  = ['name' => $fullName, 'saldo' => $item['saldo']];
+                    $total   += $item['saldo'];
                 }
             }
         }
