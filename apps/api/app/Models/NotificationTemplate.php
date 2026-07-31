@@ -28,6 +28,8 @@ class NotificationTemplate extends Model
     const EVENT_MONTHLY_REMINDER        = 'monthly_reminder';
     const EVENT_TRANSFER_DRAFT_SAVED    = 'transfer_draft_saved';   // Draft rencana transfer → Direktur Keuangan
     const EVENT_TRANSFER_PLAN_APPROVED  = 'transfer_plan_approved'; // Direktur simpan permanen → Manajer Keuangan + Staff Purchasing
+    const EVENT_CLOSING_REMINDER_KERANI    = 'closing_reminder_kerani';    // Manual, dari Pengaturan → Kerani + Asisten Kebun (per unit)
+    const EVENT_CLOSING_REMINDER_KEUANGAN  = 'closing_reminder_keuangan';  // Manual, dari Pengaturan → Manajer/Direktur/Staff Keuangan (gabungan semua kebun)
 
     const CHANNEL_WHATSAPP = 'whatsapp';
     const CHANNEL_SYSTEM   = 'in_system';

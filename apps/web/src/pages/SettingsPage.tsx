@@ -80,6 +80,18 @@ export function SettingsPage() {
     onError: () => toast('Gagal menyimpan template', 'error'),
   })
 
+  const sendClosingReminderKerani = useMutation({
+    mutationFn: () => api.post('/settings/closing-reminder/kerani'),
+    onSuccess: (res) => toast((res.data as { message?: string })?.message ?? 'Reminder terkirim.'),
+    onError: () => toast('Gagal mengirim reminder', 'error'),
+  })
+
+  const sendClosingReminderKeuangan = useMutation({
+    mutationFn: () => api.post('/settings/closing-reminder/keuangan'),
+    onSuccess: (res) => toast((res.data as { message?: string })?.message ?? 'Reminder terkirim.'),
+    onError: () => toast('Gagal mengirim reminder', 'error'),
+  })
+
   return (
     <div className="max-w-2xl">
       <h2 className="text-[28px] font-[950] text-ink mb-6">Pengaturan</h2>
@@ -246,6 +258,42 @@ export function SettingsPage() {
           >
             Simpan Jadwal
           </Button>
+        </div>
+      </div>
+
+      {/* Section 3b: Reminder Penutupan PDO */}
+      <div className="card mb-4">
+        <h3 className="text-[17px] font-[850] mb-1">Reminder Penutupan PDO</h3>
+        <p className="text-[12px] text-muted mb-4">
+          Kirim reminder saldo Kas Kebun yang masih tersisa untuk periode berjalan, ke pihak terkait via WhatsApp.
+        </p>
+        <div className="flex flex-col gap-3">
+          <div className="flex items-center justify-between gap-4 border border-line rounded-lg p-3">
+            <div>
+              <div className="text-[13px] font-[850]">Kerani & Asisten Kebun</div>
+              <div className="text-[11px] text-muted">1 pesan per unit kebun, berisi daftar item + total saldo tersisa unit tsb.</div>
+            </div>
+            <Button
+              size="sm"
+              loading={sendClosingReminderKerani.isPending}
+              onClick={() => sendClosingReminderKerani.mutate()}
+            >
+              Kirim Reminder
+            </Button>
+          </div>
+          <div className="flex items-center justify-between gap-4 border border-line rounded-lg p-3">
+            <div>
+              <div className="text-[13px] font-[850]">Manajer / Direktur / Staff Keuangan</div>
+              <div className="text-[11px] text-muted">1 pesan gabungan, rekap saldo tersisa seluruh kebun.</div>
+            </div>
+            <Button
+              size="sm"
+              loading={sendClosingReminderKeuangan.isPending}
+              onClick={() => sendClosingReminderKeuangan.mutate()}
+            >
+              Kirim Reminder
+            </Button>
+          </div>
         </div>
       </div>
 

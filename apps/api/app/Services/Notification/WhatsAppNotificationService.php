@@ -5,15 +5,19 @@ namespace App\Services\Notification;
 use App\Models\NotificationTemplate;
 use App\Models\PdoHeader;
 use App\Models\PdoSupplementaryHeader;
+use App\Models\PlantationUnit;
 use App\Models\Role;
 use App\Models\SystemSetting;
 use App\Models\User;
+use App\Services\Report\RecapQueryService;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 
 class WhatsAppNotificationService
 {
+    public function __construct(private readonly RecapQueryService $recapQueryService) {}
+
     // ─────────────────────────────────────────────────────
     // PUBLIC NOTIFICATION METHODS
     // ─────────────────────────────────────────────────────
@@ -360,6 +364,170 @@ class WhatsAppNotificationService
                 'nama_user'  => $kerani->full_name,
             ]);
         }
+    }
+
+    // ─────────────────────────────────────────────────────
+    // REMINDER PENUTUPAN PDO (manual, dari halaman Pengaturan)
+    // ─────────────────────────────────────────────────────
+
+    /**
+     * Kirim reminder saldo Kas Kebun ke Kerani + Asisten Kebun tiap unit yang
+     * masih punya item saldo tersisa (transfer > realisasi) pada PDO Bulanan
+     * berstatus final periode berjalan. Unit tanpa saldo tersisa dilewati.
+     *
+     * @return array<int, array{unit: string, recipients: int, total_saldo: int}>
+     */
+    public function sendClosingReminderKerani(string $companyId, int $year, int $month): array
+    {
+        $summary = [];
+
+        $units = PlantationUnit::where('company_id', $companyId)
+            ->where('is_active', true)
+            ->orderBy('code')
+            ->get();
+
+        foreach ($units as $unit) {
+            $pdo = $this->finalPdoForUnit($companyId, $unit->id, $year, $month);
+            if (! $pdo) {
+                continue;
+            }
+
+            [$items, $total] = $this->collectKebunSaldoItems($unit->id, $year, $month);
+            if (empty($items)) {
+                continue;
+            }
+
+            $recipients = User::with('role')
+                ->where('company_id', $companyId)
+                ->where('plantation_unit_id', $unit->id)
+                ->whereHas('role', fn ($q) => $q->whereIn('code', [Role::KERANI, Role::ASISTEN_KEBUN]))
+                ->where('is_active', true)
+                ->get();
+
+            $this->send($companyId, NotificationTemplate::EVENT_CLOSING_REMINDER_KERANI, $recipients, [
+                'bulan_berjalan' => $this->formatPeriodRaw($month, $year),
+                'unit_kebun'     => $unit->name,
+                'nomor_pdo'      => $pdo->pdo_number,
+                'daftar_item'    => $this->formatItemList($items),
+                'total_saldo'    => $this->formatRupiah($total),
+            ]);
+
+            $summary[] = ['unit' => $unit->code, 'recipients' => $recipients->count(), 'total_saldo' => $total];
+        }
+
+        return $summary;
+    }
+
+    /**
+     * Kirim reminder rekap saldo Kas Kebun seluruh unit (dikelompokkan per
+     * kebun) ke Manajer Keuangan, Direktur Keuangan, dan Staff Keuangan.
+     * 1 pesan gabungan untuk semua penerima level keuangan ini.
+     *
+     * @return array{recipients: int, total_saldo: int}|array{}
+     */
+    public function sendClosingReminderKeuangan(string $companyId, int $year, int $month): array
+    {
+        $units = PlantationUnit::where('company_id', $companyId)
+            ->where('is_active', true)
+            ->orderBy('code')
+            ->get();
+
+        $blocks     = [];
+        $grandTotal = 0;
+        $hasAnyPdo  = false;
+
+        foreach ($units as $unit) {
+            $pdo = $this->finalPdoForUnit($companyId, $unit->id, $year, $month);
+            if (! $pdo) {
+                continue;
+            }
+            $hasAnyPdo = true;
+
+            [$items, $total] = $this->collectKebunSaldoItems($unit->id, $year, $month);
+            $grandTotal += $total;
+
+            $blocks[] = "*{$unit->name} ({$unit->code})*\n"
+                . (empty($items) ? 'Tidak ada saldo tersisa' : $this->formatItemList($items) . "\nSubtotal: " . $this->formatRupiah($total));
+        }
+
+        if (! $hasAnyPdo) {
+            return [];
+        }
+
+        $recipients = User::with('role')
+            ->where('company_id', $companyId)
+            ->whereHas('role', fn ($q) => $q->whereIn('code', [Role::MANAJER_KEUANGAN, Role::DIREKTUR_KEUANGAN, Role::STAFF_KEUANGAN]))
+            ->where('is_active', true)
+            ->get();
+
+        $this->send($companyId, NotificationTemplate::EVENT_CLOSING_REMINDER_KEUANGAN, $recipients, [
+            'bulan_berjalan' => $this->formatPeriodRaw($month, $year),
+            'daftar_kebun'   => implode("\n\n", $blocks),
+            'total_saldo'    => $this->formatRupiah($grandTotal),
+        ]);
+
+        return ['recipients' => $recipients->count(), 'total_saldo' => $grandTotal];
+    }
+
+    private function finalPdoForUnit(string $companyId, string $unitId, int $year, int $month): ?PdoHeader
+    {
+        return PdoHeader::withoutGlobalScopes()
+            ->where('company_id', $companyId)
+            ->where('plantation_unit_id', $unitId)
+            ->where('period_year', $year)
+            ->where('period_month', $month)
+            ->where('status', PdoHeader::STATUS_FINAL)
+            ->first();
+    }
+
+    /**
+     * Item Kas Kebun (kantong=kebun) dengan saldo tersisa (transfer > realisasi,
+     * saldo > 0) untuk unit+periode tertentu, via RecapQueryService supaya
+     * konsisten dengan angka yang tampil di halaman Rekap Buku Kas.
+     *
+     * @return array{0: array<int, array{name: string, saldo: int}>, 1: int}
+     */
+    private function collectKebunSaldoItems(string $unitId, int $year, int $month): array
+    {
+        $recap = $this->recapQueryService->getRecapData([
+            'period_year'  => $year,
+            'period_month' => $month,
+            'unit_id'      => $unitId,
+            'category_id'  => null,
+            'start_date'   => null,
+            'end_date'     => null,
+            'kantong'      => 'kebun',
+        ]);
+
+        $items = [];
+        $total = 0;
+        foreach ($recap['categories'] as $category) {
+            foreach ($category['subcategories'] as $subcategory) {
+                foreach ($subcategory['items'] as $item) {
+                    if ($item['saldo'] <= 0) {
+                        continue;
+                    }
+                    $items[] = ['name' => $item['item_name'], 'saldo' => $item['saldo']];
+                    $total  += $item['saldo'];
+                }
+            }
+        }
+
+        return [$items, $total];
+    }
+
+    private function formatItemList(array $items): string
+    {
+        $lines = [];
+        foreach ($items as $i => $item) {
+            $lines[] = ($i + 1) . '. ' . $item['name'] . ' — ' . $this->formatRupiah($item['saldo']);
+        }
+        return implode("\n", $lines);
+    }
+
+    private function formatRupiah(int $amount): string
+    {
+        return 'Rp ' . number_format($amount, 0, ',', '.');
     }
 
     // ─────────────────────────────────────────────────────

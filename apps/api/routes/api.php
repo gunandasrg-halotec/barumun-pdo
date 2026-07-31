@@ -168,6 +168,8 @@ Route::prefix('v1')->middleware(['auth:sanctum', 'ensure.unit.access'])->group(f
     Route::get('settings', [SystemSettingController::class, 'index']);
     Route::put('settings', [SystemSettingController::class, 'update']);
     Route::post('settings/wa-test', [SystemSettingController::class, 'testWhatsApp']);
+    Route::post('settings/closing-reminder/kerani', [SystemSettingController::class, 'sendClosingReminderKerani']);
+    Route::post('settings/closing-reminder/keuangan', [SystemSettingController::class, 'sendClosingReminderKeuangan']);
 
     Route::get('notification-templates', [SystemSettingController::class, 'templates']);
     Route::put('notification-templates/{template}', [SystemSettingController::class, 'updateTemplate']);

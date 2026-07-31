@@ -5,13 +5,17 @@ namespace App\Http\Controllers\Settings;
 use App\Http\Controllers\Controller;
 use App\Models\NotificationTemplate;
 use App\Models\Role;
+use App\Services\Notification\WhatsAppNotificationService;
 use App\Services\Settings\SystemSettingService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 
 class SystemSettingController extends Controller
 {
-    public function __construct(private readonly SystemSettingService $service) {}
+    public function __construct(
+        private readonly SystemSettingService $service,
+        private readonly WhatsAppNotificationService $whatsAppService,
+    ) {}
 
     /** GET /settings */
     public function index(Request $request): JsonResponse
@@ -72,6 +76,40 @@ class SystemSettingController extends Controller
         $updated = $this->service->updateTemplate($template, $data, $request->user());
 
         return response()->json(['success' => true, 'data' => $updated, 'message' => 'Template notifikasi berhasil diperbarui.']);
+    }
+
+    /** POST /settings/closing-reminder/kerani */
+    public function sendClosingReminderKerani(Request $request): JsonResponse
+    {
+        $this->requireAdmin($request);
+
+        $now     = now();
+        $summary = $this->whatsAppService->sendClosingReminderKerani($request->user()->company_id, $now->year, $now->month);
+
+        return response()->json([
+            'success' => true,
+            'data'    => $summary,
+            'message' => empty($summary)
+                ? 'Tidak ada unit dengan saldo Kas Kebun tersisa untuk periode ini.'
+                : 'Reminder berhasil dikirim ke ' . count($summary) . ' unit kebun.',
+        ]);
+    }
+
+    /** POST /settings/closing-reminder/keuangan */
+    public function sendClosingReminderKeuangan(Request $request): JsonResponse
+    {
+        $this->requireAdmin($request);
+
+        $now    = now();
+        $result = $this->whatsAppService->sendClosingReminderKeuangan($request->user()->company_id, $now->year, $now->month);
+
+        return response()->json([
+            'success' => true,
+            'data'    => $result,
+            'message' => empty($result)
+                ? 'Tidak ada PDO final periode ini untuk direkap.'
+                : 'Reminder berhasil dikirim ke ' . ($result['recipients'] ?? 0) . ' penerima.',
+        ]);
     }
 
     private function requireAdmin(Request $request): void
