@@ -113,9 +113,18 @@ export function PdoDetailPage() {
   )
   if (!pdo) return <div className="text-muted text-sm">PDO tidak ditemukan.</div>
 
+  // Item potongan (mis. POTONGAN PANJAR) tidak pernah punya entri realisasi —
+  // nilainya direpresentasikan sebagai TransferEntry NEGATIF. Menjumlah
+  // total_realized polos akan melebih-lebihkan realisasi dan membuat Saldo tampak
+  // minus. Realisasi item potongan karena itu dianggap SAMA DENGAN transfernya,
+  // sehingga saldo baris tsb 0 secara alami — aturan yang sama dipakai backend di
+  // RecapQueryService::resolveRealization().
+  const realizedOf = (d: PdoDetail) =>
+    d.expense_item?.is_deduction ? (d.total_transferred ?? 0) : (d.total_realized ?? 0)
+
   const totalAmount  = allDetails.reduce((s, d) => s + (d.expense_item?.is_deduction ? -d.amount : d.amount), 0)
   const totalTransf  = allDetails.reduce((s, d) => s + (d.total_transferred ?? 0), 0)
-  const totalReal    = allDetails.reduce((s, d) => s + (d.total_realized ?? 0), 0)
+  const totalReal    = allDetails.reduce((s, d) => s + realizedOf(d), 0)
   const saldo        = totalTransf - totalReal
 
   const hasActiveFilter = !!itemSearch || filterAutoExternal || filterZeroAmount
@@ -349,9 +358,9 @@ export function PdoDetailPage() {
                                       <td className="px-3 py-2.5 text-sm">{d.rate ? fmt(d.rate) : '—'}</td>
                                       <td className="px-3 py-2.5 text-sm font-bold">{fmt(d.amount)}</td>
                                       <td className="px-3 py-2.5 text-sm">{fmt(d.total_transferred ?? 0)}</td>
-                                      <td className="px-3 py-2.5 text-sm">{fmt(d.total_realized ?? 0)}</td>
+                                      <td className="px-3 py-2.5 text-sm">{fmt(realizedOf(d))}</td>
                                       <td className="px-3 py-2.5 text-sm font-bold text-green">
-                                        {fmt((d.total_transferred ?? 0) - (d.total_realized ?? 0))}
+                                        {fmt((d.total_transferred ?? 0) - realizedOf(d))}
                                       </td>
                                       <td className="px-3 py-2.5">
                                         <AttachmentBadge detailId={d.id} onClick={() => toggleAttachment(d.id)} />
@@ -446,9 +455,9 @@ export function PdoDetailPage() {
                                 <td className="px-3 py-2.5 text-sm">{d.rate ? fmt(d.rate) : '—'}</td>
                                 <td className="px-3 py-2.5 text-sm font-bold">{fmt(d.amount)}</td>
                                 <td className="px-3 py-2.5 text-sm">{fmt(d.total_transferred ?? 0)}</td>
-                                <td className="px-3 py-2.5 text-sm">{fmt(d.total_realized ?? 0)}</td>
+                                <td className="px-3 py-2.5 text-sm">{fmt(realizedOf(d))}</td>
                                 <td className="px-3 py-2.5 text-sm font-bold text-green">
-                                  {fmt((d.total_transferred ?? 0) - (d.total_realized ?? 0))}
+                                  {fmt((d.total_transferred ?? 0) - realizedOf(d))}
                                 </td>
                                 <td className="px-3 py-2.5">
                                   <AttachmentBadge detailId={d.id} onClick={() => toggleAttachment(d.id)} />
