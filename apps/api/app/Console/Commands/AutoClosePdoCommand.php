@@ -9,7 +9,7 @@ use Illuminate\Support\Facades\Log;
 class AutoClosePdoCommand extends Command
 {
     protected $signature   = 'pdo:auto-close';
-    protected $description = 'Tutup otomatis semua PDO final yang periodenya berakhir hari ini (BR-CLOSE-001)';
+    protected $description = 'Tutup otomatis semua PDO final periode bulan lalu — dijalankan tiap tanggal 1 pukul 01:00 WIB (BR-CLOSE-001)';
 
     public function __construct(private readonly PdoCloseService $closeService)
     {

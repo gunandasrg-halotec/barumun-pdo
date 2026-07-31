@@ -86,35 +86,45 @@ class PdoCloseService
     }
 
     /**
-     * Tutup semua PDO final yang periode-nya berakhir hari ini.
-     * Dipanggil oleh Artisan command pdo:auto-close.
-     * BR-CLOSE-001
+     * Tutup semua PDO final milik periode BULAN LALU.
+     * Dipanggil oleh Artisan command pdo:auto-close, dijadwalkan setiap
+     * tanggal 1 pukul 01:00 WIB (lihat bootstrap/app.php).
+     *
+     * BR-CLOSE-001. Penutupan sengaja dilakukan di awal bulan berikutnya
+     * (bukan di detik-detik akhir bulan berjalan) supaya kerani punya
+     * kelonggaran waktu memasukkan realisasi terakhir sampai hari terakhir
+     * bulan itu benar-benar habis.
      */
     public function closeAutomatic(): int
     {
-        $today = Carbon::now('Asia/Jakarta');
+        $now = Carbon::now('Asia/Jakarta');
 
-        // BR-CLOSE-001: jalankan hanya pada hari terakhir bulan
-        $lastDayOfMonth = $today->copy()->endOfMonth()->day;
-        if ($today->day !== $lastDayOfMonth) {
-            Log::info('[AutoClose] Bukan hari terakhir bulan, tidak ada PDO yang ditutup.');
+        // Jalankan hanya pada tanggal 1 — pengaman bila scheduler terlambat
+        // atau command dipanggil manual di hari lain.
+        if ($now->day !== 1) {
+            Log::info('[AutoClose] Bukan tanggal 1, tidak ada PDO yang ditutup.');
             return 0;
         }
 
+        // Target = periode bulan sebelumnya (mis. dijalankan 1 Agustus → tutup Juli).
+        $target = $now->copy()->subMonthNoOverflow();
+
         $pdos = PdoHeader::where('status', PdoHeader::STATUS_FINAL)
-            ->where('period_year', $today->year)
-            ->where('period_month', $today->month)
+            ->where('period_year', $target->year)
+            ->where('period_month', $target->month)
             ->get();
+
+        Log::info("[AutoClose] Target periode {$target->month}/{$target->year}: {$pdos->count()} PDO final ditemukan.");
 
         $closedCount = 0;
 
         foreach ($pdos as $pdo) {
             try {
-                DB::transaction(function () use ($pdo, $today) {
+                DB::transaction(function () use ($pdo, $now) {
                     $pdo->update([
                         'status'        => PdoHeader::STATUS_CLOSED,
                         'closed_by'     => null,
-                        'closed_at'     => $today,
+                        'closed_at'     => $now,
                         'closure_type'  => 'system',
                         'closure_notes' => null,
                     ]);
@@ -128,7 +138,7 @@ class PdoCloseService
                         oldValues: ['status' => 'final'],
                         newValues: [
                             'closure_type' => 'system',
-                            'closed_at'    => $today->toIso8601String(),
+                            'closed_at'    => $now->toIso8601String(),
                         ],
                     );
                 });

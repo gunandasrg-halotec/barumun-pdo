@@ -17,9 +17,12 @@ return Application::configure(basePath: dirname(__DIR__))
         health: '/up',
     )
     ->withSchedule(function (\Illuminate\Console\Scheduling\Schedule $schedule) {
-        // BR-CLOSE-001: auto-close PDO setiap malam pukul 23:55 WIB
+        // BR-CLOSE-001: auto-close PDO setiap tanggal 1 pukul 01:00 WIB,
+        // menutup PDO periode BULAN SEBELUMNYA. Dijalankan di awal bulan
+        // berikutnya (bukan 23:55 hari terakhir) supaya kerani punya waktu
+        // sampai bulan berjalan benar-benar habis untuk melengkapi realisasi.
         $schedule->command(AutoClosePdoCommand::class)
-            ->dailyAt('23:55')
+            ->monthlyOn(1, '01:00')
             ->timezone('Asia/Jakarta')
             ->onOneServer();
     })
