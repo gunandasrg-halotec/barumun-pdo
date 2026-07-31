@@ -110,7 +110,7 @@ export function PdoSupplementaryDetailPage() {
   if (isLoading) return <div className="text-muted text-sm">Memuat...</div>
   if (!supp)     return <div className="text-muted text-sm">PDO Tambahan tidak ditemukan.</div>
 
-  const totalAmount = details?.reduce((s, d) => s + d.amount, 0) ?? 0
+  const totalAmount = details?.reduce((s, d) => s + (d.expense_item?.is_deduction ? -d.amount : d.amount), 0) ?? 0
   const userCanApprove = role ? canApprove(role) : false
 
   return (

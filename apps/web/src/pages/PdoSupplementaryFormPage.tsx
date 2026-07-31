@@ -66,7 +66,13 @@ export function PdoSupplementaryFormPage() {
 
   const { fields, append, remove } = useFieldArray({ control, name: 'details' })
   const detailValues = watch('details')
-  const totalAmount  = detailValues?.reduce((s, d) => s + (Number(d.amount) || 0), 0) ?? 0
+
+  // Item potongan MENGURANGI total — konsisten dengan PdoFormPage & backend.
+  const totalAmount = detailValues?.reduce((s, d) => {
+    const amount = Number(d.amount) || 0
+    const item   = items?.find((i) => i.id === d.expense_item_id)
+    return s + (item?.is_deduction ? -amount : amount)
+  }, 0) ?? 0
 
   // Tracks detail IDs that existed on the server when the form loaded, so we can
   // detect which ones were removed in this edit session and issue DELETE for them.

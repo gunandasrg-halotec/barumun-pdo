@@ -361,6 +361,7 @@ export interface PdoSupplementaryDetail {
   expense_item_id: string
   expense_item?: {
     id: string; name: string; code: string
+    is_deduction?: boolean
     subcategory?: {
       id: string; name: string; code: string
       category?: { id: string; name: string; code: string }

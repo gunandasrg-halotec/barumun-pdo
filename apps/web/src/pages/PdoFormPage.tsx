@@ -134,7 +134,18 @@ export function PdoFormPage() {
   }, [latestFinalPdo, isEdit, setValue])
 
   const detailValues = watch('details')
-  const totalAmount  = detailValues?.reduce((sum, d) => sum + (Number(d.amount) || 0), 0) ?? 0
+
+  // Item potongan (mis. POTONGAN PANJAR) MENGURANGI total pengajuan — konsisten
+  // dengan grand_total_amount di backend (PdoService::syncGrandTotal) yang dipakai
+  // halaman Daftar PDO & Detail PDO. Tanpa ini, total di halaman edit overstate
+  // sebesar 2x nilai potongan.
+  const signedAmount = (detail: { expense_item_id?: string; amount?: unknown } | undefined) => {
+    const amount = Number(detail?.amount) || 0
+    const item   = items?.find((i) => i.id === detail?.expense_item_id)
+    return item?.is_deduction ? -amount : amount
+  }
+
+  const totalAmount = detailValues?.reduce((sum, d) => sum + signedAmount(d), 0) ?? 0
 
   const resolveRowSelection = (itemId: string): RowSelection => {
     const item = items?.find((i) => i.id === itemId)
@@ -891,7 +902,7 @@ export function PdoFormPage() {
 
                   const catTotal     = sortedSubs.reduce(
                     (s, sg) => s + sg.items.reduce(
-                      (ss, { idx }) => ss + (Number(detailValues?.[idx]?.amount) || 0),
+                      (ss, { idx }) => ss + signedAmount(detailValues?.[idx]),
                       0
                     ),
                     0
@@ -915,7 +926,7 @@ export function PdoFormPage() {
                       {!catCollapsed && sortedSubs.map((sg) => {
                         const subCollapsed = collapsedGroups.has(`sub_${cg.catKey}_${sg.subKey}`)
                         const subTotal     = sg.items.reduce(
-                          (s, { idx }) => s + (Number(detailValues?.[idx]?.amount) || 0),
+                          (s, { idx }) => s + signedAmount(detailValues?.[idx]),
                           0
                         )
 
