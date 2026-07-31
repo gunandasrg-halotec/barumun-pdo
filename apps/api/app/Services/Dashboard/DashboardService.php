@@ -202,7 +202,36 @@ class DashboardService
               {$unitClause}
             GROUP BY pu.id
         ", $params);
-        $pribadiRealizedByUnit = collect($unitPribadiRealizedRows)->pluck('total_realized', 'unit_id');
+        $pribadiRealizedRawByUnit = collect($unitPribadiRealizedRows)->pluck('total_realized', 'unit_id');
+
+        // Potongan Panjar yang didanai kantong Pribadi/Vendor — sama seperti di kantong
+        // kebun, ini direpresentasikan sebagai TransferEntry NEGATIF (bukan
+        // RealizationEntry), jadi tidak pernah ikut ter-SUM di query realisasi di atas.
+        // Tanpa netting ini, saldo Pribadi/Vendor understate sebesar nilai potongan
+        // (mis. BN: -1.200.000) dan tidak konsisten dengan saldo_pribadi di Rekap
+        // Buku Kas — lihat RecapQueryService::resolveRealization().
+        $unitPribadiDeductionRows = DB::select("
+            SELECT
+                pu.id AS unit_id,
+                COALESCE(SUM(te.amount), 0) AS total_deduction
+            FROM pdo_headers ph
+            LEFT JOIN plantation_units pu ON pu.id = ph.plantation_unit_id
+            LEFT JOIN pdo_details pd   ON pd.pdo_header_id = ph.id
+            LEFT JOIN expense_items ei ON ei.id = pd.expense_item_id
+            LEFT JOIN transfer_entries te ON te.pdo_detail_id = pd.id
+                AND te.status = 'committed'
+                AND te.transfer_destination IN ('pribadi', 'vendor')
+            WHERE ph.company_id = ?
+              AND ph.period_month = ?
+              AND ph.period_year  = ?
+              AND ei.is_deduction = TRUE
+              {$unitClause}
+            GROUP BY pu.id
+        ", $params);
+        $pribadiDeductionByUnit = collect($unitPribadiDeductionRows)->pluck('total_deduction', 'unit_id');
+
+        $pribadiRealizedByUnit = $pribadiRealizedRawByUnit->keys()->merge($pribadiDeductionByUnit->keys())->unique()
+            ->mapWithKeys(fn ($id) => [$id => (int) ($pribadiRealizedRawByUnit[$id] ?? 0) + (int) ($pribadiDeductionByUnit[$id] ?? 0)]);
 
         // Transfer per unit per destination
         $unitDestRows = DB::select("
