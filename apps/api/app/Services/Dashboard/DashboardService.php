@@ -9,7 +9,13 @@ use Illuminate\Support\Facades\DB;
 
 class DashboardService
 {
-    public function __construct(private readonly CashBookQueryService $cashBookQueryService) {}
+    /** Lazy resolve — lihat catatan pola yang sama di WhatsAppNotificationService. */
+    private ?CashBookQueryService $cashBookQueryService = null;
+
+    private function cashBook(): CashBookQueryService
+    {
+        return $this->cashBookQueryService ??= app(CashBookQueryService::class);
+    }
 
     public function summary(User $user, array $filters = []): array
     {
@@ -272,7 +278,7 @@ class DashboardService
             // Saldo Kas Kebun dihitung KUMULATIF (termasuk saldo awal per unit),
             // bukan hanya transfer-realisasi bulan ini — lihat UnitOpeningBalance
             // & CashBookQueryService::closingBalanceForPeriod().
-            $kebunClosingBalance = $this->cashBookQueryService->closingBalanceForPeriod($r->unit_id, (int) $year, (int) $month);
+            $kebunClosingBalance = $this->cashBook()->closingBalanceForPeriod($r->unit_id, (int) $year, (int) $month);
 
             // Pribadi/Vendor tetap per-periode (tidak membawa saldo lintas bulan).
             $pribadiRealized = (int) ($pribadiRealizedByUnit[$r->unit_id] ?? 0);

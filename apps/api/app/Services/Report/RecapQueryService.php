@@ -6,7 +6,13 @@ use Illuminate\Support\Facades\DB;
 
 class RecapQueryService
 {
-    public function __construct(private readonly CashBookQueryService $cashBookQueryService) {}
+    /** Lazy resolve — lihat catatan pola yang sama di WhatsAppNotificationService. */
+    private ?CashBookQueryService $cashBookQueryService = null;
+
+    private function cashBook(): CashBookQueryService
+    {
+        return $this->cashBookQueryService ??= app(CashBookQueryService::class);
+    }
 
     public function getRecapData(array $filters): array
     {
@@ -48,7 +54,7 @@ class RecapQueryService
 
         // Saldo awal kas kebun di AWAL periode PDO ini — KPI tetap, tidak
         // terpengaruh $startDate/$endDate (yang hanya memfilter baris tabel).
-        $saldoAwal = $unitId ? $this->cashBookQueryService->openingBalanceForPeriod($unitId, (int) $year, (int) $month) : 0;
+        $saldoAwal = $unitId ? $this->cashBook()->openingBalanceForPeriod($unitId, (int) $year, (int) $month) : 0;
 
         return $this->buildHierarchy($rows, $transferKebun, $transferPribadi, $realisasiKebun, $realisasiPribadi, $kantong, $saldoAwal);
     }

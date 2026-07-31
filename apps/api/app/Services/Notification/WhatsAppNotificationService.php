@@ -16,7 +16,18 @@ use Illuminate\Support\Facades\Log;
 
 class WhatsAppNotificationService
 {
-    public function __construct(private readonly RecapQueryService $recapQueryService) {}
+    /**
+     * Dependency di-resolve LAZY (bukan constructor wajib) karena service ini
+     * dipakai sebagai default parameter `= new WhatsAppNotificationService()` di
+     * beberapa service/controller lain — konstruktor berargumen wajib akan
+     * memicu ArgumentCountError di semua pemanggil tersebut.
+     */
+    private ?RecapQueryService $recapQueryService = null;
+
+    private function recap(): RecapQueryService
+    {
+        return $this->recapQueryService ??= app(RecapQueryService::class);
+    }
 
     // ─────────────────────────────────────────────────────
     // PUBLIC NOTIFICATION METHODS
@@ -489,7 +500,7 @@ class WhatsAppNotificationService
      */
     private function collectKebunSaldoItems(string $unitId, int $year, int $month): array
     {
-        $recap = $this->recapQueryService->getRecapData([
+        $recap = $this->recap()->getRecapData([
             'period_year'  => $year,
             'period_month' => $month,
             'unit_id'      => $unitId,
