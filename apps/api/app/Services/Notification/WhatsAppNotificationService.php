@@ -500,7 +500,6 @@ class WhatsAppNotificationService
         ]);
 
         $items = [];
-        $total = 0;
         foreach ($recap['categories'] as $category) {
             foreach ($category['subcategories'] as $subcategory) {
                 foreach ($subcategory['items'] as $item) {
@@ -511,10 +510,15 @@ class WhatsAppNotificationService
                     // dengan nama sama di sub-kategori berbeda (mis. "GAJI").
                     $fullName = implode(' — ', [$category['category_name'], $subcategory['subcategory_name'], $item['item_name']]);
                     $items[]  = ['name' => $fullName, 'saldo' => $item['saldo']];
-                    $total   += $item['saldo'];
                 }
             }
         }
+
+        // Total HARUS = saldo_kebun dari RecapQueryService (net SEMUA item, termasuk
+        // yang saldo-nya negatif/overbudget) supaya konsisten dengan KPI "Saldo Kas
+        // Kebun" di halaman Rekap. Menjumlahkan hanya item yang ditampilkan (saldo>0)
+        // akan overstate total karena mengabaikan item overbudget yang mengurangi saldo.
+        $total = (int) $recap['saldo_kebun'];
 
         return [$items, $total];
     }
