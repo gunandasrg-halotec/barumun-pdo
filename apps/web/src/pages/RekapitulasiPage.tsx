@@ -911,7 +911,7 @@ export function RekapitulasiPage() {
         open={!!detailItem}
         onClose={() => setDetailItem(null)}
         title={`Detail Realisasi — ${detailItem?.itemName ?? ''}`}
-        width="w-[820px]"
+        width="w-[980px]"
       >
         {detailFetching ? (
           <div className="space-y-3 py-2">
@@ -927,7 +927,7 @@ export function RekapitulasiPage() {
               <table className="w-full border-collapse text-sm">
                 <thead>
                   <tr>
-                    {['No. Ref', 'Tanggal', 'Jumlah', 'Metode', 'Sumber Dana', 'Dicatat Oleh', ''].map((h) => (
+                    {['No. Ref', 'Tanggal', 'Jumlah', 'Metode', 'Sumber Dana', 'Dicatat Oleh', 'Penjelasan', ''].map((h) => (
                       <th key={h} className="px-3 py-2 text-left text-[11px] font-bold uppercase tracking-wider bg-[#f7faf7] border border-line">
                         {h}
                       </th>
@@ -943,6 +943,7 @@ export function RekapitulasiPage() {
                       <td className="px-3 py-2">{PAYMENT_LABEL[r.payment_method]}</td>
                       <td className="px-3 py-2">{FUNDING_LABEL[r.funding_source] ?? r.funding_source}</td>
                       <td className="px-3 py-2">{r.recorder?.full_name ?? '—'}</td>
+                      <td className="px-3 py-2 whitespace-pre-line">{r.explanation?.trim() || '—'}</td>
                       <td className="px-3 py-2">
                         {canEditRealization && r.pdo_detail?.pdo_header?.status !== 'closed' && (
                           <button
