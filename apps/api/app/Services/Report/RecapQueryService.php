@@ -172,7 +172,10 @@ class RecapQueryService
               AND ph.plantation_unit_id = :unit_id
               AND ec.include_in_recap = TRUE
               {$categoryFilterSql}
-            ORDER BY ec.display_order, es.display_order, ei.id
+            -- Mengikuti urutan Master Data: kategori & sub-kategori pakai display_order
+            -- lalu code, item pakai code. Sebelumnya kunci ketiga adalah ei.id (UUID),
+            -- sehingga urutan item di dalam sub-kategori praktis acak.
+            ORDER BY ec.display_order, ec.code, es.display_order, es.code, ei.code
         ", [
             'start_date'   => $startDate,
             'start_date2'  => $startDate,

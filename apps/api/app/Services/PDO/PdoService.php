@@ -149,10 +149,39 @@ class PdoService
             $grouped[$catKey]['subtotal_amount']                           += $signedAmount;
         }
 
-        // Re-index dan urutkan by display_order
+        // Urutan mengikuti Master Data: kategori & sub-kategori pakai display_order
+        // lalu code, item pakai code — lihat MasterDataService::listCategories()
+        // (baris 36-37), listSubcategories() (140-141), dan listItems() (237).
+        //
+        // Sebelumnya sub-kategori tidak diurutkan sama sekali (hanya array_values,
+        // jadi mengikuti urutan kemunculan pertama) dan item mengikuti
+        // pdo_details.display_order — yaitu urutan kerani memasukkan baris, bukan
+        // urutan master data. Akibatnya Excel unduhan tidak sinkron dengan Master Data.
+        //
+        // Kunci komposit dipakai (bukan sortBy multi-kolom) karena pada bentuk array
+        // Laravel memperlakukan closure sebagai comparator ($a,$b), bukan pengambil
+        // kunci. display_order di-pad supaya urutannya tetap numerik saat dibandingkan
+        // sebagai string.
+        $orderKey = fn (?array $meta) => sprintf(
+            '%06d|%s',
+            $meta['display_order'] ?? 999999,
+            $meta['code'] ?? '',
+        );
+
+        $sortDetails = fn (array $details) => collect($details)
+            ->sortBy(fn ($d) => $d->expenseItem?->code ?? '')
+            ->values()
+            ->all();
+
         $categoriesArray = collect(array_values($grouped))
-            ->map(fn ($c) => array_merge($c, ['subcategories' => array_values($c['subcategories'])]))
-            ->sortBy(fn ($c) => $c['category']['display_order'] ?? 999)
+            ->map(fn ($c) => array_merge($c, [
+                'subcategories' => collect(array_values($c['subcategories']))
+                    ->sortBy(fn ($s) => $orderKey($s['subcategory']))
+                    ->map(fn ($s) => array_merge($s, ['details' => $sortDetails($s['details'])]))
+                    ->values()
+                    ->all(),
+            ]))
+            ->sortBy(fn ($c) => $orderKey($c['category']))
             ->values()
             ->all();
 
@@ -173,8 +202,10 @@ class PdoService
             $suppGroups[$suppId]['subtotal_amount'] += $signedAmount;
         }
 
-        // Sort supplementary groups by merged_at ascending
+        // Grup PDO Tambahan tetap kronologis (merged_at), tapi item di dalam tiap grup
+        // ikut diurutkan berdasarkan kode item — sebelumnya masih urutan input kerani.
         $supplementaryGroups = collect(array_values($suppGroups))
+            ->map(fn ($g) => array_merge($g, ['details' => $sortDetails($g['details'])]))
             ->sortBy(fn ($g) => $g['supplementary']['merged_at'] ?? '')
             ->values()
             ->all();
