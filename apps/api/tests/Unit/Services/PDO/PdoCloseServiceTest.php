@@ -108,6 +108,35 @@ class PdoCloseServiceTest extends TestCase
         ]);
     }
 
+    /**
+     * Regresi: dulu ada batas "tanggal penutupan <= akhir bulan periode PDO" yang
+     * bertabrakan dengan aturan ">= hari ini". Begitu bulan periode terlewat,
+     * rentang sah jadi himpunan kosong dan PDO mustahil ditutup manual.
+     */
+    public function test_manual_close_allowed_after_pdo_period_has_ended(): void
+    {
+        // PDO periode bulan lalu, ditutup hari ini (sesudah periodenya berakhir)
+        $lastMonth = Carbon::today()->startOfMonth()->subMonthNoOverflow();
+
+        $oldPdo = PdoHeader::factory()->create([
+            'status'       => PdoHeader::STATUS_FINAL,
+            'period_year'  => $lastMonth->year,
+            'period_month' => $lastMonth->month,
+        ]);
+
+        $this->service->closeManual($oldPdo->id, $this->manajer, [
+            'closed_date'   => Carbon::today()->toDateString(),
+            'closure_notes' => 'Ditutup setelah periode berakhir.',
+        ]);
+
+        $this->assertDatabaseHas('pdo_headers', [
+            'id'           => $oldPdo->id,
+            'status'       => PdoHeader::STATUS_CLOSED,
+            'closure_type' => 'manual',
+            'closed_by'    => $this->manajer->id,
+        ]);
+    }
+
     // ── BR-CLOSE-001: Auto close ──────────────────────────────────────────────
 
     /** Tanggal 1 bulan berikutnya — saat job dijadwalkan berjalan. */

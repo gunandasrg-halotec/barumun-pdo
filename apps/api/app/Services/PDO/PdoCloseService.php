@@ -33,20 +33,21 @@ class PdoCloseService
             throw new PdoNotFinalException($pdo->status);
         }
 
-        // BR-CLOSE-002: validasi tanggal — >= hari ini && <= hari terakhir bulan periode
-        $closedDate  = Carbon::parse($data['closed_date']);
-        $today       = Carbon::today();
-        $lastDayOfPeriod = Carbon::create($pdo->period_year, $pdo->period_month)->endOfMonth()->startOfDay();
+        // BR-CLOSE-002: tanggal penutupan tidak boleh mundur ke belakang.
+        //
+        // Batas "tidak boleh melewati akhir bulan periode PDO" sengaja DIHAPUS: ia
+        // bertentangan dengan aturan ">= hari ini" begitu bulan periode terlewat,
+        // sehingga rentang yang sah menjadi himpunan kosong dan PDO mustahil ditutup
+        // manual. Contoh: menutup PDO Juli pada 3 Agustus butuh tanggal >= 3 Agustus
+        // sekaligus <= 31 Juli. Penutupan memang lazim terjadi setelah periodenya
+        // berakhir — job auto-close pun mencatat waktu jalannya (tanggal 1 bulan
+        // berikutnya), yang juga melanggar batas lama tersebut.
+        $closedDate = Carbon::parse($data['closed_date']);
+        $today      = Carbon::today();
 
         if ($closedDate->lt($today)) {
             throw ValidationException::withMessages([
                 'closed_date' => ['Tanggal penutupan tidak boleh sebelum hari ini.'],
-            ]);
-        }
-
-        if ($closedDate->gt($lastDayOfPeriod)) {
-            throw ValidationException::withMessages([
-                'closed_date' => ['Tanggal penutupan tidak boleh melebihi akhir bulan periode PDO.'],
             ]);
         }
 
