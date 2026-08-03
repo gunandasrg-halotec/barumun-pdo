@@ -7,6 +7,7 @@ import { useToastStore } from '@/store/toast.store'
 import { useAuthStore } from '@/store/auth.store'
 import { fmt } from '@/lib/format'
 import { isDirekturKeuangan } from '@/lib/auth'
+import { buildTransferDetailGroups, type TransferCategoryGroup } from '@/lib/transferDetailGroups'
 import { ArrowLeft, ChevronDown, ChevronUp, Download, GitBranch, Search, X } from 'lucide-react'
 import { DateRangePickerButton } from '@/components/ui/DateRangePickerButton'
 import type { ApiResponse, RoleCode } from '@/types'
@@ -34,7 +35,12 @@ interface ExpenseItemInfo {
   split_transfer_plantation_unit_ids: string[] | null
 }
 
-interface CategoryInfo { code: string; name: string }
+interface CategoryInfo {
+  id?: string
+  code: string
+  name: string
+  display_order?: number
+}
 
 type DestBreakdown = Record<TransferDest, number>
 
@@ -95,6 +101,7 @@ const DEST_LABELS: Record<TransferDest, string> = {
 const DEST_OPTIONS: TransferDest[] = ['rek_kebun', 'pribadi', 'vendor']
 
 const today = new Date().toISOString().split('T')[0]
+const collapseStateKey = (pdoId: string) => `transfer-bulk-groups:${pdoId}`
 
 const MONTH_NAMES = ['Januari','Februari','Maret','April','Mei','Juni','Juli','Agustus','September','Oktober','November','Desember']
 
@@ -425,6 +432,8 @@ export function TransferBulkPage() {
   const canCommit    = !!role && isDirekturKeuangan(role)
   const [rows, setRows]           = useState<RowState[]>([])
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set())
+  const [collapsedCategories, setCollapsedCategories] = useState<Set<string>>(new Set())
+  const [collapsedSubcategories, setCollapsedSubcategories] = useState<Set<string>>(new Set())
 
   // ── Filter & search state ────────────────────────────────────────────────────
   const [searchName,     setSearchName]     = useState('')
@@ -465,6 +474,32 @@ export function TransferBulkPage() {
   useEffect(() => {
     hasSavedRef.current = false
   }, [pdoId])
+
+  useEffect(() => {
+    if (!pdoId || typeof window === 'undefined') return
+    try {
+      const raw = window.sessionStorage.getItem(collapseStateKey(pdoId))
+      if (!raw) {
+        setCollapsedCategories(new Set())
+        setCollapsedSubcategories(new Set())
+        return
+      }
+      const parsed = JSON.parse(raw) as { categories?: string[]; subcategories?: string[] }
+      setCollapsedCategories(new Set(parsed.categories ?? []))
+      setCollapsedSubcategories(new Set(parsed.subcategories ?? []))
+    } catch {
+      setCollapsedCategories(new Set())
+      setCollapsedSubcategories(new Set())
+    }
+  }, [pdoId])
+
+  useEffect(() => {
+    if (!pdoId || typeof window === 'undefined') return
+    window.sessionStorage.setItem(collapseStateKey(pdoId), JSON.stringify({
+      categories: [...collapsedCategories],
+      subcategories: [...collapsedSubcategories],
+    }))
+  }, [pdoId, collapsedCategories, collapsedSubcategories])
 
   useEffect(() => {
     if (!summary?.details) return
@@ -698,6 +733,7 @@ export function TransferBulkPage() {
   // untuk RENDER; `rows`/`details` sendiri tetap dalam urutan asli.
   const rowsByDetailId = useMemo(() => new Map(rows.map((r) => [r.pdo_detail_id, r])), [rows])
   const bulananDetails = filteredDetails.filter((d) => !d.source_pdo_number)
+  const bulananGroups = useMemo(() => buildTransferDetailGroups(bulananDetails), [bulananDetails])
   const tambahanGroups = useMemo(() => {
     const groups = new Map<string, { pdoNumber: string; mergedAt: string | null; items: PdoDetailSummary[] }>()
     for (const d of filteredDetails) {
@@ -709,6 +745,88 @@ export function TransferBulkPage() {
     }
     return [...groups.values()].sort((a, b) => (a.mergedAt ?? '').localeCompare(b.mergedAt ?? ''))
   }, [filteredDetails])
+
+  const groupedTambahan = useMemo(
+    () => tambahanGroups.map((group) => ({ ...group, categoryGroups: buildTransferDetailGroups(group.items) })),
+    [tambahanGroups],
+  )
+
+  useEffect(() => {
+    if (!pdoId || typeof window === 'undefined') return
+    if (window.sessionStorage.getItem(collapseStateKey(pdoId))) return
+
+    const nextCollapsedSubs = new Set<string>()
+    bulananGroups.forEach((group) => {
+      group.subs.forEach((sub) => nextCollapsedSubs.add(`bulanan::${group.catKey}::${sub.subKey}`))
+    })
+    groupedTambahan.forEach((section) => {
+      section.categoryGroups.forEach((group) => {
+        group.subs.forEach((sub) => nextCollapsedSubs.add(`supp:${section.pdoNumber}::${group.catKey}::${sub.subKey}`))
+      })
+    })
+    setCollapsedSubcategories(nextCollapsedSubs)
+  }, [pdoId, bulananGroups, groupedTambahan])
+
+  const toggleCategory = (catKey: string) => {
+    setCollapsedCategories((prev) => {
+      const next = new Set(prev)
+      next.has(catKey) ? next.delete(catKey) : next.add(catKey)
+      return next
+    })
+  }
+
+  const toggleSubcategory = (scope: string, subKey: string) => {
+    const fullKey = `${scope}::${subKey}`
+    setCollapsedSubcategories((prev) => {
+      const next = new Set(prev)
+      next.has(fullKey) ? next.delete(fullKey) : next.add(fullKey)
+      return next
+    })
+  }
+
+  const renderGroupedDetails = (scope: string, groups: TransferCategoryGroup<PdoDetailSummary>[]) => groups.map((group) => {
+    const searchActive = searchName.trim() !== ''
+    const catStorageKey = `${scope}::${group.catKey}`
+    const catCollapsed = searchActive ? false : collapsedCategories.has(catStorageKey)
+
+    return (
+      <Fragment key={`${scope}-cat-${group.catKey}`}>
+        <tr className="border-t-2 border-line bg-[#eef6ee] cursor-pointer select-none" onClick={() => toggleCategory(catStorageKey)}>
+          <td colSpan={11} className="px-3 py-2.5">
+            <div className="flex items-center gap-2">
+              <span className={`text-muted transition-transform duration-150 ${catCollapsed ? '' : 'rotate-90'}`} style={{ display: 'inline-block' }}>▶</span>
+              <span className="text-sm font-[900] text-ink">{group.catLabel}</span>
+              <span className="ml-auto text-xs font-[700] text-muted">{group.subs.reduce((sum, sub) => sum + sub.items.length, 0)} item</span>
+            </div>
+          </td>
+        </tr>
+
+        {!catCollapsed && group.subs.map((subgroup) => {
+          const subStorageKey = `${scope}::${group.catKey}::${subgroup.subKey}`
+          const subCollapsed = searchActive ? false : collapsedSubcategories.has(subStorageKey)
+
+          return (
+            <Fragment key={`${scope}-sub-${group.catKey}-${subgroup.subKey}`}>
+              <tr className="border-t border-line bg-[#f7faf7] cursor-pointer select-none" onClick={() => toggleSubcategory(scope, `${group.catKey}::${subgroup.subKey}`)}>
+                <td colSpan={11} className="pl-8 pr-3 py-2">
+                  <div className="flex items-center gap-2">
+                    <span className={`text-muted transition-transform duration-150 ${subCollapsed ? '' : 'rotate-90'}`} style={{ display: 'inline-block', fontSize: 10 }}>▶</span>
+                    <span className="text-[11px] font-[850] uppercase tracking-wider text-muted">{subgroup.subLabel}</span>
+                    <span className="ml-auto text-xs font-[700] text-muted">{subgroup.items.length} item</span>
+                  </div>
+                </td>
+              </tr>
+
+              {!subCollapsed && subgroup.items.map((detail) => {
+                const row = rowsByDetailId.get(detail.pdo_detail_id)
+                return row ? renderDetailRow(detail, row) : null
+              })}
+            </Fragment>
+          )
+        })}
+      </Fragment>
+    )
+  })
 
   const renderDetailRow = (detail: PdoDetailSummary, row: RowState) => {
     const hasHistory   = detail.entries.length > 0
@@ -1056,11 +1174,8 @@ export function TransferBulkPage() {
               ))
             ) : (
               <>
-                {bulananDetails.map((d) => {
-                  const row = rowsByDetailId.get(d.pdo_detail_id)
-                  return row ? renderDetailRow(d, row) : null
-                })}
-                {tambahanGroups.length > 0 && (
+                {renderGroupedDetails('bulanan', bulananGroups)}
+                {groupedTambahan.length > 0 && (
                   <>
                     {/* Divider — item dari PDO Tambahan */}
                     <tr>
@@ -1074,7 +1189,7 @@ export function TransferBulkPage() {
                         </div>
                       </td>
                     </tr>
-                    {tambahanGroups.map((g) => {
+                    {groupedTambahan.map((g) => {
                       const groupSubtotal = g.items.reduce((s, d) => s + (d.expense_item?.is_deduction ? -d.amount_approved : d.amount_approved), 0)
                       return (
                         <Fragment key={g.pdoNumber}>
@@ -1087,10 +1202,7 @@ export function TransferBulkPage() {
                               </div>
                             </td>
                           </tr>
-                          {g.items.map((d) => {
-                            const row = rowsByDetailId.get(d.pdo_detail_id)
-                            return row ? renderDetailRow(d, row) : null
-                          })}
+                          {renderGroupedDetails(`supp:${g.pdoNumber}`, g.categoryGroups)}
                         </Fragment>
                       )
                     })}
