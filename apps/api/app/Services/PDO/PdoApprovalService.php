@@ -6,7 +6,6 @@ use App\Models\PdoApprovalLog;
 use App\Models\ExpenseItem;
 use App\Models\PdoHeader;
 use App\Models\Role;
-use App\Models\TransferEntry;
 use App\Models\User;
 use App\Services\Notification\WhatsAppNotificationService;
 use Illuminate\Support\Facades\DB;
@@ -222,7 +221,16 @@ class PdoApprovalService
 
         $fresh = $pdo->fresh()->load(['creator', 'plantationUnit']);
         if ($nextStatus === PdoHeader::STATUS_FINAL) {
-            $this->generateSystemTransfers($fresh, $actor);
+            // CATATAN: dulu di sini dipanggil generateSystemTransfers(), yang membuat
+            // satu entri transfer berstatus committed untuk SETIAP item beranggaran > 0
+            // begitu PDO final — melewati alur Rencana Transfer Dana (draft → simpan
+            // permanen). Akibatnya setiap PDO baru menghasilkan puluhan entri transfer
+            // yang tidak dikehendaki dan harus dihapus manual (mis. 147 entri dibersihkan
+            // pada 2 Juli 2026, 105 entri pada 3 Agustus 2026).
+            //
+            // Transfer kini HANYA lahir dari alur Rencana Transfer Dana. Entri Potongan
+            // Panjar tetap dibuat otomatis lewat mekanismenya sendiri di
+            // TransferEntryService::applyDeductionEntries() — itu memang disengaja.
             $this->wa->notifyFinal($fresh, $reason);
         } elseif ($nextStatus === PdoHeader::STATUS_REVIEWED_ASISTEN) {
             $this->wa->notifyApprovedByAsisten($fresh, $reason);
@@ -319,40 +327,6 @@ class PdoApprovalService
             'reason'         => $reason,
             'sequence_number'=> $pdo->nextApprovalSequence(),
         ]);
-    }
-
-    private function generateSystemTransfers(PdoHeader $pdo, User $actor): void
-    {
-        $now = now();
-
-        $pdo->details()
-            ->where('amount', '>', 0)
-            ->get()
-            ->each(function ($detail) use ($actor, $now): void {
-                $exists = TransferEntry::where('pdo_detail_id', $detail->id)
-                    ->where('entry_source', TransferEntry::SOURCE_SYSTEM)
-                    ->where('is_auto_generated', true)
-                    ->exists();
-
-                if ($exists) {
-                    return;
-                }
-
-                TransferEntry::create([
-                    'pdo_detail_id'        => $detail->id,
-                    'recorded_by'          => $actor->id,
-                    'entry_source'         => TransferEntry::SOURCE_SYSTEM,
-                    'is_auto_generated'    => true,
-                    'transfer_date'        => $now->toDateString(),
-                    'amount'               => $detail->amount,
-                    'reference_number'     => null,
-                    'notes'                => 'Transfer otomatis saat PDO final',
-                    'transfer_destination' => TransferEntry::DEST_REK_KEBUN,
-                    'status'               => TransferEntry::STATUS_COMMITTED,
-                    'committed_at'         => $now,
-                    'committed_by'         => $actor->id,
-                ]);
-            });
     }
 
 }

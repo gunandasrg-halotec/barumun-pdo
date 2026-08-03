@@ -194,19 +194,23 @@ class PdoApprovalServiceTest extends TestCase
         $this->assertEquals(PdoHeader::STATUS_IN_REVIEW_DIREKTUR, $updated->status);
     }
 
-    public function test_direktur_approves_to_final_and_generates_transfer(): void
+    /**
+     * PDO final TIDAK boleh menghasilkan transfer otomatis. Transfer hanya lahir dari
+     * alur Rencana Transfer Dana (draft → simpan permanen).
+     *
+     * Perilaku lama membuat satu entri transfer committed untuk setiap item begitu PDO
+     * final, sehingga puluhan entri tak dikehendaki harus dihapus manual setiap bulan
+     * (147 entri pada 2 Juli 2026, 105 entri pada 3 Agustus 2026).
+     */
+    public function test_direktur_approves_to_final_without_generating_transfer(): void
     {
         $pdo     = $this->makePdoWithDetail(PdoHeader::STATUS_IN_REVIEW_DIREKTUR, amount: 5000000);
         $updated = $this->service->approve($pdo, 'Disetujui', $this->direktur);
 
         $this->assertEquals(PdoHeader::STATUS_FINAL, $updated->status);
 
-        // BR-APPROVAL-003: transfer entry otomatis ter-generate
-        $this->assertDatabaseHas('transfer_entries', [
-            'pdo_detail_id'    => $pdo->details()->first()->id,
-            'entry_source'     => TransferEntry::SOURCE_SYSTEM,
-            'is_auto_generated'=> true,
-            'amount'           => 5000000,
+        $this->assertDatabaseMissing('transfer_entries', [
+            'pdo_detail_id' => $pdo->details()->first()->id,
         ]);
     }
 
