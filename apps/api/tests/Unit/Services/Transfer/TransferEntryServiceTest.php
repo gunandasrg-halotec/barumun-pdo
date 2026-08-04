@@ -204,6 +204,103 @@ class TransferEntryServiceTest extends TestCase
         $this->assertEquals(3_000_000, (int) $rows->sum('amount'));
     }
 
+    // ─────────────────────────────────────────────────────
+    // Sinkronisasi baris potongan dengan progres transfer PDO
+    // ─────────────────────────────────────────────────────
+
+    /**
+     * @return array{0: PdoHeader, 1: TransferEntry, 2: TransferEntry, 3: TransferEntry}
+     *         [pdo, item1, item2, potongan]
+     */
+    private function makePdoWithTwoItemsAndDeduction(): array
+    {
+        $keraniRole = Role::factory()->create(['code' => Role::KERANI]);
+        $kerani     = User::factory()->create(['company_id' => $this->companyId, 'role_id' => $keraniRole->id]);
+        $pdo = PdoHeader::factory()->create([
+            'company_id' => $this->companyId, 'plantation_unit_id' => $this->unit->id,
+            'created_by' => $kerani->id, 'status' => PdoHeader::STATUS_FINAL,
+        ]);
+
+        $d1 = PdoDetail::factory()->create(['pdo_header_id' => $pdo->id, 'amount' => 3_000_000]);
+        $d2 = PdoDetail::factory()->create(['pdo_header_id' => $pdo->id, 'amount' => 2_000_000]);
+        $item1 = TransferEntry::factory()->create(['pdo_detail_id' => $d1->id, 'amount' => 3_000_000, 'transfer_destination' => TransferEntry::DEST_REK_KEBUN]);
+        $item2 = TransferEntry::factory()->create(['pdo_detail_id' => $d2->id, 'amount' => 2_000_000, 'transfer_destination' => TransferEntry::DEST_REK_KEBUN]);
+
+        $dedItem   = ExpenseItem::factory()->create(['is_deduction' => true]);
+        $dedDetail = PdoDetail::factory()->create(['pdo_header_id' => $pdo->id, 'expense_item_id' => $dedItem->id, 'amount' => 1_000_000]);
+        $potongan  = TransferEntry::factory()->create([
+            'pdo_detail_id' => $dedDetail->id, 'amount' => -1_000_000,
+            'transfer_destination' => TransferEntry::DEST_REK_KEBUN,
+            'entry_source' => TransferEntry::SOURCE_SYSTEM, 'is_auto_generated' => true,
+        ]);
+
+        return [$pdo, $item1, $item2, $potongan];
+    }
+
+    public function test_deduction_stays_pending_while_items_remain(): void
+    {
+        [, $item1, , $potongan] = $this->makePdoWithTwoItemsAndDeduction();
+
+        $result = $this->service->markTransferred([$item1->id], true, $this->manajerKeuangan);
+
+        $this->assertFalse((bool) $potongan->fresh()->is_transferred, 'masih ada item tertunda');
+        // `updated` hanya menghitung entri yang dipilih kasir, bukan baris potongan.
+        $this->assertEquals(1, $result['updated']);
+    }
+
+    public function test_deduction_marked_once_last_item_transferred(): void
+    {
+        [, $item1, $item2, $potongan] = $this->makePdoWithTwoItemsAndDeduction();
+
+        $this->service->markTransferred([$item1->id], true, $this->manajerKeuangan);
+        $result = $this->service->markTransferred([$item2->id], true, $this->manajerKeuangan);
+
+        $this->assertTrue((bool) $potongan->fresh()->is_transferred, 'semua item selesai → potongan ikut selesai');
+        $this->assertNotNull($potongan->fresh()->transferred_at);
+        $this->assertEquals(1, $result['updated'], 'potongan tidak ikut dihitung di updated');
+    }
+
+    /**
+     * PDO yang potongannya sudah ada tapi belum punya entri transfer positif sama sekali
+     * tidak boleh dianggap tuntas — kalau tidak, baris potongan hilang dari daftar kasir
+     * padahal belum ada apa pun yang ditransfer.
+     */
+    public function test_deduction_not_marked_when_pdo_has_no_positive_entries_yet(): void
+    {
+        $keraniRole = Role::factory()->create(['code' => Role::KERANI]);
+        $kerani     = User::factory()->create(['company_id' => $this->companyId, 'role_id' => $keraniRole->id]);
+        $pdo = PdoHeader::factory()->create([
+            'company_id' => $this->companyId, 'plantation_unit_id' => $this->unit->id,
+            'created_by' => $kerani->id, 'status' => PdoHeader::STATUS_FINAL,
+        ]);
+
+        $dedItem   = ExpenseItem::factory()->create(['is_deduction' => true]);
+        $dedDetail = PdoDetail::factory()->create(['pdo_header_id' => $pdo->id, 'expense_item_id' => $dedItem->id, 'amount' => 1_000_000]);
+        $potongan  = TransferEntry::factory()->create([
+            'pdo_detail_id' => $dedDetail->id, 'amount' => -1_000_000,
+            'transfer_destination' => TransferEntry::DEST_REK_KEBUN,
+            'entry_source' => TransferEntry::SOURCE_SYSTEM, 'is_auto_generated' => true,
+        ]);
+
+        // Picu sinkronisasi lewat entri PDO LAIN supaya PDO ini ikut ter-evaluasi.
+        $this->service->markTransferred([$potongan->id], false, $this->manajerKeuangan);
+
+        $this->assertFalse((bool) $potongan->fresh()->is_transferred);
+    }
+
+    public function test_deduction_returns_to_pending_when_an_item_is_unmarked(): void
+    {
+        [, $item1, $item2, $potongan] = $this->makePdoWithTwoItemsAndDeduction();
+
+        $this->service->markTransferred([$item1->id, $item2->id], true, $this->manajerKeuangan);
+        $this->assertTrue((bool) $potongan->fresh()->is_transferred);
+
+        $this->service->markTransferred([$item2->id], false, $this->manajerKeuangan);
+
+        $this->assertFalse((bool) $potongan->fresh()->is_transferred, 'ada item tertunda lagi → potongan kembali tertunda');
+        $this->assertNull($potongan->fresh()->transferred_at);
+    }
+
     public function test_summary_by_pdo_marks_source_pdo_number_for_merged_tambahan_rows(): void
     {
         $pdo = PdoHeader::factory()->create([

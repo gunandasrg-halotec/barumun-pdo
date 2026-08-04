@@ -93,7 +93,9 @@ export function TransferInstructionsPage() {
   const [endDate,   setEndDate]   = useState('')
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({})
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
-  const [onlyPending, setOnlyPending] = useState(false)
+  // Halaman ini adalah DAFTAR TUGAS kasir: default hanya menampilkan yang masih harus
+  // ditransfer. Yang sudah selesai baru muncul kalau filter ini dinyalakan.
+  const [showTransferred, setShowTransferred] = useState(false)
   const [vehicleModalOpen, setVehicleModalOpen] = useState(false)
   const [vehicleValues, setVehicleValues] = useState<Record<string, string>>({})
 
@@ -117,18 +119,14 @@ export function TransferInstructionsPage() {
       const matchDate =
         (!startDate || t.transfer_date >= startDate) &&
         (!endDate   || t.transfer_date <= endDate)
-      // Dulu baris yang sudah ditransfer disembunyikan DIAM-DIAM (matchTransferred =
-      // hasFilter || !t.is_transferred). Karena subtotal dihitung dari daftar yang
-      // sudah tersaring, baris itu ikut hilang dari total — begitu Staff Purchasing
-      // mulai mencentang, angka halaman ini menyusut dan tidak lagi cocok dengan
-      // Transfer Dana. Sekarang semua baris tampil (statusnya sudah jelas lewat badge)
-      // dan penyembunyian jadi filter eksplisit yang dikendalikan user.
-      // Baris negatif tidak pernah dianggap "menunggu ditransfer" — tidak ada yang
-      // bisa dikirim dari nilai minus, jadi jangan tampilkan sebagai pekerjaan tertunda.
-      const matchTransferred = !onlyPending || (!t.is_transferred && !isNonTransfer(t))
+      // Default = daftar tugas: hanya yang belum ditransfer. Baris potongan tidak perlu
+      // dikecualikan di sini — flag is_transferred-nya ikut disinkronkan backend
+      // (TransferEntryService::syncDeductionTransferFlags), jadi ia tampil selama PDO-nya
+      // belum tuntas dan hilang sendiri begitu item terakhir selesai ditransfer.
+      const matchTransferred = showTransferred || !t.is_transferred
       return matchSearch && matchDate && matchTransferred
     })
-  }, [entries, search, startDate, endDate, onlyPending])
+  }, [entries, search, startDate, endDate, showTransferred])
 
   const groups = useMemo<PdoGroup[]>(() => {
     const pdoMap = new Map<string, { pdoNumber: string; entries: TransferEntry[] }>()
@@ -275,10 +273,10 @@ export function TransferInstructionsPage() {
           <input
             type="checkbox"
             className="rounded border-line accent-green"
-            checked={onlyPending}
-            onChange={(e) => setOnlyPending(e.target.checked)}
+            checked={showTransferred}
+            onChange={(e) => setShowTransferred(e.target.checked)}
           />
-          Hanya yang belum ditransfer
+          Tampilkan yang sudah ditransfer
         </label>
       </div>
 

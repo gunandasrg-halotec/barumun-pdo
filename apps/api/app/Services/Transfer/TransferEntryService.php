@@ -94,6 +94,12 @@ class TransferEntryService
                 );
             }
 
+            // Selaraskan baris potongan SEBELUM dua return lebih awal di bawah, dan
+            // untuk SELURUH PDO yang tersentuh — bukan hanya yang pribadi/vendor.
+            $affectedPdoIds = PdoDetail::whereIn('id', $entries->pluck('pdo_detail_id')->unique())
+                ->pluck('pdo_header_id')->unique()->sort()->values();
+            $this->syncDeductionTransferFlags($affectedPdoIds, $actor);
+
             $pribadiVendorDetailIds = $entries
                 ->whereIn('transfer_destination', [TransferEntry::DEST_PRIBADI, TransferEntry::DEST_VENDOR])
                 ->pluck('pdo_detail_id')
@@ -128,6 +134,69 @@ class TransferEntryService
 
             return ['updated' => $entries->count(), 'realizations_created' => $realizationsCreated];
         });
+    }
+
+    /**
+     * Selaraskan flag `is_transferred` baris NEGATIF (potongan panjar & koreksi manual)
+     * dengan progres transfer PDO-nya.
+     *
+     * Aturan — simetris dan idempoten:
+     *   baris negatif ber-is_transferred = true  ⟺  tidak ada lagi entri POSITIF
+     *   PDO itu yang belum ditransfer.
+     *
+     * Kenapa perlu: halaman Daftar Perintah Transfer adalah daftar tugas kasir yang
+     * secara default hanya menampilkan yang belum ditransfer. Baris item kalau
+     * dijumlah BRUTO (mis. KP Agustus 227.075.891) sementara yang benar-benar
+     * ditransfer BERSIH (215.275.891 — selisihnya potongan panjar). Kalau baris
+     * potongan tidak pernah "selesai", setelah kasir mencentang seluruh item sisa akan
+     * tampil MINUS sebesar potongan, bukan nol.
+     *
+     * Karena simetris, membatalkan tanda satu item otomatis mengembalikan baris
+     * potongan ke "belum" sehingga sisa naik lagi sebagaimana mestinya.
+     *
+     * Baris yang ikut tertandai di sini TIDAK dihitung pada `updated` yang
+     * dikembalikan markTransferred() — angka itu mewakili yang dipilih kasir.
+     */
+    private function syncDeductionTransferFlags(SupportCollection $pdoIds, User $actor): void
+    {
+        foreach ($pdoIds as $pdoId) {
+            $adaPositif = TransferEntry::whereHas('pdoDetail', fn ($q) => $q->where('pdo_header_id', $pdoId))
+                ->where('amount', '>', 0)
+                ->exists();
+
+            $adaPositifTertunda = TransferEntry::whereHas('pdoDetail', fn ($q) => $q->where('pdo_header_id', $pdoId))
+                ->where('amount', '>', 0)
+                ->where('is_transferred', false)
+                ->exists();
+
+            // Syarat `$adaPositif` mencegah PDO yang belum punya entri transfer positif
+            // sama sekali langsung dianggap tuntas — tanpa itu, potongannya akan
+            // tersembunyi dari daftar kasir padahal belum ada apa pun yang ditransfer.
+            $target = $adaPositif && ! $adaPositifTertunda;
+
+            $negatives = TransferEntry::whereHas('pdoDetail', fn ($q) => $q->where('pdo_header_id', $pdoId))
+                ->where('amount', '<', 0)
+                ->where('is_transferred', '!=', $target) // hanya yang belum sesuai — idempoten
+                ->lockForUpdate()
+                ->get();
+
+            foreach ($negatives as $entry) {
+                $old = $entry->toArray();
+                $entry->update([
+                    'is_transferred' => $target,
+                    'transferred_at' => $target ? now() : null,
+                    'transferred_by' => $target ? $actor->id : null,
+                ]);
+                AuditLog::record(
+                    actor: $actor,
+                    entityType: 'transfer_entries',
+                    entityId: $entry->id,
+                    action: 'UPDATE',
+                    oldValues: array_merge($old, ['_alasan' => 'Sinkronisasi otomatis baris potongan mengikuti progres transfer PDO.']),
+                    newValues: $entry->fresh()->toArray(),
+                );
+            }
+        }
     }
 
     /**
