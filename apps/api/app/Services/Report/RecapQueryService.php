@@ -31,15 +31,17 @@ class RecapQueryService
         // kalau tidak ada filter kategori, ini persis sama dengan $rows, jadi tidak perlu
         // query kedua. KPI dihitung dengan SUM manual di sini (bukan query agregat
         // terpisah) supaya KPI dijamin selalu = penjumlahan item, termasuk override
-        // realisasi item potongan (lihat resolveRealization()).
+        // realisasi item potongan (lihat DeductionNetting).
         $kpiRows = $categoryId === null
             ? $rows
             : $this->fetchDetailRows($year, $month, $unitId, null, $startDate, $endDate);
 
         $transferKebun    = 0;
         $transferPribadi  = 0;
-        $realisasiKebun   = 0;
-        $realisasiPribadi = 0;
+        $rawRealisasiKebun   = 0;
+        $rawRealisasiPribadi = 0;
+        $deductionKebun      = 0; // negatif
+        $deductionPribadi    = 0; // negatif
 
         foreach ($kpiRows as $row) {
             $isDeduction = (bool) $row->is_deduction;
@@ -48,41 +50,38 @@ class RecapQueryService
 
             $transferKebun   += $tKebun;
             $transferPribadi += $tPribadi;
-            // KPI kas kebun/pribadi (dipakai untuk saldo_kebun, saldo_pribadi,
-            // saldo_kas_kebun_saat_ini) melaporkan POSISI KAS FISIK — berapa yang
-            // benar-benar sudah dibelanjakan — jadi HARUS pakai realisasi asli
-            // (real, tanpa override potongan). Override resolveRealization() (yang
-            // menganggap potongan = realisasi) hanya untuk PLAFON VALIDASI
-            // (RealizationEntryService::totalRealizedForGroup(), supaya kerani tidak
-            // diblokir saat nanti merealisasikan item yang sebagian sudah dipanjar)
-            // dan untuk tampilan per-baris tabel (supaya baris potongan tidak
-            // menampilkan saldo negatif yang menyesatkan). Memakainya di sini dulu
-            // membuat KPI Saldo naik keliru sebelum realisasi item terkait benar-benar
-            // tercatat — lihat isu: transfer 4.394.864, potongan belum direalisasi,
-            // tapi Saldo tampil 8.894.864 padahal seharusnya = transfer (4.394.864).
-            $realisasiKebun   += (int) $row->total_realization;
-            $realisasiPribadi += (int) $row->total_realization_pribadi;
+
+            if ($isDeduction) {
+                // Item potongan tidak pernah punya realization_entries — nilainya
+                // hidup sebagai transfer negatif.
+                $deductionKebun   += $tKebun;
+                $deductionPribadi += $tPribadi;
+                continue;
+            }
+
+            $rawRealisasiKebun   += (int) $row->total_realization;
+            $rawRealisasiPribadi += (int) $row->total_realization_pribadi;
         }
+
+        // Netting potongan di-clamp per (PDO, kantong): kredit tidak boleh melebihi
+        // realisasi yang benar-benar sudah tercatat. Lihat DeductionNetting untuk
+        // alasan lengkap & riwayat kedua bug yang aturan ini selesaikan sekaligus.
+        $realisasiKebun   = DeductionNetting::effectiveRealization($rawRealisasiKebun, $deductionKebun);
+        $realisasiPribadi = DeductionNetting::effectiveRealization($rawRealisasiPribadi, $deductionPribadi);
+
+        // Kredit yang benar-benar terpakai — dibagikan ke baris potongan di
+        // buildHierarchy() supaya penjumlahan baris tetap sama dengan KPI ini.
+        $creditKebun   = DeductionNetting::usableCredit($rawRealisasiKebun, $deductionKebun);
+        $creditPribadi = DeductionNetting::usableCredit($rawRealisasiPribadi, $deductionPribadi);
 
         // Saldo awal kas kebun di AWAL periode PDO ini — KPI tetap, tidak
         // terpengaruh $startDate/$endDate (yang hanya memfilter baris tabel).
         $saldoAwal = $unitId ? $this->cashBook()->openingBalanceForPeriod($unitId, (int) $year, (int) $month) : 0;
 
-        return $this->buildHierarchy($rows, $transferKebun, $transferPribadi, $realisasiKebun, $realisasiPribadi, $kantong, $saldoAwal);
-    }
-
-    /**
-     * Realisasi yang dipakai untuk perhitungan (baik KPI maupun tabel item).
-     *
-     * Item potongan (is_deduction, misal POTONGAN PANJAR) merepresentasikan uang
-     * muka/panjar yang SUDAH dibayarkan (direalisasikan) periode sebelumnya — bukan
-     * dana yang belum terpakai. Supaya baris & subtotalnya tidak menampilkan saldo
-     * negatif yang menyesatkan, realisasi potongan dianggap SAMA DENGAN transfer-nya
-     * (yang juga negatif), sehingga Saldo = Transfer - Realisasi = 0 secara alami.
-     */
-    private function resolveRealization(bool $isDeduction, int $transfer, int $realRaw): int
-    {
-        return $isDeduction ? $transfer : $realRaw;
+        return $this->buildHierarchy(
+            $rows, $transferKebun, $transferPribadi, $realisasiKebun, $realisasiPribadi,
+            $kantong, $saldoAwal, $creditKebun, $creditPribadi,
+        );
     }
 
     /**
@@ -205,7 +204,7 @@ class RecapQueryService
         ]);
     }
 
-    private function buildHierarchy(array $rows, int $transferKebun, int $transferPribadi, int $realisasiKebun, int $realisasiPribadi, string $kantong = 'all', int $saldoAwal = 0): array
+    private function buildHierarchy(array $rows, int $transferKebun, int $transferPribadi, int $realisasiKebun, int $realisasiPribadi, string $kantong = 'all', int $saldoAwal = 0, int $creditKebun = 0, int $creditPribadi = 0): array
     {
         $categories  = [];
         $catIndex    = [];
@@ -216,6 +215,14 @@ class RecapQueryService
         $grandTotalTransfer    = 0;
         $grandTotalRealization = 0;
 
+        // Sisa kredit potongan (positif) yang boleh dibagikan ke baris-baris item
+        // potongan. Dibatasi di getRecapData() sebesar realisasi yang benar-benar
+        // ada, lalu dikonsumsi berurutan di sini supaya penjumlahan baris selalu
+        // sama dengan KPI. Saat realisasi berlimpah, tiap baris potongan dapat
+        // kredit penuh dan saldonya 0 — persis perilaku sebelumnya.
+        $poolKebun   = abs($creditKebun);
+        $poolPribadi = abs($creditPribadi);
+
         foreach ($rows as $row) {
             $pengajuan           = (int) $row->pengajuan;
             $transferAll         = (int) $row->total_transfer;
@@ -223,8 +230,18 @@ class RecapQueryService
             $transferPribadiItem = (int) $row->total_transfer_pribadi;
             $isDeduction         = (bool) $row->is_deduction;
 
-            $realKebunItem   = $this->resolveRealization($isDeduction, $transferKebunItem,   (int) $row->total_realization);
-            $realPribadiItem = $this->resolveRealization($isDeduction, $transferPribadiItem, (int) $row->total_realization_pribadi);
+            if ($isDeduction) {
+                $takenKebun   = min(abs($transferKebunItem), $poolKebun);
+                $takenPribadi = min(abs($transferPribadiItem), $poolPribadi);
+                $poolKebun   -= $takenKebun;
+                $poolPribadi -= $takenPribadi;
+
+                $realKebunItem   = -$takenKebun;
+                $realPribadiItem = -$takenPribadi;
+            } else {
+                $realKebunItem   = (int) $row->total_realization;
+                $realPribadiItem = (int) $row->total_realization_pribadi;
+            }
 
             // Kolom yang ditampilkan tergantung filter kantong: 'kebun' hanya
             // transfer/realisasi ke rek_kebun, 'pribadi' hanya pribadi/vendor,
@@ -248,8 +265,8 @@ class RecapQueryService
                 $real     = $realKebunItem + $realPribadiItem;
             }
             // Saldo = Transfer - Realisasi seperti biasa. Untuk item potongan, $real
-            // sudah di-resolve sama dengan $transfer (lihat resolveRealization()),
-            // sehingga Saldo otomatis 0 tanpa perlu override terpisah.
+            // adalah kredit yang diambil dari pool di atas — sama dengan $transfer
+            // selama kreditnya masih tersedia, sehingga Saldo otomatis 0.
             $saldo = $transfer - $real;
 
             // Status overbudget SELALU dihitung per-kantong yang benar (transfer_kebun

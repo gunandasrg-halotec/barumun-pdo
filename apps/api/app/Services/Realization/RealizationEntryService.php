@@ -220,9 +220,18 @@ class RealizationEntryService
      *
      * Potongan direpresentasikan sebagai TransferEntry NEGATIF (bukan
      * RealizationEntry), sehingga tidak pernah ikut ter-sum di query
-     * RealizationEntry di atas — perlu ditambahkan manual di sini supaya
-     * "Sisa Dana" konsisten dengan Rekap Buku Kas & Buku Kas Harian (lihat
-     * RecapQueryService::resolveRealization() dan CashBookQueryService).
+     * RealizationEntry di atas — perlu ditambahkan manual di sini.
+     *
+     * ⚠️ SENGAJA TIDAK DI-CLAMP, beda dengan halaman pelaporan (Rekap, Buku Kas,
+     * Dashboard, Daftar PDO) yang memakai DeductionNetting::effectiveRealization().
+     * Ini PLAFON INPUT ("Sisa Dana" di Form Realisasi), bukan posisi kas: kerani
+     * harus bisa mencatat realisasi PENUH sesuai anggaran, termasuk bagian yang
+     * dananya berasal dari panjar periode lalu. Contoh PDO Agustus Sosa — transfer
+     * bersih 4.394.864 (sudah dipotong panjar 4.500.000) tapi belanja riilnya
+     * 8.894.864; kalau plafon ikut di-clamp, kerani terblokir di 4.394.864.
+     * Karena itu angka "Sisa Dana" memang berbeda dari "Saldo" di Rekap, dan itu
+     * BUKAN bug — begitu realisasi penuh tercatat, Saldo di Rekap otomatis jadi 0.
+     * Sudah dikonfirmasi pemilik produk; jangan "disamakan" tanpa membahas ulang.
      */
     public function totalRealizedForGroup(PdoHeader $pdo, string $group): int
     {

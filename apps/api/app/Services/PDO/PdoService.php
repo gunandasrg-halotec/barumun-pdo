@@ -20,6 +20,46 @@ use Illuminate\Validation\ValidationException;
 
 class PdoService
 {
+    /**
+     * Realisasi efektif 1 PDO = realisasi mentah dinetkan dengan potongan, di-clamp
+     * per kantong supaya kredit potongan tidak pernah melebihi realisasi yang benar-
+     * benar ada. Padanan SQL dari
+     * App\Services\Report\DeductionNetting::effectiveRealization() — dipakai untuk
+     * total_realized DAN balance di listPdo() supaya keduanya tidak pernah beda.
+     *
+     * Kantong kebun  = realisasi funding_source kas_kebun/rekening_kebun vs transfer rek_kebun.
+     * Kantong pribadi = realisasi funding_source rekening_utama       vs transfer pribadi/vendor.
+     */
+    private const SQL_EFFECTIVE_REALIZED = "
+        GREATEST(
+            COALESCE((SELECT SUM(re.amount) FROM realization_entries re
+                      JOIN pdo_details pd ON pd.id = re.pdo_detail_id
+                      WHERE pd.pdo_header_id = pdo_headers.id
+                        AND re.funding_source IN ('kas_kebun', 'rekening_kebun')), 0)
+            + COALESCE((SELECT SUM(te.amount) FROM transfer_entries te
+                        JOIN pdo_details pd ON pd.id = te.pdo_detail_id
+                        JOIN expense_items ei ON ei.id = pd.expense_item_id
+                        WHERE pd.pdo_header_id = pdo_headers.id
+                          AND te.status = 'committed'
+                          AND te.transfer_destination = 'rek_kebun'
+                          AND ei.is_deduction = TRUE), 0)
+        , 0)
+        +
+        GREATEST(
+            COALESCE((SELECT SUM(re.amount) FROM realization_entries re
+                      JOIN pdo_details pd ON pd.id = re.pdo_detail_id
+                      WHERE pd.pdo_header_id = pdo_headers.id
+                        AND re.funding_source = 'rekening_utama'), 0)
+            + COALESCE((SELECT SUM(te.amount) FROM transfer_entries te
+                        JOIN pdo_details pd ON pd.id = te.pdo_detail_id
+                        JOIN expense_items ei ON ei.id = pd.expense_item_id
+                        WHERE pd.pdo_header_id = pdo_headers.id
+                          AND te.status = 'committed'
+                          AND te.transfer_destination IN ('pribadi', 'vendor')
+                          AND ei.is_deduction = TRUE), 0)
+        , 0)
+    ";
+
     // ─────────────────────────────────────────────────────
     // PDO HEADER
     // ─────────────────────────────────────────────────────
@@ -42,29 +82,21 @@ class PdoService
                     ->where('transfer_entries.status', \App\Models\TransferEntry::STATUS_COMMITTED)
                     ->whereColumn('pdo_details.pdo_header_id', 'pdo_headers.id'),
             ])
-            // total_realized & balance melaporkan POSISI KAS FISIK (berapa yang benar-
-            // benar sudah dibelanjakan) — HARUS pakai realisasi asli (raw), TANPA
-            // menganggap transfer potongan (is_deduction) sebagai realisasi. Override
-            // "potongan = realisasi" itu hanya untuk PLAFON VALIDASI di
-            // RealizationEntryService::totalRealizedForGroup() (supaya kerani tidak
-            // diblokir saat nanti merealisasikan item yang sebagian sudah dipanjar) —
-            // memakainya di sini membuat total_realized & balance keliru sebelum
-            // realisasi terkait benar-benar tercatat. Lihat perbaikan yang sama di
-            // RecapQueryService::getRecapData().
-            ->addSelect(\DB::raw("(
-                COALESCE((SELECT SUM(re.amount) FROM realization_entries re
-                          JOIN pdo_details pd ON pd.id = re.pdo_detail_id
-                          WHERE pd.pdo_header_id = pdo_headers.id), 0)
-            ) as total_realized"))
+            // total_realized dinetkan dengan item potongan (mis. POTONGAN PANJAR) —
+            // down payment yang SUDAH dibayar periode sebelumnya, direpresentasikan
+            // sebagai TransferEntry NEGATIF (bukan RealizationEntry). Netting-nya
+            // di-CLAMP per kantong lewat GREATEST(..., 0): kredit potongan tidak boleh
+            // melebihi realisasi yang benar-benar sudah tercatat, supaya PDO yang baru
+            // final (belum ada realisasi) tidak menampilkan Realisasi negatif & Saldo
+            // yang naik keliru. Lihat App\Services\Report\DeductionNetting untuk
+            // penjelasan lengkap; Rekap & Dashboard memakai aturan yang sama persis.
+            ->addSelect(\DB::raw("(" . self::SQL_EFFECTIVE_REALIZED . ") as total_realized"))
             ->addSelect(\DB::raw("(
                 COALESCE((SELECT SUM(te.amount) FROM transfer_entries te
                           JOIN pdo_details pd ON pd.id = te.pdo_detail_id
                           WHERE pd.pdo_header_id = pdo_headers.id
                             AND te.status = 'committed'), 0)
-                -
-                COALESCE((SELECT SUM(re.amount) FROM realization_entries re
-                          JOIN pdo_details pd ON pd.id = re.pdo_detail_id
-                          WHERE pd.pdo_header_id = pdo_headers.id), 0)
+                - (" . self::SQL_EFFECTIVE_REALIZED . ")
             ) as balance"))
             ->when(!empty($filters['search']), fn ($q) => $q->where('pdo_number', 'ilike', '%' . $filters['search'] . '%'))
             ->when(!empty($filters['status']), fn ($q) => $q->where('status', $filters['status']))

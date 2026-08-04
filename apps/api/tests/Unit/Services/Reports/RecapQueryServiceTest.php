@@ -257,6 +257,83 @@ class RecapQueryServiceTest extends TestCase
         $this->assertEquals(4_394_864, $result['saldo_kebun']);
     }
 
+    /**
+     * Regresi PDO Juli: begitu realisasi penyeimbangnya tercatat, potongan HARUS
+     * dinetkan penuh. Pernah rusak karena netting dihapus total demi memperbaiki
+     * kasus "belum ada realisasi" di atas — akibatnya saldo Juli KP jadi
+     * −7.026.778 dari seharusnya 4.073.222, SS −4.499.827 dari seharusnya 173.
+     */
+    public function test_kpi_saldo_kebun_nets_deduction_fully_once_realized(): void
+    {
+        $pdo = $this->makeFinalPdo();
+        $cat = ExpenseCategory::factory()->create(['company_id' => $this->companyId, 'include_in_recap' => true]);
+        $sub = ExpenseSubcategory::factory()->create(['category_id' => $cat->id]);
+
+        // Item biasa: transfer 4.000.000, kerani realisasi PENUH 5.000.000
+        // (1.000.000-nya dibayar dari panjar bulan lalu).
+        $item   = ExpenseItem::factory()->create(['subcategory_id' => $sub->id]);
+        $detail = PdoDetail::factory()->create(['pdo_header_id' => $pdo->id, 'expense_item_id' => $item->id, 'amount' => 5_000_000]);
+        TransferEntry::factory()->create(['pdo_detail_id' => $detail->id, 'amount' => 4_000_000, 'transfer_destination' => 'rek_kebun']);
+        RealizationEntry::factory()->create([
+            'pdo_detail_id' => $detail->id, 'amount' => 5_000_000,
+            'funding_source' => RealizationEntry::FUNDING_KAS_KEBUN,
+        ]);
+
+        $this->seedDeduction($pdo, $sub, 1_000_000, 'rek_kebun');
+
+        $result = $this->query();
+
+        // transfer = 4.000.000 − 1.000.000 = 3.000.000
+        // realisasi efektif = 5.000.000 − 1.000.000 = 4.000.000
+        $this->assertEquals(3_000_000, $result['transfer_kebun']);
+        $this->assertEquals(4_000_000, $result['realisasi_kebun']);
+        $this->assertEquals(-1_000_000, $result['saldo_kebun']);
+    }
+
+    /**
+     * Kasus Binanga: dalam SATU kantong (pribadi/vendor) ada dua sub-kategori —
+     * yang satu realisasinya lebih kecil dari potongannya, yang satu surplus.
+     * Clamp harus di level KANTONG, bukan per sub-kategori; kalau per sub-kategori
+     * saldo jadi −145.000 alih-alih 0.
+     */
+    public function test_deduction_clamped_per_pocket_not_per_subcategory(): void
+    {
+        $pdo = $this->makeFinalPdo();
+        $cat = ExpenseCategory::factory()->create(['company_id' => $this->companyId, 'include_in_recap' => true]);
+
+        // Sub-kategori A: potongan 600.000 tapi realisasi hanya 455.000 (kurang).
+        $subA  = ExpenseSubcategory::factory()->create(['category_id' => $cat->id]);
+        $itemA = ExpenseItem::factory()->create(['subcategory_id' => $subA->id]);
+        $detA  = PdoDetail::factory()->create(['pdo_header_id' => $pdo->id, 'expense_item_id' => $itemA->id, 'amount' => 1_000_000]);
+        TransferEntry::factory()->create(['pdo_detail_id' => $detA->id, 'amount' => 455_000, 'transfer_destination' => 'pribadi']);
+        RealizationEntry::factory()->create([
+            'pdo_detail_id' => $detA->id, 'amount' => 455_000,
+            'funding_source' => RealizationEntry::FUNDING_REKENING_UTAMA,
+            'settlement_group' => RealizationEntry::SETTLEMENT_PRIBADI_VENDOR,
+        ]);
+        $this->seedDeduction($pdo, $subA, 600_000, 'pribadi');
+
+        // Sub-kategori B: surplus realisasi, cukup menutup sisa kredit sub-kategori A.
+        $subB  = ExpenseSubcategory::factory()->create(['category_id' => $cat->id]);
+        $itemB = ExpenseItem::factory()->create(['subcategory_id' => $subB->id]);
+        $detB  = PdoDetail::factory()->create(['pdo_header_id' => $pdo->id, 'expense_item_id' => $itemB->id, 'amount' => 5_000_000]);
+        TransferEntry::factory()->create(['pdo_detail_id' => $detB->id, 'amount' => 3_000_000, 'transfer_destination' => 'vendor']);
+        RealizationEntry::factory()->create([
+            'pdo_detail_id' => $detB->id, 'amount' => 3_600_000,
+            'funding_source' => RealizationEntry::FUNDING_REKENING_UTAMA,
+            'settlement_group' => RealizationEntry::SETTLEMENT_PRIBADI_VENDOR,
+        ]);
+        $this->seedDeduction($pdo, $subB, 600_000, 'vendor');
+
+        $result = $this->query();
+
+        // transfer  = 455.000 + 3.000.000 − 1.200.000 = 2.255.000
+        // realisasi = 4.055.000 − 1.200.000 (kredit penuh, pool cukup) = 2.855.000
+        $this->assertEquals(2_255_000, $result['transfer_pribadi']);
+        $this->assertEquals(2_855_000, $result['realisasi_pribadi']);
+        $this->assertEquals(-600_000, $result['saldo_pribadi']);
+    }
+
     // ── 8: kerani unit is enforced by controller (tested via feature) ─────────
 
     public function test_kerani_unit_filter_enforced_regardless_of_request_param(): void
@@ -278,6 +355,42 @@ class RecapQueryServiceTest extends TestCase
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────────
+
+    private function makeFinalPdo(): PdoHeader
+    {
+        $keraniRole = Role::firstOrCreate(['code' => Role::KERANI], ['name' => 'Kerani']);
+        $kerani     = User::factory()->create([
+            'role_id'            => $keraniRole->id,
+            'plantation_unit_id' => $this->unit->id,
+        ]);
+
+        return PdoHeader::factory()->create([
+            'company_id'         => $this->companyId,
+            'plantation_unit_id' => $this->unit->id,
+            'created_by'         => $kerani->id,
+            'status'             => PdoHeader::STATUS_FINAL,
+            'period_month'       => $this->month,
+            'period_year'        => $this->year,
+        ]);
+    }
+
+    /** Item potongan: TransferEntry negatif, tidak pernah punya RealizationEntry. */
+    private function seedDeduction(PdoHeader $pdo, ExpenseSubcategory $sub, int $amount, string $destination): void
+    {
+        $item   = ExpenseItem::factory()->create(['subcategory_id' => $sub->id, 'is_deduction' => true]);
+        $detail = PdoDetail::factory()->create([
+            'pdo_header_id'   => $pdo->id,
+            'expense_item_id' => $item->id,
+            'amount'          => $amount,
+        ]);
+        TransferEntry::factory()->create([
+            'pdo_detail_id'        => $detail->id,
+            'amount'               => -$amount,
+            'transfer_destination' => $destination,
+            'entry_source'         => 'system',
+            'is_auto_generated'    => true,
+        ]);
+    }
 
     private function query(): array
     {

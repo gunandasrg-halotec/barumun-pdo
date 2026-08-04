@@ -283,6 +283,43 @@ class PdoServiceTest extends TestCase
         $this->assertEquals(4_394_864, (int) $row->balance);
     }
 
+    /**
+     * Regresi PDO Juli: potongan harus dinetkan penuh begitu realisasinya tercatat.
+     * Pernah rusak (KP saldo −7.026.778 dari seharusnya 4.073.222) saat netting
+     * dihapus total demi memperbaiki kasus "belum ada realisasi" di atas.
+     */
+    public function test_list_pdo_nets_deduction_fully_once_realized(): void
+    {
+        $pdo = PdoHeader::factory()->create([
+            'company_id'         => $this->companyId,
+            'plantation_unit_id' => $this->unit->id,
+            'created_by'         => $this->kerani->id,
+            'status'             => PdoHeader::STATUS_DRAFT,
+        ]);
+
+        $detail = PdoDetail::factory()->create(['pdo_header_id' => $pdo->id, 'amount' => 5_000_000]);
+        TransferEntry::factory()->create(['pdo_detail_id' => $detail->id, 'amount' => 4_000_000, 'transfer_destination' => 'rek_kebun']);
+        RealizationEntry::factory()->create([
+            'pdo_detail_id'  => $detail->id,
+            'amount'         => 5_000_000,
+            'funding_source' => \App\Models\RealizationEntry::FUNDING_KAS_KEBUN,
+        ]);
+
+        $dedItem   = \App\Models\ExpenseItem::factory()->create(['is_deduction' => true]);
+        $dedDetail = PdoDetail::factory()->create(['pdo_header_id' => $pdo->id, 'expense_item_id' => $dedItem->id, 'amount' => 1_000_000]);
+        TransferEntry::factory()->create([
+            'pdo_detail_id' => $dedDetail->id, 'amount' => -1_000_000, 'transfer_destination' => 'rek_kebun',
+            'entry_source' => 'system', 'is_auto_generated' => true,
+        ]);
+
+        $row = $this->service->listPdo()->getCollection()->firstWhere('id', $pdo->id);
+
+        $this->assertNotNull($row);
+        $this->assertEquals(3_000_000, (int) $row->total_transferred);  // 4.000.000 − 1.000.000
+        $this->assertEquals(4_000_000, (int) $row->total_realized);     // 5.000.000 − 1.000.000
+        $this->assertEquals(-1_000_000, (int) $row->balance);
+    }
+
     // ─────────────────────────────────────────────────────
     // Pengajuan breakdown — modal drill-down Daftar PDO
     // ─────────────────────────────────────────────────────

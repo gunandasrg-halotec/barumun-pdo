@@ -231,4 +231,86 @@ class DashboardServiceTest extends TestCase
         $this->assertEquals(0, $summary['total_realized']);
         $this->assertEquals(0, $unitRow['total_realized']);
     }
+
+    /**
+     * Regresi PDO Juli: begitu realisasi penyeimbangnya tercatat, potongan harus
+     * dinetkan penuh — bukan diabaikan. Pernah rusak saat netting dihapus total.
+     */
+    public function test_total_realized_nets_deduction_fully_once_realized(): void
+    {
+        $keraniRole = Role::factory()->create(['code' => Role::KERANI]);
+        $kerani     = User::factory()->create(['company_id' => $this->companyId, 'role_id' => $keraniRole->id]);
+        $dedItem    = ExpenseItem::factory()->create(['is_deduction' => true]);
+
+        $pdo = PdoHeader::factory()->create([
+            'company_id'         => $this->companyId,
+            'plantation_unit_id' => $this->unit->id,
+            'created_by'         => $kerani->id,
+            'status'             => PdoHeader::STATUS_FINAL,
+            'period_month'       => now()->month,
+            'period_year'        => now()->year,
+        ]);
+
+        $detail = PdoDetail::factory()->create(['pdo_header_id' => $pdo->id, 'amount' => 5_000_000]);
+        TransferEntry::factory()->create(['pdo_detail_id' => $detail->id, 'amount' => 4_000_000, 'transfer_destination' => 'rek_kebun']);
+        RealizationEntry::factory()->create(['pdo_detail_id' => $detail->id, 'amount' => 5_000_000]);
+
+        $dedDetail = PdoDetail::factory()->create(['pdo_header_id' => $pdo->id, 'expense_item_id' => $dedItem->id, 'amount' => 1_000_000]);
+        TransferEntry::factory()->create([
+            'pdo_detail_id' => $dedDetail->id, 'amount' => -1_000_000, 'transfer_destination' => 'rek_kebun',
+            'entry_source' => 'system', 'is_auto_generated' => true,
+        ]);
+
+        $summary = $this->service->summary($this->manajer);
+        $unitRow = collect($summary['by_unit'])->firstWhere('unit_id', $this->unit->id);
+
+        // 5.000.000 realisasi − 1.000.000 potongan = 4.000.000
+        $this->assertEquals(4_000_000, $summary['total_realized']);
+        $this->assertEquals(4_000_000, $unitRow['total_realized']);
+    }
+
+    /**
+     * Clamp harus PER KANTONG: potongan kantong kebun yang belum direalisasi tidak
+     * boleh "memakan" realisasi kantong pribadi/vendor. Sempat terjadi — Dashboard
+     * SS Agustus menampilkan 8.565.000 padahal Rekap & Daftar PDO 13.065.000,
+     * selisihnya persis potongan kebun 4.500.000.
+     */
+    public function test_kebun_deduction_does_not_consume_pribadi_realization(): void
+    {
+        $keraniRole = Role::factory()->create(['code' => Role::KERANI]);
+        $kerani     = User::factory()->create(['company_id' => $this->companyId, 'role_id' => $keraniRole->id]);
+        $dedItem    = ExpenseItem::factory()->create(['is_deduction' => true]);
+
+        $pdo = PdoHeader::factory()->create([
+            'company_id'         => $this->companyId,
+            'plantation_unit_id' => $this->unit->id,
+            'created_by'         => $kerani->id,
+            'status'             => PdoHeader::STATUS_FINAL,
+            'period_month'       => now()->month,
+            'period_year'        => now()->year,
+        ]);
+
+        // Kantong pribadi/vendor: ada realisasi, TIDAK ada potongan.
+        $pribadiDetail = PdoDetail::factory()->create(['pdo_header_id' => $pdo->id, 'amount' => 13_065_000]);
+        TransferEntry::factory()->create(['pdo_detail_id' => $pribadiDetail->id, 'amount' => 13_065_000, 'transfer_destination' => 'vendor']);
+        RealizationEntry::factory()->create([
+            'pdo_detail_id'    => $pribadiDetail->id,
+            'amount'           => 13_065_000,
+            'funding_source'   => RealizationEntry::FUNDING_REKENING_UTAMA,
+            'settlement_group' => RealizationEntry::SETTLEMENT_PRIBADI_VENDOR,
+        ]);
+
+        // Kantong kebun: ada potongan, BELUM ada realisasi sama sekali.
+        $dedDetail = PdoDetail::factory()->create(['pdo_header_id' => $pdo->id, 'expense_item_id' => $dedItem->id, 'amount' => 4_500_000]);
+        TransferEntry::factory()->create([
+            'pdo_detail_id' => $dedDetail->id, 'amount' => -4_500_000, 'transfer_destination' => 'rek_kebun',
+            'entry_source' => 'system', 'is_auto_generated' => true,
+        ]);
+
+        $summary = $this->service->summary($this->manajer);
+        $unitRow = collect($summary['by_unit'])->firstWhere('unit_id', $this->unit->id);
+
+        $this->assertEquals(13_065_000, $summary['total_realized']);
+        $this->assertEquals(13_065_000, $unitRow['total_realized']);
+    }
 }
