@@ -256,6 +256,33 @@ class PdoServiceTest extends TestCase
         $this->assertEquals(450000, (int) $row->balance);
     }
 
+    public function test_list_pdo_balance_not_inflated_by_unrealized_deduction(): void
+    {
+        $pdo = PdoHeader::factory()->create([
+            'company_id'         => $this->companyId,
+            'plantation_unit_id' => $this->unit->id,
+            'created_by'         => $this->kerani->id,
+            'status'             => PdoHeader::STATUS_DRAFT,
+        ]);
+
+        $detail = PdoDetail::factory()->create(['pdo_header_id' => $pdo->id, 'amount' => 8_894_864]);
+        TransferEntry::factory()->create(['pdo_detail_id' => $detail->id, 'amount' => 8_894_864, 'transfer_destination' => 'rek_kebun']);
+
+        $dedItem   = \App\Models\ExpenseItem::factory()->create(['is_deduction' => true]);
+        $dedDetail = PdoDetail::factory()->create(['pdo_header_id' => $pdo->id, 'expense_item_id' => $dedItem->id, 'amount' => 4_500_000]);
+        TransferEntry::factory()->create([
+            'pdo_detail_id' => $dedDetail->id, 'amount' => -4_500_000, 'transfer_destination' => 'rek_kebun',
+            'entry_source' => 'system', 'is_auto_generated' => true,
+        ]);
+
+        $row = $this->service->listPdo()->getCollection()->firstWhere('id', $pdo->id);
+
+        $this->assertNotNull($row);
+        $this->assertEquals(4_394_864, (int) $row->total_transferred);
+        $this->assertEquals(0, (int) $row->total_realized);
+        $this->assertEquals(4_394_864, (int) $row->balance);
+    }
+
     // ─────────────────────────────────────────────────────
     // Pengajuan breakdown — modal drill-down Daftar PDO
     // ─────────────────────────────────────────────────────

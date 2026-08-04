@@ -42,24 +42,19 @@ class PdoService
                     ->where('transfer_entries.status', \App\Models\TransferEntry::STATUS_COMMITTED)
                     ->whereColumn('pdo_details.pdo_header_id', 'pdo_headers.id'),
             ])
-            // total_realized & balance dinetkan dengan item potongan (mis. POTONGAN
-            // PANJAR) — down payment yang SUDAH direalisasikan (dibayar tunai) pada
-            // periode sebelumnya. Potongan direpresentasikan sebagai TransferEntry
-            // NEGATIF (bukan RealizationEntry), sehingga SUM(realization_entries.amount)
-            // polos akan overstate total_realized (dan understate balance/saldo)
-            // dibanding Rekap Buku Kas & Buku Kas Harian. Lihat penjelasan lengkap di
-            // RecapQueryService::resolveRealization() dan CashBookQueryService.
+            // total_realized & balance melaporkan POSISI KAS FISIK (berapa yang benar-
+            // benar sudah dibelanjakan) — HARUS pakai realisasi asli (raw), TANPA
+            // menganggap transfer potongan (is_deduction) sebagai realisasi. Override
+            // "potongan = realisasi" itu hanya untuk PLAFON VALIDASI di
+            // RealizationEntryService::totalRealizedForGroup() (supaya kerani tidak
+            // diblokir saat nanti merealisasikan item yang sebagian sudah dipanjar) —
+            // memakainya di sini membuat total_realized & balance keliru sebelum
+            // realisasi terkait benar-benar tercatat. Lihat perbaikan yang sama di
+            // RecapQueryService::getRecapData().
             ->addSelect(\DB::raw("(
                 COALESCE((SELECT SUM(re.amount) FROM realization_entries re
                           JOIN pdo_details pd ON pd.id = re.pdo_detail_id
                           WHERE pd.pdo_header_id = pdo_headers.id), 0)
-                +
-                COALESCE((SELECT SUM(te.amount) FROM transfer_entries te
-                          JOIN pdo_details pd ON pd.id = te.pdo_detail_id
-                          JOIN expense_items ei ON ei.id = pd.expense_item_id
-                          WHERE pd.pdo_header_id = pdo_headers.id
-                            AND te.status = 'committed'
-                            AND ei.is_deduction = TRUE), 0)
             ) as total_realized"))
             ->addSelect(\DB::raw("(
                 COALESCE((SELECT SUM(te.amount) FROM transfer_entries te
@@ -67,18 +62,9 @@ class PdoService
                           WHERE pd.pdo_header_id = pdo_headers.id
                             AND te.status = 'committed'), 0)
                 -
-                (
-                    COALESCE((SELECT SUM(re.amount) FROM realization_entries re
-                              JOIN pdo_details pd ON pd.id = re.pdo_detail_id
-                              WHERE pd.pdo_header_id = pdo_headers.id), 0)
-                    +
-                    COALESCE((SELECT SUM(te2.amount) FROM transfer_entries te2
-                              JOIN pdo_details pd2 ON pd2.id = te2.pdo_detail_id
-                              JOIN expense_items ei2 ON ei2.id = pd2.expense_item_id
-                              WHERE pd2.pdo_header_id = pdo_headers.id
-                                AND te2.status = 'committed'
-                                AND ei2.is_deduction = TRUE), 0)
-                )
+                COALESCE((SELECT SUM(re.amount) FROM realization_entries re
+                          JOIN pdo_details pd ON pd.id = re.pdo_detail_id
+                          WHERE pd.pdo_header_id = pdo_headers.id), 0)
             ) as balance"))
             ->when(!empty($filters['search']), fn ($q) => $q->where('pdo_number', 'ilike', '%' . $filters['search'] . '%'))
             ->when(!empty($filters['status']), fn ($q) => $q->where('status', $filters['status']))

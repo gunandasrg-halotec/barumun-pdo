@@ -198,4 +198,37 @@ class DashboardServiceTest extends TestCase
         // 100.000 + 100.000, bukan dikali oleh fan-out
         $this->assertEquals(200_000, $row['total_transferred']);
     }
+
+    // ── total_realized/balance tidak boleh terinflasi oleh potongan yang belum ──
+    //    punya realisasi asli (bug yang sama seperti RecapQueryService).
+
+    public function test_total_realized_not_inflated_by_unrealized_deduction(): void
+    {
+        $keraniRole = Role::factory()->create(['code' => Role::KERANI]);
+        $kerani     = User::factory()->create(['company_id' => $this->companyId, 'role_id' => $keraniRole->id]);
+        $dedItem    = ExpenseItem::factory()->create(['is_deduction' => true]);
+
+        $pdo = PdoHeader::factory()->create([
+            'company_id'         => $this->companyId,
+            'plantation_unit_id' => $this->unit->id,
+            'created_by'         => $kerani->id,
+            'status'             => PdoHeader::STATUS_FINAL,
+            'period_month'       => now()->month,
+            'period_year'        => now()->year,
+        ]);
+        $detail = PdoDetail::factory()->create(['pdo_header_id' => $pdo->id, 'amount' => 8_894_864]);
+        TransferEntry::factory()->create(['pdo_detail_id' => $detail->id, 'amount' => 8_894_864, 'transfer_destination' => 'rek_kebun']);
+
+        $dedDetail = PdoDetail::factory()->create(['pdo_header_id' => $pdo->id, 'expense_item_id' => $dedItem->id, 'amount' => 4_500_000]);
+        TransferEntry::factory()->create([
+            'pdo_detail_id' => $dedDetail->id, 'amount' => -4_500_000, 'transfer_destination' => 'rek_kebun',
+            'entry_source' => 'system', 'is_auto_generated' => true,
+        ]);
+
+        $summary = $this->service->summary($this->manajer);
+        $unitRow = collect($summary['by_unit'])->firstWhere('unit_id', $this->unit->id);
+
+        $this->assertEquals(0, $summary['total_realized']);
+        $this->assertEquals(0, $unitRow['total_realized']);
+    }
 }

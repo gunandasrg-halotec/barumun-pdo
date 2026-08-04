@@ -215,6 +215,48 @@ class RecapQueryServiceTest extends TestCase
         $this->assertEquals(800_000, $item['total_transfer']);
     }
 
+    // ── 10: KPI saldo_kebun tidak boleh terinflasi oleh potongan yang belum ──
+    //         punya realisasi asli (bug: potongan dianggap "sudah direalisasi"
+    //         di KPI, padahal itu hanya untuk plafon validasi/tampilan baris).
+
+    public function test_kpi_saldo_kebun_not_inflated_by_unrealized_deduction(): void
+    {
+        $keraniRole = Role::firstOrCreate(['code' => Role::KERANI], ['name' => 'Kerani']);
+        $kerani     = User::factory()->create([
+            'role_id'            => $keraniRole->id,
+            'plantation_unit_id' => $this->unit->id,
+        ]);
+        $pdo = PdoHeader::factory()->create([
+            'company_id'         => $this->companyId,
+            'plantation_unit_id' => $this->unit->id,
+            'created_by'         => $kerani->id,
+            'status'             => PdoHeader::STATUS_FINAL,
+            'period_month'       => $this->month,
+            'period_year'        => $this->year,
+        ]);
+
+        // Item biasa: transfer 8.894.864, belum ada realisasi.
+        $cat  = ExpenseCategory::factory()->create(['company_id' => $this->companyId, 'include_in_recap' => true]);
+        $sub  = ExpenseSubcategory::factory()->create(['category_id' => $cat->id]);
+        $item = ExpenseItem::factory()->create(['subcategory_id' => $sub->id]);
+        $detail = PdoDetail::factory()->create(['pdo_header_id' => $pdo->id, 'expense_item_id' => $item->id, 'amount' => 8_894_864]);
+        TransferEntry::factory()->create(['pdo_detail_id' => $detail->id, 'amount' => 8_894_864, 'transfer_destination' => 'rek_kebun']);
+
+        // Item potongan: transfer -4.500.000 (mengurangi total transfer), tanpa realisasi.
+        $dedItem = ExpenseItem::factory()->create(['subcategory_id' => $sub->id, 'is_deduction' => true]);
+        $dedDetail = PdoDetail::factory()->create(['pdo_header_id' => $pdo->id, 'expense_item_id' => $dedItem->id, 'amount' => 4_500_000]);
+        TransferEntry::factory()->create([
+            'pdo_detail_id' => $dedDetail->id, 'amount' => -4_500_000, 'transfer_destination' => 'rek_kebun',
+            'entry_source' => 'system', 'is_auto_generated' => true,
+        ]);
+
+        $result = $this->query();
+
+        $this->assertEquals(4_394_864, $result['transfer_kebun']);
+        $this->assertEquals(0, $result['realisasi_kebun']);
+        $this->assertEquals(4_394_864, $result['saldo_kebun']);
+    }
+
     // ── 8: kerani unit is enforced by controller (tested via feature) ─────────
 
     public function test_kerani_unit_filter_enforced_regardless_of_request_param(): void

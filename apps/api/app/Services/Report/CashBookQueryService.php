@@ -246,10 +246,23 @@ class CashBookQueryService
      * sebelum sistem PDO dipakai, lihat UnitOpeningBalance — supaya saldo
      * berjalan akurat sejak titik mulai pemakaian sistem, bukan mulai dari nol.
      *
-     * Potongan periode-periode sebelumnya juga dinetkan di sini (mengurangi
-     * totalExpenses, karena dana itu sebenarnya sudah keluar sebelum periode
-     * tsb, bukan pengeluaran baru) — supaya saldo berjalan tetap akurat lintas
-     * periode, konsisten dengan penetapan di buildExpenseRows().
+     * Potongan (transfer negatif) HANYA mengurangi total pengeluaran (PDO,
+     * SUB-KATEGORI) YANG SAMA, dan HANYA jika (PDO, sub-kategori) itu sudah
+     * punya realisasi tercatat (berarti realisasi penuh — termasuk bagian yang
+     * sudah dipanjar — sudah dilaporkan kerani). Dikelompokkan per PDO HEADER
+     * juga (bukan cuma sub-kategori) karena sub-kategori yang sama dipakai
+     * ulang tiap bulan — tanpa itu, realisasi PDO bulan lalu di sub-kategori
+     * yang sama akan keliru dianggap "mengkompensasi" potongan bulan ini.
+     * (PDO, sub-kategori) tanpa realisasi sama sekali TIDAK dikurangi apa pun
+     * di sisi pengeluaran — potongannya sudah cukup mengecilkan $totalReceipts
+     * satu kali (fakta transfer). Ini persis logika buildExpenseRows() di
+     * bawah (yang otomatis ter-scope ke 1 PDO/periode), diterapkan untuk batas
+     * waktu kumulatif ($before) lintas banyak PDO/periode. Sebelum perbaikan
+     * ini, potongan dikreditkan balik secara pukul-rata (pool-level) sebelum
+     * realisasi penyeimbangnya benar-benar tercatat, membuat saldo kelebihan —
+     * lihat kasus nyata: PDO Agustus Sosa, potongan Rp 4.500.000 belum
+     * direalisasikan, saldo tampil Rp 24.626.864 padahal seharusnya
+     * Rp 20.126.864.
      */
     private function cumulativeBalanceBefore(string $unitId, Carbon $before): int
     {
@@ -261,19 +274,32 @@ class CashBookQueryService
             ->where('transfer_date', '<', $before->toDateString())
             ->sum('amount');
 
-        $totalExpenses = (int) RealizationEntry::query()
+        $realizationByPdoSubcategory = RealizationEntry::query()
             ->whereIn('funding_source', self::EXPENSE_FUNDING_SOURCES)
             ->whereHas('pdoDetail.pdoHeader', fn ($q) => $q->where('plantation_unit_id', $unitId))
             ->where('transaction_date', '<', $before->toDateString())
-            ->sum('amount');
+            ->join('pdo_details', 'pdo_details.id', '=', 'realization_entries.pdo_detail_id')
+            ->join('expense_items', 'expense_items.id', '=', 'pdo_details.expense_item_id')
+            ->selectRaw("pdo_details.pdo_header_id || '|' || expense_items.subcategory_id as pdo_sub_key, SUM(realization_entries.amount) as total")
+            ->groupBy('pdo_details.pdo_header_id', 'expense_items.subcategory_id')
+            ->pluck('total', 'pdo_sub_key');
 
-        $totalDeduction = (int) TransferEntry::query()
+        $deductionByPdoSubcategory = TransferEntry::query()
             ->whereIn('transfer_destination', self::RECEIPT_DESTINATIONS)
             ->whereHas('pdoDetail.expenseItem', fn ($q) => $q->where('is_deduction', true))
             ->whereHas('pdoDetail.pdoHeader', fn ($q) => $q->where('plantation_unit_id', $unitId))
             ->where('transfer_date', '<', $before->toDateString())
-            ->sum('amount'); // negatif
+            ->join('pdo_details', 'pdo_details.id', '=', 'transfer_entries.pdo_detail_id')
+            ->join('expense_items', 'expense_items.id', '=', 'pdo_details.expense_item_id')
+            ->selectRaw("pdo_details.pdo_header_id || '|' || expense_items.subcategory_id as pdo_sub_key, SUM(transfer_entries.amount) as total")
+            ->groupBy('pdo_details.pdo_header_id', 'expense_items.subcategory_id')
+            ->pluck('total', 'pdo_sub_key'); // negatif
 
-        return $seed + $totalReceipts - ($totalExpenses + $totalDeduction);
+        $totalExpenses = 0;
+        foreach ($realizationByPdoSubcategory as $pdoSubKey => $realized) {
+            $totalExpenses += (int) $realized + (int) ($deductionByPdoSubcategory[$pdoSubKey] ?? 0);
+        }
+
+        return $seed + $totalReceipts - $totalExpenses;
     }
 }

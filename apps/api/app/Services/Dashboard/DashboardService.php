@@ -83,29 +83,14 @@ class DashboardService
               {$unitClause}
         ", $params);
 
-        // Item potongan (mis. POTONGAN PANJAR) = down payment yang SUDAH
-        // direalisasikan (dibayar tunai) periode sebelumnya, direpresentasikan
-        // sebagai TransferEntry NEGATIF (bukan RealizationEntry) — sehingga
-        // SUM(re.amount) polos di atas overstate total_realized (dan understate
-        // saldo) dibanding Rekap Buku Kas & Buku Kas Harian. Netkan di sini,
-        // konsisten dengan RecapQueryService::resolveRealization().
-        $deductionStats = DB::selectOne("
-            SELECT COALESCE(SUM(te.amount), 0) AS total_deduction
-            FROM pdo_headers ph
-            LEFT JOIN pdo_details pd   ON pd.pdo_header_id = ph.id
-            LEFT JOIN expense_items ei ON ei.id = pd.expense_item_id
-            LEFT JOIN transfer_entries te ON te.pdo_detail_id = pd.id AND te.status = 'committed'
-            WHERE ph.company_id = ?
-              AND ph.period_month = ?
-              AND ph.period_year  = ?
-              AND ei.is_deduction = TRUE
-              {$unitClause}
-        ", $params);
-
+        // KPI "Total Realisasi" melaporkan POSISI KAS FISIK — HARUS pakai realisasi
+        // asli (raw), tanpa menganggap transfer potongan (is_deduction) sebagai
+        // realisasi. Lihat penjelasan lengkap & alasan di
+        // RecapQueryService::getRecapData() (perbaikan yang sama).
         $monthlyStats = (object) [
             'total_amount' => $amountStats->total_amount,
             'total_transferred' => $transferStats->total_transferred,
-            'total_realized' => (int) $realizationStats->total_realized + (int) $deductionStats->total_deduction,
+            'total_realized' => (int) $realizationStats->total_realized,
             'items_without_proof' => $realizationStats->items_without_proof,
         ];
 
@@ -166,29 +151,9 @@ class DashboardService
               {$unitClause}
             GROUP BY pu.id
         ", $params);
-        $realizedRawByUnit = collect($unitRealizedRows)->pluck('total_realized', 'unit_id');
-
-        // Netkan potongan per unit juga (lihat penjelasan di $deductionStats atas).
-        $unitDeductionRows = DB::select("
-            SELECT
-                pu.id AS unit_id,
-                COALESCE(SUM(te.amount), 0) AS total_deduction
-            FROM pdo_headers ph
-            LEFT JOIN plantation_units pu ON pu.id = ph.plantation_unit_id
-            LEFT JOIN pdo_details pd   ON pd.pdo_header_id = ph.id
-            LEFT JOIN expense_items ei ON ei.id = pd.expense_item_id
-            LEFT JOIN transfer_entries te ON te.pdo_detail_id = pd.id AND te.status = 'committed'
-            WHERE ph.company_id = ?
-              AND ph.period_month = ?
-              AND ph.period_year  = ?
-              AND ei.is_deduction = TRUE
-              {$unitClause}
-            GROUP BY pu.id
-        ", $params);
-        $deductionByUnit = collect($unitDeductionRows)->pluck('total_deduction', 'unit_id');
-
-        $realizedByUnit = $realizedRawByUnit->keys()->merge($deductionByUnit->keys())->unique()
-            ->mapWithKeys(fn ($id) => [$id => (int) ($realizedRawByUnit[$id] ?? 0) + (int) ($deductionByUnit[$id] ?? 0)]);
+        // "Realisasi" per unit melaporkan posisi kas fisik — pakai raw, tanpa
+        // netting potongan (lihat penjelasan di atas KPI total_realized global).
+        $realizedByUnit = collect($unitRealizedRows)->pluck('total_realized', 'unit_id');
 
         // Realisasi kantong Pribadi/Vendor per unit (funding_source rekening_utama) —
         // dipisah dari kebun karena saldo Kas Kebun sekarang dihitung kumulatif
@@ -208,36 +173,11 @@ class DashboardService
               {$unitClause}
             GROUP BY pu.id
         ", $params);
-        $pribadiRealizedRawByUnit = collect($unitPribadiRealizedRows)->pluck('total_realized', 'unit_id');
-
-        // Potongan Panjar yang didanai kantong Pribadi/Vendor — sama seperti di kantong
-        // kebun, ini direpresentasikan sebagai TransferEntry NEGATIF (bukan
-        // RealizationEntry), jadi tidak pernah ikut ter-SUM di query realisasi di atas.
-        // Tanpa netting ini, saldo Pribadi/Vendor understate sebesar nilai potongan
-        // (mis. BN: -1.200.000) dan tidak konsisten dengan saldo_pribadi di Rekap
-        // Buku Kas — lihat RecapQueryService::resolveRealization().
-        $unitPribadiDeductionRows = DB::select("
-            SELECT
-                pu.id AS unit_id,
-                COALESCE(SUM(te.amount), 0) AS total_deduction
-            FROM pdo_headers ph
-            LEFT JOIN plantation_units pu ON pu.id = ph.plantation_unit_id
-            LEFT JOIN pdo_details pd   ON pd.pdo_header_id = ph.id
-            LEFT JOIN expense_items ei ON ei.id = pd.expense_item_id
-            LEFT JOIN transfer_entries te ON te.pdo_detail_id = pd.id
-                AND te.status = 'committed'
-                AND te.transfer_destination IN ('pribadi', 'vendor')
-            WHERE ph.company_id = ?
-              AND ph.period_month = ?
-              AND ph.period_year  = ?
-              AND ei.is_deduction = TRUE
-              {$unitClause}
-            GROUP BY pu.id
-        ", $params);
-        $pribadiDeductionByUnit = collect($unitPribadiDeductionRows)->pluck('total_deduction', 'unit_id');
-
-        $pribadiRealizedByUnit = $pribadiRealizedRawByUnit->keys()->merge($pribadiDeductionByUnit->keys())->unique()
-            ->mapWithKeys(fn ($id) => [$id => (int) ($pribadiRealizedRawByUnit[$id] ?? 0) + (int) ($pribadiDeductionByUnit[$id] ?? 0)]);
+        // Saldo Pribadi/Vendor melaporkan posisi kas fisik — pakai realisasi raw,
+        // tanpa netting potongan (lihat penjelasan di atas KPI total_realized global;
+        // transfer_pribadi/vendor sudah literal termasuk potongan, jadi cukup satu
+        // sisi saja yang mengurangi, tidak perlu di-kreditkan lagi di sisi realisasi).
+        $pribadiRealizedByUnit = collect($unitPribadiRealizedRows)->pluck('total_realized', 'unit_id');
 
         // Transfer per unit per destination
         $unitDestRows = DB::select("
@@ -347,12 +287,10 @@ class DashboardService
                 ec.include_in_recap,
                 COALESCE(SUM(CASE WHEN ei.is_deduction THEN -pd.amount ELSE pd.amount END), 0) AS total_budget,
                 COALESCE(SUM(te_agg.total_transferred), 0) AS total_transferred,
-                -- Item potongan (is_deduction) tidak pernah punya realization_entries
-                -- (direpresentasikan sebagai TransferEntry negatif) — netkan lewat
-                -- te_agg supaya total_realized konsisten dengan
-                -- RecapQueryService::resolveRealization().
-                COALESCE(SUM(re_agg.total_realized), 0)
-                    + COALESCE(SUM(CASE WHEN ei.is_deduction THEN te_agg.total_transferred ELSE 0 END), 0) AS total_realized
+                -- total_realized melaporkan posisi kas fisik — raw, tanpa
+                -- menganggap transfer potongan (is_deduction) sebagai realisasi
+                -- (lihat RecapQueryService::getRecapData()).
+                COALESCE(SUM(re_agg.total_realized), 0) AS total_realized
             FROM expense_categories ec
             JOIN expense_subcategories esc ON esc.category_id = ec.id
             JOIN expense_items ei ON ei.subcategory_id = esc.id

@@ -48,8 +48,20 @@ class RecapQueryService
 
             $transferKebun   += $tKebun;
             $transferPribadi += $tPribadi;
-            $realisasiKebun   += $this->resolveRealization($isDeduction, $tKebun,   (int) $row->total_realization);
-            $realisasiPribadi += $this->resolveRealization($isDeduction, $tPribadi, (int) $row->total_realization_pribadi);
+            // KPI kas kebun/pribadi (dipakai untuk saldo_kebun, saldo_pribadi,
+            // saldo_kas_kebun_saat_ini) melaporkan POSISI KAS FISIK — berapa yang
+            // benar-benar sudah dibelanjakan — jadi HARUS pakai realisasi asli
+            // (real, tanpa override potongan). Override resolveRealization() (yang
+            // menganggap potongan = realisasi) hanya untuk PLAFON VALIDASI
+            // (RealizationEntryService::totalRealizedForGroup(), supaya kerani tidak
+            // diblokir saat nanti merealisasikan item yang sebagian sudah dipanjar)
+            // dan untuk tampilan per-baris tabel (supaya baris potongan tidak
+            // menampilkan saldo negatif yang menyesatkan). Memakainya di sini dulu
+            // membuat KPI Saldo naik keliru sebelum realisasi item terkait benar-benar
+            // tercatat — lihat isu: transfer 4.394.864, potongan belum direalisasi,
+            // tapi Saldo tampil 8.894.864 padahal seharusnya = transfer (4.394.864).
+            $realisasiKebun   += (int) $row->total_realization;
+            $realisasiPribadi += (int) $row->total_realization_pribadi;
         }
 
         // Saldo awal kas kebun di AWAL periode PDO ini — KPI tetap, tidak
