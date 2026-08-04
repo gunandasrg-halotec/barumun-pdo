@@ -2,25 +2,31 @@
 
 namespace App\Exports;
 
-use Maatwebsite\Excel\Concerns\WithEvents;
 use Maatwebsite\Excel\Concerns\ShouldAutoSize;
+use Maatwebsite\Excel\Concerns\WithEvents;
 use Maatwebsite\Excel\Events\AfterSheet;
 use PhpOffice\PhpSpreadsheet\Style\Alignment;
 use PhpOffice\PhpSpreadsheet\Style\Border;
 use PhpOffice\PhpSpreadsheet\Style\Fill;
 use PhpOffice\PhpSpreadsheet\Style\NumberFormat;
 
-class PdoExport implements WithEvents, ShouldAutoSize
+class PdoExport implements ShouldAutoSize, WithEvents
 {
     // Hex fills (ARGB)
-    private const FILL_HEADER     = 'FFD9EAD3'; // column headings
-    private const FILL_KATEGORI   = 'FFB6D7A8'; // kategori row
-    private const FILL_SUB        = 'FFD9EAD3'; // sub-kategori row
+    private const FILL_HEADER = 'FFD9EAD3'; // column headings
+
+    private const FILL_KATEGORI = 'FFB6D7A8'; // kategori row
+
+    private const FILL_SUB = 'FFD9EAD3'; // sub-kategori row
+
     private const FILL_SUBTOT_SUB = 'FFEFF7ED'; // subtotal sub
+
     private const FILL_SUBTOT_CAT = 'FFD9EAD3'; // total kategori
-    private const FILL_GRAND      = 'FF93C47D'; // grand total
+
+    private const FILL_GRAND = 'FF93C47D'; // grand total
 
     private const COLS = 11; // A..K
+
     private const LAST = 'K';
 
     public function __construct(private array $data) {}
@@ -30,11 +36,10 @@ class PdoExport implements WithEvents, ShouldAutoSize
         return [
             AfterSheet::class => function (AfterSheet $event) {
                 $sheet = $event->sheet->getDelegate();
-                $pdo   = $this->data['pdo'];
-                $cats  = $this->data['categories'];
+                $pdo = $this->data['pdo'];
+                $cats = $this->data['categories'];
                 $row = 1;
-                $currentCategoryRow = null;
-                $categoryItemRanges = [];
+                $allDetailRanges = [];
 
                 // ── Meta block ───────────────────────────────────────────
                 foreach ([
@@ -46,7 +51,7 @@ class PdoExport implements WithEvents, ShouldAutoSize
                 ] as [$label, $value]) {
                     $sheet->setCellValue("A{$row}", $label);
                     $sheet->setCellValue("B{$row}", $value);
-                    $sheet->mergeCells("B{$row}:" . self::LAST . "{$row}");
+                    $sheet->mergeCells("B{$row}:".self::LAST."{$row}");
                     $sheet->getStyle("A{$row}")->getFont()->setBold(true);
                     $row++;
                 }
@@ -57,42 +62,41 @@ class PdoExport implements WithEvents, ShouldAutoSize
                     'No.', 'Kode Akun', 'Kategori / Item Biaya', 'Deskripsi',
                     'Vol', 'Satuan', 'Rate', 'Jumlah', 'Transfer', 'Realisasi', 'Saldo',
                 ]], null, "A{$row}");
-                $this->applyStyle($sheet, "A{$row}:" . self::LAST . "{$row}", [
-                    'font'      => ['bold' => true],
-                    'fill'      => self::FILL_HEADER,
-                    'align'     => Alignment::HORIZONTAL_CENTER,
-                    'border'    => Border::BORDER_THIN,
+                $this->applyStyle($sheet, "A{$row}:".self::LAST."{$row}", [
+                    'font' => ['bold' => true],
+                    'fill' => self::FILL_HEADER,
+                    'align' => Alignment::HORIZONTAL_CENTER,
+                    'border' => Border::BORDER_THIN,
                 ]);
                 $row++;
 
                 $no = 1;
 
                 foreach ($cats as $catGroup) {
-                    $cat      = $catGroup['category'];
-                    $catLabel = trim(($cat['code'] ?? '') . ' — ' . ($cat['name'] ?? 'Tanpa Kategori'));
+                    $cat = $catGroup['category'];
+                    $catLabel = trim(($cat['code'] ?? '').' — '.($cat['name'] ?? 'Tanpa Kategori'));
 
                     // ── Kategori row ────────────────────────────────────
                     $sheet->setCellValue("A{$row}", $catLabel);
-                    $sheet->mergeCells("A{$row}:" . self::LAST . "{$row}");
-                    $this->applyStyle($sheet, "A{$row}:" . self::LAST . "{$row}", [
-                        'font'   => ['bold' => true],
-                        'fill'   => self::FILL_KATEGORI,
+                    $sheet->mergeCells("A{$row}:".self::LAST."{$row}");
+                    $this->applyStyle($sheet, "A{$row}:".self::LAST."{$row}", [
+                        'font' => ['bold' => true],
+                        'fill' => self::FILL_KATEGORI,
                         'border' => Border::BORDER_THIN,
                     ]);
-                    $currentCategoryRow = $row;
-                    $categoryItemRanges[$currentCategoryRow] = [];
+                    $categoryDetailRanges = [];
                     $row++;
 
                     foreach ($catGroup['subcategories'] as $subGroup) {
-                        $sub      = $subGroup['subcategory'];
-                        $subLabel = trim(($sub['code'] ?? '') . ' — ' . ($sub['name'] ?? 'Tanpa Sub-Kategori'));
+                        $sub = $subGroup['subcategory'];
+                        $subLabel = trim(($sub['code'] ?? '').' — '.($sub['name'] ?? 'Tanpa Sub-Kategori'));
 
                         // ── Sub-Kategori row ────────────────────────────
-                        $sheet->setCellValue("A{$row}", '   ' . $subLabel);
-                        $sheet->mergeCells("A{$row}:" . self::LAST . "{$row}");
-                        $this->applyStyle($sheet, "A{$row}:" . self::LAST . "{$row}", [
-                            'font'   => ['bold' => true, 'italic' => true],
-                            'fill'   => self::FILL_SUB,
+                        $sheet->setCellValue("A{$row}", '   '.$subLabel);
+                        $sheet->mergeCells("A{$row}:".self::LAST."{$row}");
+                        $this->applyStyle($sheet, "A{$row}:".self::LAST."{$row}", [
+                            'font' => ['bold' => true, 'italic' => true],
+                            'fill' => self::FILL_SUB,
                             'border' => Border::BORDER_THIN,
                         ]);
                         $row++;
@@ -100,7 +104,7 @@ class PdoExport implements WithEvents, ShouldAutoSize
 
                         // ── Item rows ────────────────────────────────────
                         foreach ($subGroup['details'] as $detail) {
-                            $item  = $detail->expenseItem;
+                            $item = $detail->expenseItem;
                             // Item potongan (is_deduction) → Jumlah signed (minus), mengurangi total.
                             $signedAmount = ($item?->is_deduction ?? false)
                                 ? -($detail->amount ?? 0)
@@ -123,7 +127,7 @@ class PdoExport implements WithEvents, ShouldAutoSize
                                 $saldo,
                             ]], null, "A{$row}");
 
-                            $this->applyStyle($sheet, "A{$row}:" . self::LAST . "{$row}", [
+                            $this->applyStyle($sheet, "A{$row}:".self::LAST."{$row}", [
                                 'border' => Border::BORDER_THIN,
                             ]);
                             $this->applyNumberFormat($sheet, $row, ['G', 'H', 'I', 'J', 'K']);
@@ -135,32 +139,34 @@ class PdoExport implements WithEvents, ShouldAutoSize
 
                         // ── Subtotal sub-kategori ────────────────────────
                         $sheet->setCellValue("A{$row}", '');
-                        $sheet->setCellValue("C{$row}", '      Subtotal ' . $subLabel);
+                        $sheet->setCellValue("C{$row}", '      Subtotal '.$subLabel);
                         $sheet->mergeCells("A{$row}:G{$row}");
                         $sheet->setCellValue("H{$row}", $this->sumFormula('H', [[$itemStartRow, $itemEndRow]]));
-                        $this->applyStyle($sheet, "A{$row}:" . self::LAST . "{$row}", [
-                            'font'   => ['bold' => true, 'italic' => true],
-                            'fill'   => self::FILL_SUBTOT_SUB,
+                        $this->applyStyle($sheet, "A{$row}:".self::LAST."{$row}", [
+                            'font' => ['bold' => true, 'italic' => true],
+                            'fill' => self::FILL_SUBTOT_SUB,
                             'border' => Border::BORDER_THIN,
                         ]);
                         $sheet->getStyle("H{$row}")->getNumberFormat()
                             ->setFormatCode(NumberFormat::FORMAT_NUMBER_COMMA_SEPARATED1);
-                        if ($itemEndRow >= $itemStartRow && $currentCategoryRow !== null) {
-                            $categoryItemRanges[$currentCategoryRow][] = [$itemStartRow, $itemEndRow];
+                        if ($itemEndRow >= $itemStartRow) {
+                            $detailRange = [$itemStartRow, $itemEndRow];
+                            $categoryDetailRanges[] = $detailRange;
+                            $allDetailRanges[] = $detailRange;
                         }
                         $row++;
                     }
 
                     // ── Total kategori ───────────────────────────────────
                     $sheet->mergeCells("A{$row}:G{$row}");
-                    $sheet->setCellValue("A{$row}", 'Total ' . $catLabel);
+                    $sheet->setCellValue("A{$row}", 'Total '.$catLabel);
                     $sheet->setCellValue(
                         "H{$row}",
-                        $this->sumFormula('H', $categoryItemRanges[$currentCategoryRow] ?? [])
+                        $this->sumFormula('H', $categoryDetailRanges)
                     );
-                    $this->applyStyle($sheet, "A{$row}:" . self::LAST . "{$row}", [
-                        'font'   => ['bold' => true],
-                        'fill'   => self::FILL_SUBTOT_CAT,
+                    $this->applyStyle($sheet, "A{$row}:".self::LAST."{$row}", [
+                        'font' => ['bold' => true],
+                        'fill' => self::FILL_SUBTOT_CAT,
                         'border' => Border::BORDER_THIN,
                     ]);
                     $sheet->getStyle("H{$row}")->getNumberFormat()
@@ -175,12 +181,12 @@ class PdoExport implements WithEvents, ShouldAutoSize
                     "H{$row}",
                     $this->sumFormula(
                         'H',
-                        array_values(array_merge(...array_values($categoryItemRanges) ?: [[]]))
+                        $allDetailRanges
                     )
                 );
-                $this->applyStyle($sheet, "A{$row}:" . self::LAST . "{$row}", [
-                    'font'   => ['bold' => true, 'size' => 12],
-                    'fill'   => self::FILL_GRAND,
+                $this->applyStyle($sheet, "A{$row}:".self::LAST."{$row}", [
+                    'font' => ['bold' => true, 'size' => 12],
+                    'fill' => self::FILL_GRAND,
                     'border' => Border::BORDER_MEDIUM,
                 ]);
                 $sheet->getStyle("H{$row}")->getNumberFormat()
@@ -188,8 +194,8 @@ class PdoExport implements WithEvents, ShouldAutoSize
 
                 // ── Fixed column widths ──────────────────────────────────
                 foreach (['A' => 6, 'B' => 16, 'C' => 32, 'D' => 36,
-                          'E' => 7, 'F' => 10, 'G' => 16, 'H' => 18,
-                          'I' => 16, 'J' => 16, 'K' => 16] as $col => $width) {
+                    'E' => 7, 'F' => 10, 'G' => 16, 'H' => 18,
+                    'I' => 16, 'J' => 16, 'K' => 16] as $col => $width) {
                     $sheet->getColumnDimension($col)->setWidth($width);
                 }
             },
@@ -205,10 +211,18 @@ class PdoExport implements WithEvents, ShouldAutoSize
         }
 
         $font = [];
-        if (!empty($opts['font']['bold']))   $font['bold']   = true;
-        if (!empty($opts['font']['italic'])) $font['italic'] = true;
-        if (!empty($opts['font']['size']))   $font['size']   = $opts['font']['size'];
-        if ($font) $style['font'] = $font;
+        if (! empty($opts['font']['bold'])) {
+            $font['bold'] = true;
+        }
+        if (! empty($opts['font']['italic'])) {
+            $font['italic'] = true;
+        }
+        if (! empty($opts['font']['size'])) {
+            $font['size'] = $opts['font']['size'];
+        }
+        if ($font) {
+            $style['font'] = $font;
+        }
 
         if (isset($opts['align'])) {
             $style['alignment'] = ['horizontal' => $opts['align']];
@@ -225,7 +239,7 @@ class PdoExport implements WithEvents, ShouldAutoSize
         }
     }
 
-    private function sumFormula(string $col, array $ranges): string|int|float
+    private function sumFormula(string $col, array $ranges): string
     {
         $refs = [];
         foreach ($ranges as [$startRow, $endRow]) {
@@ -234,13 +248,14 @@ class PdoExport implements WithEvents, ShouldAutoSize
             }
         }
 
-        return empty($refs) ? 0 : '=SUM(' . implode(',', $refs) . ')';
+        return empty($refs) ? '=0' : '=SUM('.implode(',', $refs).')';
     }
 
     private function formatPeriod(int $month, int $year): string
     {
         $names = ['', 'Januari', 'Februari', 'Maret', 'April', 'Mei', 'Juni',
-                  'Juli', 'Agustus', 'September', 'Oktober', 'November', 'Desember'];
-        return ($names[$month] ?? $month) . ' ' . $year;
+            'Juli', 'Agustus', 'September', 'Oktober', 'November', 'Desember'];
+
+        return ($names[$month] ?? $month).' '.$year;
     }
 }

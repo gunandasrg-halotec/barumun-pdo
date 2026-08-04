@@ -14,12 +14,12 @@ class PdoExportTest extends TestCase
     {
         $export = new PdoExport([
             'pdo' => (object) [
-                'pdo_number'       => 'PDO-001',
-                'plantationUnit'   => (object) ['name' => 'Unit A'],
-                'period_month'     => 6,
-                'period_year'      => 2026,
-                'status'           => 'final',
-                'notes'            => 'Catatan',
+                'pdo_number' => 'PDO-001',
+                'plantationUnit' => (object) ['name' => 'Unit A'],
+                'period_month' => 6,
+                'period_year' => 2026,
+                'status' => 'final',
+                'notes' => 'Catatan',
             ],
             'categories' => [
                 [
@@ -48,7 +48,7 @@ class PdoExportTest extends TestCase
         ]);
 
         $binary = Excel::raw($export, ExcelFormat::XLSX);
-        $path   = tempnam(sys_get_temp_dir(), 'pdo-export-') . '.xlsx';
+        $path = tempnam(sys_get_temp_dir(), 'pdo-export-').'.xlsx';
         file_put_contents($path, $binary);
 
         $sheet = IOFactory::load($path)->getActiveSheet();
@@ -57,6 +57,10 @@ class PdoExportTest extends TestCase
         $this->assertSame('=SUM(H14:H14)', $sheet->getCell('H15')->getValue());
         $this->assertSame('=SUM(H10:H11,H14:H14)', $sheet->getCell('H16')->getValue());
         $this->assertSame('=SUM(H10:H11,H14:H14)', $sheet->getCell('H17')->getValue());
+        $this->assertSame(300.0, $sheet->getCell('H12')->getCalculatedValue());
+        $this->assertSame(150.0, $sheet->getCell('H15')->getCalculatedValue());
+        $this->assertSame(450.0, $sheet->getCell('H16')->getCalculatedValue());
+        $this->assertSame(450.0, $sheet->getCell('H17')->getCalculatedValue());
 
         @unlink($path);
     }
