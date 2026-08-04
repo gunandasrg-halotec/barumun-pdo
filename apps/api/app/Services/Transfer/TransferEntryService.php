@@ -174,10 +174,10 @@ class TransferEntryService
                     )
                     : null,
                 'category'         => $detail->expenseItem?->subcategory?->category
-                    ? $detail->expenseItem->subcategory->category->only(['code', 'name'])
+                    ? $detail->expenseItem->subcategory->category->only(['id', 'code', 'name', 'display_order'])
                     : null,
                 'subcategory'      => $detail->expenseItem?->subcategory
-                    ? $detail->expenseItem->subcategory->only(['code', 'name'])
+                    ? $detail->expenseItem->subcategory->only(['id', 'code', 'name', 'display_order'])
                     : null,
                 'description'      => $detail->description,
                 'amount_approved'  => $detail->amount,
