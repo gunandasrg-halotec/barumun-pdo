@@ -1,8 +1,9 @@
-import { Fragment, useEffect, useMemo, useRef, useState } from 'react'
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '@/lib/api'
 import { Button } from '@/components/ui/Button'
+import { Modal } from '@/components/ui/Modal'
 import { useToastStore } from '@/store/toast.store'
 import { useAuthStore } from '@/store/auth.store'
 import { fmt } from '@/lib/format'
@@ -24,6 +25,16 @@ type TransferEntryRecord = {
   transfer_destination: TransferDest
   notes: string | null
   status?: 'draft' | 'committed'
+}
+
+/** Payload satu baris draft yang dikirim ke POST /pdo/{id}/transfers/bulk. */
+type DraftEntry = {
+  pdo_detail_id: string
+  amount: number
+  transfer_date: string
+  reference_number: string | null
+  notes: string | null
+  transfer_destination: TransferDest
 }
 
 interface ExpenseItemInfo {
@@ -636,6 +647,27 @@ export function TransferBulkPage() {
 
   const hasDrafts = useMemo(() => details.some((d) => d.draft_entries.length > 0), [details])
 
+  /** Jumlah entri draft yang saat ini tersimpan — dipakai modal untuk memberi tahu
+   *  berapa yang akan diganti/dihapus, karena simpan draft bersifat sinkronisasi penuh. */
+  const existingDraftCount = useMemo(
+    () => details.reduce((n, d) => n + d.draft_entries.length, 0),
+    [details],
+  )
+
+  /** Entri yang menunggu konfirmasi user di modal. null = modal tertutup. */
+  const [confirmSave, setConfirmSave] = useState<DraftEntry[] | null>(null)
+
+  const confirmSummary = useMemo(() => {
+    const entries = confirmSave ?? []
+    const dest = { rek_kebun: 0, pribadi: 0, vendor: 0 }
+    let total = 0
+    for (const e of entries) {
+      total += e.amount
+      dest[e.transfer_destination] += e.amount
+    }
+    return { count: entries.length, total, dest }
+  }, [confirmSave])
+
   const toggleExpand = (id: string) => {
     setExpandedIds((prev) => {
       const next = new Set(prev)
@@ -661,21 +693,26 @@ export function TransferBulkPage() {
     (err as { response?: { data?: { error?: { message?: string } } }; message?: string })
       ?.response?.data?.error?.message ?? (err as { message?: string })?.message ?? fallback
 
+  // Dipisah dari save.mutationFn supaya jumlah & total entri bisa dihitung SEBELUM
+  // disimpan — dipakai modal konfirmasi di bawah. Logikanya tidak diubah.
+  const buildEntries = useCallback((): DraftEntry[] => {
+    const entries: DraftEntry[] = []
+    rows.forEach((row) => {
+      if (row.isSplit) {
+        if (Number(row.split.amount1) > 0) entries.push({ pdo_detail_id: row.pdo_detail_id, amount: Number(row.split.amount1), transfer_date: row.split.transfer_date, reference_number: row.split.reference_number || null, notes: row.split.notes || null, transfer_destination: row.split.dest1 })
+        if (Number(row.split.amount2) > 0) entries.push({ pdo_detail_id: row.pdo_detail_id, amount: Number(row.split.amount2), transfer_date: row.split.transfer_date, reference_number: row.split.reference_number || null, notes: row.split.notes || null, transfer_destination: row.split.dest2 })
+      } else if (Number(row.normal.amount) > 0) {
+        entries.push({ pdo_detail_id: row.pdo_detail_id, amount: Number(row.normal.amount), transfer_date: row.normal.transfer_date, reference_number: row.normal.reference_number || null, notes: row.normal.notes || null, transfer_destination: row.normal.dest })
+      }
+    })
+    return entries
+  }, [rows])
+
   const save = useMutation({
-    mutationFn: () => {
-      const entries: object[] = []
-      rows.forEach((row) => {
-        if (row.isSplit) {
-          if (Number(row.split.amount1) > 0) entries.push({ pdo_detail_id: row.pdo_detail_id, amount: Number(row.split.amount1), transfer_date: row.split.transfer_date, reference_number: row.split.reference_number || null, notes: row.split.notes || null, transfer_destination: row.split.dest1 })
-          if (Number(row.split.amount2) > 0) entries.push({ pdo_detail_id: row.pdo_detail_id, amount: Number(row.split.amount2), transfer_date: row.split.transfer_date, reference_number: row.split.reference_number || null, notes: row.split.notes || null, transfer_destination: row.split.dest2 })
-        } else if (Number(row.normal.amount) > 0) {
-          entries.push({ pdo_detail_id: row.pdo_detail_id, amount: Number(row.normal.amount), transfer_date: row.normal.transfer_date, reference_number: row.normal.reference_number || null, notes: row.normal.notes || null, transfer_destination: row.normal.dest })
-        }
-      })
+    mutationFn: (entries: DraftEntry[]) =>
       // entries kosong = hapus semua draft (sinkronisasi form → draft)
-      return api.post(`/pdo/${pdoId}/transfers/bulk`, { entries })
-    },
-    onSuccess: () => { hasSavedRef.current = true; toast('Draft transfer berhasil disimpan'); invalidate() },
+      api.post(`/pdo/${pdoId}/transfers/bulk`, { entries }),
+    onSuccess: () => { hasSavedRef.current = true; setConfirmSave(null); toast('Draft transfer berhasil disimpan'); invalidate() },
     onError: (err) => toast(errMsg(err, 'Gagal menyimpan draft'), 'error'),
   })
 
@@ -718,7 +755,15 @@ export function TransferBulkPage() {
         return
       }
     }
-    save.mutate()
+
+    // Validasi lolos → minta konfirmasi dulu. Simpan draft mengganti SELURUH draft
+    // PDO ini (sinkronisasi form → draft), jadi form kosong berarti menghapus semua.
+    const entries = buildEntries()
+    if (entries.length === 0 && !hasDrafts) {
+      toast('Belum ada nominal yang diisi — tidak ada yang perlu disimpan', 'error')
+      return
+    }
+    setConfirmSave(entries)
   }
 
   const handleCommit = () => {
@@ -1230,6 +1275,93 @@ export function TransferBulkPage() {
           </Button>
         )}
       </div>
+
+      {/* Konfirmasi simpan draft — mencegah klik tak sengaja mengubah/menghapus draft.
+          Simpan draft = sinkronisasi penuh: isi form MENGGANTI seluruh draft PDO ini,
+          sehingga form kosong berarti menghapus semuanya. */}
+      <Modal
+        open={confirmSave !== null}
+        onClose={() => setConfirmSave(null)}
+        title={confirmSummary.count > 0 ? 'Simpan Draft Transfer Dana?' : 'Hapus Semua Draft Transfer?'}
+        width="w-[520px]"
+      >
+        {confirmSummary.count > 0 ? (
+          <>
+            <div className="rounded-drawer border border-line bg-[#f7faf7] p-4 mb-4">
+              <div className="flex items-baseline justify-between">
+                <span className="text-sm text-muted">Jumlah draft</span>
+                <span className="text-[17px] font-[850] text-ink tabular-nums">
+                  {confirmSummary.count} entri
+                </span>
+              </div>
+              <div className="flex items-baseline justify-between mt-2 pt-2 border-t border-line">
+                <span className="text-sm text-muted">Total nilai</span>
+                <span className="text-[19px] font-[900] text-green tabular-nums">
+                  {fmt(confirmSummary.total)}
+                </span>
+              </div>
+            </div>
+
+            <div className="space-y-1.5 mb-4">
+              {([
+                ['Rek. Kebun', confirmSummary.dest.rek_kebun],
+                ['Rek. Pribadi', confirmSummary.dest.pribadi],
+                ['Vendor', confirmSummary.dest.vendor],
+              ] as const)
+                .filter(([, v]) => v > 0)
+                .map(([label, v]) => (
+                  <div key={label} className="flex items-baseline justify-between text-sm">
+                    <span className="text-muted">{label}</span>
+                    <span className="font-bold tabular-nums">{fmt(v)}</span>
+                  </div>
+                ))}
+            </div>
+
+            {existingDraftCount > 0 && (
+              <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-btn p-3 mb-4">
+                {existingDraftCount} entri draft yang sudah tersimpan akan <b>diganti seluruhnya</b>,
+                bukan ditambahkan.
+              </p>
+            )}
+
+            <div className="flex justify-end gap-2">
+              <Button variant="secondary" type="button" onClick={() => setConfirmSave(null)}>
+                Batal
+              </Button>
+              <Button
+                type="button"
+                loading={save.isPending}
+                onClick={() => confirmSave && save.mutate(confirmSave)}
+              >
+                Ya, Simpan Draft
+              </Button>
+            </div>
+          </>
+        ) : (
+          <>
+            <p className="text-sm text-ink mb-3">
+              Semua nominal pada form kosong. Menyimpan sekarang akan <b>menghapus seluruh draft
+              transfer</b> pada PDO ini.
+            </p>
+            <p className="text-sm text-red bg-red-50 border border-red-200 rounded-btn p-3 mb-4">
+              {existingDraftCount} entri draft akan dihapus dan tidak bisa dikembalikan dari halaman ini.
+            </p>
+            <div className="flex justify-end gap-2">
+              <Button variant="secondary" type="button" onClick={() => setConfirmSave(null)}>
+                Batal
+              </Button>
+              <Button
+                variant="danger"
+                type="button"
+                loading={save.isPending}
+                onClick={() => confirmSave && save.mutate(confirmSave)}
+              >
+                Ya, Hapus Semua Draft
+              </Button>
+            </div>
+          </>
+        )}
+      </Modal>
     </div>
   )
 }
