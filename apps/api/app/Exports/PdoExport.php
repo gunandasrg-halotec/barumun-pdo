@@ -32,9 +32,9 @@ class PdoExport implements WithEvents, ShouldAutoSize
                 $sheet = $event->sheet->getDelegate();
                 $pdo   = $this->data['pdo'];
                 $cats  = $this->data['categories'];
-                $grand = $this->data['grand_total'];
-
                 $row = 1;
+                $currentCategoryRow = null;
+                $categoryItemRanges = [];
 
                 // ── Meta block ───────────────────────────────────────────
                 foreach ([
@@ -79,6 +79,8 @@ class PdoExport implements WithEvents, ShouldAutoSize
                         'fill'   => self::FILL_KATEGORI,
                         'border' => Border::BORDER_THIN,
                     ]);
+                    $currentCategoryRow = $row;
+                    $categoryItemRanges[$currentCategoryRow] = [];
                     $row++;
 
                     foreach ($catGroup['subcategories'] as $subGroup) {
@@ -94,6 +96,7 @@ class PdoExport implements WithEvents, ShouldAutoSize
                             'border' => Border::BORDER_THIN,
                         ]);
                         $row++;
+                        $itemStartRow = $row;
 
                         // ── Item rows ────────────────────────────────────
                         foreach ($subGroup['details'] as $detail) {
@@ -128,12 +131,13 @@ class PdoExport implements WithEvents, ShouldAutoSize
                                 ->setHorizontal(Alignment::HORIZONTAL_CENTER);
                             $row++;
                         }
+                        $itemEndRow = $row - 1;
 
                         // ── Subtotal sub-kategori ────────────────────────
                         $sheet->setCellValue("A{$row}", '');
                         $sheet->setCellValue("C{$row}", '      Subtotal ' . $subLabel);
                         $sheet->mergeCells("A{$row}:G{$row}");
-                        $sheet->setCellValue("H{$row}", $subGroup['subtotal_amount'] ?? 0);
+                        $sheet->setCellValue("H{$row}", $this->sumFormula('H', [[$itemStartRow, $itemEndRow]]));
                         $this->applyStyle($sheet, "A{$row}:" . self::LAST . "{$row}", [
                             'font'   => ['bold' => true, 'italic' => true],
                             'fill'   => self::FILL_SUBTOT_SUB,
@@ -141,13 +145,19 @@ class PdoExport implements WithEvents, ShouldAutoSize
                         ]);
                         $sheet->getStyle("H{$row}")->getNumberFormat()
                             ->setFormatCode(NumberFormat::FORMAT_NUMBER_COMMA_SEPARATED1);
+                        if ($itemEndRow >= $itemStartRow && $currentCategoryRow !== null) {
+                            $categoryItemRanges[$currentCategoryRow][] = [$itemStartRow, $itemEndRow];
+                        }
                         $row++;
                     }
 
                     // ── Total kategori ───────────────────────────────────
                     $sheet->mergeCells("A{$row}:G{$row}");
                     $sheet->setCellValue("A{$row}", 'Total ' . $catLabel);
-                    $sheet->setCellValue("H{$row}", $catGroup['subtotal_amount'] ?? 0);
+                    $sheet->setCellValue(
+                        "H{$row}",
+                        $this->sumFormula('H', $categoryItemRanges[$currentCategoryRow] ?? [])
+                    );
                     $this->applyStyle($sheet, "A{$row}:" . self::LAST . "{$row}", [
                         'font'   => ['bold' => true],
                         'fill'   => self::FILL_SUBTOT_CAT,
@@ -161,7 +171,13 @@ class PdoExport implements WithEvents, ShouldAutoSize
                 // ── Grand total ──────────────────────────────────────────
                 $sheet->mergeCells("A{$row}:G{$row}");
                 $sheet->setCellValue("A{$row}", 'Total Pengajuan');
-                $sheet->setCellValue("H{$row}", $grand);
+                $sheet->setCellValue(
+                    "H{$row}",
+                    $this->sumFormula(
+                        'H',
+                        array_values(array_merge(...array_values($categoryItemRanges) ?: [[]]))
+                    )
+                );
                 $this->applyStyle($sheet, "A{$row}:" . self::LAST . "{$row}", [
                     'font'   => ['bold' => true, 'size' => 12],
                     'fill'   => self::FILL_GRAND,
@@ -207,6 +223,18 @@ class PdoExport implements WithEvents, ShouldAutoSize
             $sheet->getStyle("{$col}{$row}")->getNumberFormat()
                 ->setFormatCode(NumberFormat::FORMAT_NUMBER_COMMA_SEPARATED1);
         }
+    }
+
+    private function sumFormula(string $col, array $ranges): string|int|float
+    {
+        $refs = [];
+        foreach ($ranges as [$startRow, $endRow]) {
+            if ($endRow >= $startRow) {
+                $refs[] = "{$col}{$startRow}:{$col}{$endRow}";
+            }
+        }
+
+        return empty($refs) ? 0 : '=SUM(' . implode(',', $refs) . ')';
     }
 
     private function formatPeriod(int $month, int $year): string
