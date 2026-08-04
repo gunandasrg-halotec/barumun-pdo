@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Transfer;
 
 use App\Http\Controllers\Controller;
+use App\Http\Requests\Transfer\MarkTransferredRequest;
 use App\Http\Requests\Transfer\StoreTransferEntryRequest;
 use App\Http\Requests\Transfer\UpdateTransferEntryRequest;
 use App\Models\PdoDetail;
@@ -164,20 +165,17 @@ class TransferEntryController extends Controller
     }
 
     /** PATCH /transfer-entries/mark-transferred — tandai satu/lebih instruksi sebagai (belum) ditransfer. */
-    public function markTransferred(Request $request): JsonResponse
+    public function markTransferred(MarkTransferredRequest $request): JsonResponse
     {
-        $validated = $request->validate([
-            'entry_ids'      => ['required', 'array', 'min:1'],
-            'entry_ids.*'    => ['uuid'],
-            'is_transferred' => ['required', 'boolean'],
-        ]);
+        $validated = $request->validated();
 
-        if (! $request->user()?->canMarkTransferExecuted()) {
-            abort(response()->json(['success' => false, 'error' => ['code' => 'FORBIDDEN', 'message' => 'Anda tidak berhak menandai status transfer.']], 403));
-        }
+        $result = $this->service->markTransferred(
+            $validated['entry_ids'],
+            $validated['is_transferred'],
+            $request->user(),
+            $validated['vehicles'] ?? [],
+        );
 
-        $count = $this->service->markTransferred($validated['entry_ids'], $validated['is_transferred'], $request->user());
-
-        return response()->json(['success' => true, 'data' => ['updated' => $count]]);
+        return response()->json(['success' => true, 'data' => $result]);
     }
 }

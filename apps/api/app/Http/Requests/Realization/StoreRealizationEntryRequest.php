@@ -23,7 +23,10 @@ class StoreRealizationEntryRequest extends FormRequest
             'transaction_date' => ['required', 'date'],
             'amount'           => ['required', 'integer', 'min:1'],
             'payment_method'   => ['required', Rule::in([RealizationEntry::PAYMENT_TUNAI, RealizationEntry::PAYMENT_TRANSFER, RealizationEntry::PAYMENT_KAS_KECIL])],
-            'proof_number'     => ['required', 'string', 'max:100'],
+            // Boleh kosong — RealizationEntryService::store() akan auto-generate
+            // {PDO_Number}/{Item_code}/{seq} jika kosong. Duplikat divalidasi di
+            // service (butuh konteks PDO header yang belum tentu tersedia di sini).
+            'proof_number'     => ['nullable', 'string', 'max:100'],
             'funding_source'   => ['required', Rule::in([RealizationEntry::FUNDING_KAS_KEBUN, RealizationEntry::FUNDING_REKENING_KEBUN, RealizationEntry::FUNDING_REKENING_UTAMA])],
             'explanation'      => ['nullable', 'string'],
         ];

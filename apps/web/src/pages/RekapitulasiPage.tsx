@@ -18,6 +18,7 @@ import { Download, Search, Plus, Upload } from 'lucide-react'
 import { useVehicles } from '@/hooks/useMasterData'
 import { DateRangePickerButton } from '@/components/ui/DateRangePickerButton'
 import type { RecapResponse } from '@/types/recap'
+import { INVENTORY_ITEM_CODES } from '@/lib/constants'
 
 const MONTHS = [
   'Januari', 'Februari', 'Maret', 'April', 'Mei', 'Juni',
@@ -34,8 +35,6 @@ function isPribadiVendorRole(user: AuthUser | undefined): boolean {
 }
 
 // ── Form schema Input Realisasi ──────────────────────────────────────────────
-const INVENTORY_ITEM_CODES = ['BBM-TRK-001', 'BBM-TRK-002', 'PHD-SPK-001', 'PBB-TRK-001', 'PBB-TRK-002']
-
 const realizationSchema = z.object({
   pdo_detail_id:    z.string().uuid('Pilih item biaya'),
   vehicle_id:       z.string().nullable().optional(),
@@ -319,6 +318,8 @@ export function RekapitulasiPage() {
       qc.invalidateQueries({ queryKey: ['realizations'] })
       qc.invalidateQueries({ queryKey: ['realisasi-detail'] })
       qc.invalidateQueries({ queryKey: ['realisasi-aggregate'] })
+      qc.invalidateQueries({ queryKey: ['realizations-for-pdo-sequence'] })
+      qc.invalidateQueries({ queryKey: ['realizations-available'] })
       const entry = res.data.data
       setEditingEntry(null)
       setInputOpen(false)

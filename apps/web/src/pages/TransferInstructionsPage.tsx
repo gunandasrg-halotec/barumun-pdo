@@ -1,14 +1,22 @@
-import { useMemo, useState } from 'react'
+import { Fragment, useMemo, useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '@/lib/api'
 import { EmptyState } from '@/components/ui/EmptyState'
+import { Button } from '@/components/ui/Button'
 import { DateRangePickerButton } from '@/components/ui/DateRangePickerButton'
+import { VehicleAssignmentModal, type VehicleAssignmentItem } from '@/components/transfer/VehicleAssignmentModal'
 import { useAuthStore } from '@/store/auth.store'
 import { useToastStore } from '@/store/toast.store'
 import { canMarkTransferExecuted } from '@/lib/auth'
 import { fmt, fmtDate } from '@/lib/format'
+import { INVENTORY_ITEM_CODES } from '@/lib/constants'
 import { Search, ChevronDown, ChevronRight } from 'lucide-react'
 import type { ApiResponse, RoleCode, TransferEntry } from '@/types'
+
+function fullItemLabel(t: TransferEntry): string {
+  const item = t.pdo_detail?.expense_item
+  return [item?.subcategory?.category?.name, item?.subcategory?.name, item?.name].filter(Boolean).join(' — ')
+}
 
 type TransferDest = 'rek_kebun' | 'pribadi' | 'vendor'
 
@@ -71,6 +79,9 @@ export function TransferInstructionsPage() {
   const [startDate, setStartDate] = useState('')
   const [endDate,   setEndDate]   = useState('')
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({})
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
+  const [vehicleModalOpen, setVehicleModalOpen] = useState(false)
+  const [vehicleValues, setVehicleValues] = useState<Record<string, string>>({})
 
   const { data: entries, isLoading } = useQuery({
     queryKey: ['transfer-instructions'],
@@ -86,10 +97,10 @@ export function TransferInstructionsPage() {
     const hasFilter = !!q || !!startDate || !!endDate
     return entries.filter((t) => {
       const code = t.pdo_detail?.expense_item?.code ?? ''
-      const name = t.pdo_detail?.expense_item?.name ?? ''
+      const label = fullItemLabel(t)
       const matchSearch = !q ||
         code.toLowerCase().includes(q) ||
-        name.toLowerCase().includes(q)
+        label.toLowerCase().includes(q)
       const matchDate =
         (!startDate || t.transfer_date >= startDate) &&
         (!endDate   || t.transfer_date <= endDate)
@@ -119,21 +130,73 @@ export function TransferInstructionsPage() {
       ?.response?.data?.error?.message ?? (err as { message?: string })?.message ?? fallback
 
   const markTransferred = useMutation({
-    mutationFn: ({ ids, value }: { ids: string[]; value: boolean }) =>
-      api.patch('/transfer-entries/mark-transferred', { entry_ids: ids, is_transferred: value }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['transfer-instructions'] }),
+    mutationFn: ({ ids, value, vehicles }: { ids: string[]; value: boolean; vehicles?: Record<string, string> }) =>
+      api.patch<ApiResponse<{ updated: number; realizations_created: number }>>('/transfer-entries/mark-transferred', {
+        entry_ids: ids, is_transferred: value, vehicles: vehicles ?? {},
+      }),
+    onSuccess: (res) => {
+      const { updated, realizations_created } = res.data.data
+      qc.invalidateQueries({ queryKey: ['transfer-instructions'] })
+      qc.invalidateQueries({ queryKey: ['realizations-for-pdo-sequence'] })
+      qc.invalidateQueries({ queryKey: ['realizations-available'] })
+      qc.invalidateQueries({ queryKey: ['recap'] })
+      toast(
+        realizations_created > 0
+          ? `${updated} transfer ditandai, ${realizations_created} realisasi otomatis dibuat`
+          : `${updated} transfer ditandai`,
+        'success',
+      )
+      setSelectedIds(new Set())
+      setVehicleModalOpen(false)
+      setVehicleValues({})
+    },
     onError: (err) => toast(errMsg(err, 'Gagal memperbarui status transfer'), 'error'),
   })
 
-  const allChecked = filtered.length > 0 && filtered.every((t) => t.is_transferred)
+  const selectableIds = useMemo(() => filtered.filter((t) => !t.is_transferred).map((t) => t.id), [filtered])
+  const allSelected = selectableIds.length > 0 && selectableIds.every((id) => selectedIds.has(id))
 
-  const handleToggleAll = () => {
-    if (!filtered.length) return
-    markTransferred.mutate({ ids: filtered.map((t) => t.id), value: !allChecked })
+  const toggleSelect = (id: string) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
   }
 
-  const handleToggleRow = (t: TransferEntry) => {
-    markTransferred.mutate({ ids: [t.id], value: !t.is_transferred })
+  const toggleSelectAll = () => {
+    setSelectedIds((prev) => {
+      if (selectableIds.every((id) => prev.has(id))) return new Set()
+      return new Set(selectableIds)
+    })
+  }
+
+  const selectedEntries = useMemo(() => filtered.filter((t) => selectedIds.has(t.id)), [filtered, selectedIds])
+
+  const inventoryItems = useMemo<VehicleAssignmentItem[]>(() => {
+    const seen = new Set<string>()
+    const items: VehicleAssignmentItem[] = []
+    for (const t of selectedEntries) {
+      const code = t.pdo_detail?.expense_item?.code ?? ''
+      if (!INVENTORY_ITEM_CODES.includes(code) || seen.has(t.pdo_detail_id)) continue
+      seen.add(t.pdo_detail_id)
+      items.push({ pdoDetailId: t.pdo_detail_id, itemCode: code, itemName: t.pdo_detail?.expense_item?.name ?? '' })
+    }
+    return items
+  }, [selectedEntries])
+
+  const handleMark = () => {
+    if (!selectedIds.size) return
+    if (inventoryItems.length > 0) {
+      setVehicleModalOpen(true)
+      return
+    }
+    markTransferred.mutate({ ids: Array.from(selectedIds), value: true })
+  }
+
+  const handleConfirmVehicles = () => {
+    markTransferred.mutate({ ids: Array.from(selectedIds), value: true, vehicles: vehicleValues })
   }
 
   // jumlah kolom total: ☑ + Kode + Nama + Jumlah + Kebun + Pribadi + Vendor + Tanggal + Dicatat + Status = 10
@@ -141,11 +204,22 @@ export function TransferInstructionsPage() {
 
   return (
     <div>
-      <div className="mb-6">
-        <h1 className="text-[26px] font-[950] text-ink">Daftar Perintah Transfer</h1>
-        <p className="text-muted text-sm mt-1">
-          Instruksi transfer dana yang sudah disetujui (Simpan Permanen) — tandai item yang dananya sudah benar-benar ditransfer.
-        </p>
+      <div className="mb-6 flex items-start justify-between gap-4">
+        <div>
+          <h1 className="text-[26px] font-[950] text-ink">Daftar Perintah Transfer</h1>
+          <p className="text-muted text-sm mt-1">
+            Instruksi transfer dana yang sudah disetujui (Simpan Permanen) — tandai item yang dananya sudah benar-benar ditransfer.
+          </p>
+        </div>
+        {canToggle && (
+          <Button
+            disabled={selectedIds.size === 0}
+            loading={markTransferred.isPending}
+            onClick={handleMark}
+          >
+            Tandai Sudah Ditransfer ({selectedIds.size})
+          </Button>
+        )}
       </div>
 
       {/* Filter Bar */}
@@ -193,9 +267,9 @@ export function TransferInstructionsPage() {
                   <th className="px-4 py-3 text-left border-b border-line bg-[#f7faf7]" style={{ width: 40 }}>
                     <input
                       type="checkbox"
-                      checked={allChecked}
-                      disabled={!canToggle || markTransferred.isPending}
-                      onChange={handleToggleAll}
+                      checked={allSelected}
+                      disabled={!canToggle || selectableIds.length === 0}
+                      onChange={toggleSelectAll}
                     />
                   </th>
                   {['Kode Item', 'Nama Item', 'Jumlah'].map((h) => (
@@ -225,7 +299,7 @@ export function TransferInstructionsPage() {
                   const sub = destTotals(pdo.entries)
 
                   return (
-                    <>
+                    <Fragment key={pdo.pdoId}>
                       {/* ── Header grup PDO ── */}
                       <tr
                         key={`pdo-${pdo.pdoId}`}
@@ -252,13 +326,13 @@ export function TransferInstructionsPage() {
                             <td className="px-4 py-3">
                               <input
                                 type="checkbox"
-                                checked={t.is_transferred}
-                                disabled={!canToggle || markTransferred.isPending}
-                                onChange={() => handleToggleRow(t)}
+                                checked={t.is_transferred || selectedIds.has(t.id)}
+                                disabled={!canToggle || t.is_transferred}
+                                onChange={() => toggleSelect(t.id)}
                               />
                             </td>
                             <td className="px-4 py-3 text-sm">{t.pdo_detail?.expense_item?.code ?? '—'}</td>
-                            <td className="px-4 py-3 text-sm">{t.pdo_detail?.expense_item?.name ?? '—'}</td>
+                            <td className="px-4 py-3 text-sm">{fullItemLabel(t)}</td>
                             <td className="px-4 py-3 text-sm font-bold tabular-nums">{fmt(t.amount)}</td>
                             {DEST_COLS.map((col) => (
                               <td key={col} className={dest === col ? DEST_CELL_VALUE[col] : DEST_CELL_EMPTY[col]}>
@@ -298,7 +372,7 @@ export function TransferInstructionsPage() {
                         ))}
                         <td colSpan={3} className="bg-[#e8f3e8]" />
                       </tr>
-                    </>
+                    </Fragment>
                   )
                 })}
 
@@ -324,6 +398,16 @@ export function TransferInstructionsPage() {
           </div>
         </div>
       )}
+
+      <VehicleAssignmentModal
+        open={vehicleModalOpen}
+        items={inventoryItems}
+        values={vehicleValues}
+        onChange={(pdoDetailId, vehicleId) => setVehicleValues((prev) => ({ ...prev, [pdoDetailId]: vehicleId }))}
+        onClose={() => setVehicleModalOpen(false)}
+        onConfirm={handleConfirmVehicles}
+        loading={markTransferred.isPending}
+      />
     </div>
   )
 }

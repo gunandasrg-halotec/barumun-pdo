@@ -122,6 +122,149 @@ class RealizationEntryServiceTest extends TestCase
     }
 
     // ─────────────────────────────────────────────────────
+    // proof_number: auto-generate, prefill, & anti-duplikat
+    // ─────────────────────────────────────────────────────
+
+    public function test_proof_number_is_auto_generated_when_blank(): void
+    {
+        $detail = $this->makeDetail(PdoHeader::STATUS_FINAL, budget: 1000000, transferred: 1000000);
+        $item   = $detail->expenseItem;
+
+        $entry = $this->service->store([
+            'pdo_detail_id'    => $detail->id,
+            'transaction_date' => '2026-06-20',
+            'amount'           => 100000,
+            'payment_method'   => RealizationEntry::PAYMENT_TUNAI,
+            'proof_number'     => '',
+            'funding_source'   => RealizationEntry::FUNDING_KAS_KEBUN,
+        ], $this->kerani);
+
+        $this->assertEquals("{$detail->pdoHeader->pdo_number}/{$item->code}/1", $entry->proof_number);
+    }
+
+    public function test_proof_number_sequence_continues_across_detail_rows_with_same_item_code_in_same_pdo(): void
+    {
+        // Simulasi: item yang sama muncul di dua baris pdo_detail berbeda dalam
+        // satu PDO header (mis. PDO Bulanan + PDO Tambahan yang sudah di-merge).
+        $detail1 = $this->makeDetail(PdoHeader::STATUS_FINAL, budget: 1000000, transferred: 2000000);
+        $pdo     = $detail1->pdoHeader;
+        $item    = $detail1->expenseItem;
+
+        $detail2 = PdoDetail::factory()->create([
+            'pdo_header_id'   => $pdo->id,
+            'amount'          => 1000000,
+            'expense_item_id' => $item->id,
+        ]);
+
+        $entry1 = $this->service->store([
+            'pdo_detail_id'    => $detail1->id,
+            'transaction_date' => '2026-06-20',
+            'amount'           => 100000,
+            'payment_method'   => RealizationEntry::PAYMENT_TUNAI,
+            'proof_number'     => '',
+            'funding_source'   => RealizationEntry::FUNDING_KAS_KEBUN,
+        ], $this->kerani);
+        $this->assertEquals("{$pdo->pdo_number}/{$item->code}/1", $entry1->proof_number);
+
+        $entry2 = $this->service->store([
+            'pdo_detail_id'    => $detail2->id,
+            'transaction_date' => '2026-06-21',
+            'amount'           => 100000,
+            'payment_method'   => RealizationEntry::PAYMENT_TUNAI,
+            'proof_number'     => '',
+            'funding_source'   => RealizationEntry::FUNDING_KAS_KEBUN,
+        ], $this->kerani);
+        $this->assertEquals("{$pdo->pdo_number}/{$item->code}/2", $entry2->proof_number);
+    }
+
+    public function test_manual_proof_number_rejected_when_duplicate_within_same_pdo(): void
+    {
+        $detail = $this->makeDetail(PdoHeader::STATUS_FINAL, budget: 1000000, transferred: 2000000);
+
+        $this->service->store([
+            'pdo_detail_id'    => $detail->id,
+            'transaction_date' => '2026-06-20',
+            'amount'           => 100000,
+            'payment_method'   => RealizationEntry::PAYMENT_TUNAI,
+            'proof_number'     => 'KWT-CUSTOM-001',
+            'funding_source'   => RealizationEntry::FUNDING_KAS_KEBUN,
+        ], $this->kerani);
+
+        $this->expectException(\Illuminate\Http\Exceptions\HttpResponseException::class);
+
+        $this->service->store([
+            'pdo_detail_id'    => $detail->id,
+            'transaction_date' => '2026-06-21',
+            'amount'           => 100000,
+            'payment_method'   => RealizationEntry::PAYMENT_TUNAI,
+            'proof_number'     => 'KWT-CUSTOM-001',
+            'funding_source'   => RealizationEntry::FUNDING_KAS_KEBUN,
+        ], $this->kerani);
+    }
+
+    public function test_manual_proof_number_accepted_when_not_duplicate(): void
+    {
+        $detail = $this->makeDetail(PdoHeader::STATUS_FINAL, budget: 1000000, transferred: 1000000);
+
+        $entry = $this->service->store([
+            'pdo_detail_id'    => $detail->id,
+            'transaction_date' => '2026-06-20',
+            'amount'           => 100000,
+            'payment_method'   => RealizationEntry::PAYMENT_TUNAI,
+            'proof_number'     => 'KWT-UNIK-001',
+            'funding_source'   => RealizationEntry::FUNDING_KAS_KEBUN,
+        ], $this->kerani);
+
+        $this->assertEquals('KWT-UNIK-001', $entry->proof_number);
+    }
+
+    public function test_update_rejects_duplicate_proof_number_within_same_pdo(): void
+    {
+        $detail = $this->makeDetail(PdoHeader::STATUS_FINAL, budget: 1000000, transferred: 2000000);
+
+        $entryA = $this->service->store([
+            'pdo_detail_id'    => $detail->id,
+            'transaction_date' => '2026-06-20',
+            'amount'           => 100000,
+            'payment_method'   => RealizationEntry::PAYMENT_TUNAI,
+            'proof_number'     => 'KWT-A',
+            'funding_source'   => RealizationEntry::FUNDING_KAS_KEBUN,
+        ], $this->kerani);
+
+        $entryB = $this->service->store([
+            'pdo_detail_id'    => $detail->id,
+            'transaction_date' => '2026-06-21',
+            'amount'           => 100000,
+            'payment_method'   => RealizationEntry::PAYMENT_TUNAI,
+            'proof_number'     => 'KWT-B',
+            'funding_source'   => RealizationEntry::FUNDING_KAS_KEBUN,
+        ], $this->kerani);
+
+        $this->expectException(\Illuminate\Http\Exceptions\HttpResponseException::class);
+
+        $this->service->update($entryB, ['proof_number' => 'KWT-A'], $this->kerani);
+    }
+
+    public function test_update_allows_keeping_own_unchanged_proof_number(): void
+    {
+        $detail = $this->makeDetail(PdoHeader::STATUS_FINAL, budget: 1000000, transferred: 1000000);
+
+        $entry = $this->service->store([
+            'pdo_detail_id'    => $detail->id,
+            'transaction_date' => '2026-06-20',
+            'amount'           => 100000,
+            'payment_method'   => RealizationEntry::PAYMENT_TUNAI,
+            'proof_number'     => 'KWT-A',
+            'funding_source'   => RealizationEntry::FUNDING_KAS_KEBUN,
+        ], $this->kerani);
+
+        $updated = $this->service->update($entry, ['proof_number' => 'KWT-A', 'amount' => 150000], $this->kerani);
+
+        $this->assertEquals('KWT-A', $updated->proof_number);
+        $this->assertEquals(150000, $updated->amount);
+    }
+
+    // ─────────────────────────────────────────────────────
     // Tidak bisa hapus/ubah setelah PDO closed
     // ─────────────────────────────────────────────────────
 

@@ -40,6 +40,7 @@ class RealizationEntry extends Model
         'settlement_group',
         'exported_to_journal_at',
         'exported_to_journal_by',
+        'is_auto_generated',
     ];
 
     protected function casts(): array
@@ -48,6 +49,7 @@ class RealizationEntry extends Model
             'transaction_date'       => 'date',
             'amount'                 => 'integer',
             'exported_to_journal_at' => 'datetime',
+            'is_auto_generated'      => 'boolean',
         ];
     }
 

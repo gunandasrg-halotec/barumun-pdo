@@ -8,13 +8,19 @@ use App\Models\PdoHeader;
 use App\Models\TransferEntry;
 use App\Models\User;
 use App\Services\Notification\WhatsAppNotificationService;
+use App\Services\Realization\AutoRealizationService;
 use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Support\Collection as SupportCollection;
 use Illuminate\Support\Facades\DB;
 
 class TransferEntryService
 {
-    public function __construct(private readonly WhatsAppNotificationService $wa = new WhatsAppNotificationService()) {}
+    public function __construct(
+        private readonly WhatsAppNotificationService $wa = new WhatsAppNotificationService(),
+        private ?AutoRealizationService $autoRealization = null,
+    ) {
+        $this->autoRealization ??= new AutoRealizationService();
+    }
 
     /**
      * Daftar semua transfer dalam perusahaan (untuk halaman Transfer Dana).
@@ -40,31 +46,78 @@ class TransferEntryService
     /**
      * Tandai satu/lebih instruksi transfer sebagai sudah/belum ditransfer secara fisik.
      * Scoped by company_id agar user tidak bisa menandai entry milik perusahaan lain.
+     *
+     * Untuk transfer ke kantong pribadi/vendor yang ditandai SUDAH ditransfer,
+     * realisasi dibuat otomatis (lihat AutoRealizationService) dalam transaksi yang
+     * sama — jika satu bagian gagal (mis. kendaraan wajib belum dipilih, atau plafon
+     * kantong terlampaui), SELURUH batch dibatalkan (tidak ada yang ditandai, tidak
+     * ada realisasi dibuat). Transfer ke rek_kebun tidak memicu apa pun di sini —
+     * kerani tetap mencatat realisasinya secara manual.
+     *
+     * @param  array<string,string>  $vehicleByDetailId  pdo_detail_id => vehicle_id,
+     *         untuk item yang butuh kendaraan (lihat RealizationJournalExportService::INVENTORY_ITEM_CODES)
+     * @return array{updated:int, realizations_created:int}
      */
-    public function markTransferred(array $entryIds, bool $isTransferred, User $actor): int
+    public function markTransferred(array $entryIds, bool $isTransferred, User $actor, array $vehicleByDetailId = []): array
     {
-        $entries = TransferEntry::whereIn('id', $entryIds)
-            ->whereHas('pdoDetail.pdoHeader', fn ($q) => $q->where('company_id', $actor->company_id))
-            ->get();
+        return DB::transaction(function () use ($entryIds, $isTransferred, $actor, $vehicleByDetailId) {
+            $entries = TransferEntry::whereIn('id', $entryIds)
+                ->whereHas('pdoDetail.pdoHeader', fn ($q) => $q->where('company_id', $actor->company_id))
+                ->orderBy('id')
+                ->lockForUpdate()
+                ->get();
 
-        foreach ($entries as $entry) {
-            $old = $entry->toArray();
-            $entry->update([
-                'is_transferred' => $isTransferred,
-                'transferred_at' => $isTransferred ? now() : null,
-                'transferred_by' => $isTransferred ? $actor->id : null,
-            ]);
-            AuditLog::record(
-                actor: $actor,
-                entityType: 'transfer_entries',
-                entityId: $entry->id,
-                action: 'UPDATE',
-                oldValues: $old,
-                newValues: $entry->fresh()->toArray()
-            );
-        }
+            foreach ($entries as $entry) {
+                $old = $entry->toArray();
+                $entry->update([
+                    'is_transferred' => $isTransferred,
+                    'transferred_at' => $isTransferred ? now() : null,
+                    'transferred_by' => $isTransferred ? $actor->id : null,
+                ]);
+                AuditLog::record(
+                    actor: $actor,
+                    entityType: 'transfer_entries',
+                    entityId: $entry->id,
+                    action: 'UPDATE',
+                    oldValues: $old,
+                    newValues: $entry->fresh()->toArray()
+                );
+            }
 
-        return $entries->count();
+            $pribadiVendorDetailIds = $entries
+                ->whereIn('transfer_destination', [TransferEntry::DEST_PRIBADI, TransferEntry::DEST_VENDOR])
+                ->pluck('pdo_detail_id')
+                ->unique()
+                ->values();
+
+            if ($pribadiVendorDetailIds->isEmpty()) {
+                return ['updated' => $entries->count(), 'realizations_created' => 0];
+            }
+
+            // Kunci PDO header terkait (urut, hindari deadlock) — menyerialkan
+            // pembuatan nomor bukti & validasi plafon kantong per PDO.
+            $pdoIds = PdoDetail::whereIn('id', $pribadiVendorDetailIds)->pluck('pdo_header_id')->unique()->sort()->values();
+            PdoHeader::whereIn('id', $pdoIds)->orderBy('id')->lockForUpdate()->get();
+
+            if (! $isTransferred) {
+                // Membatalkan tanda: tolak bila realisasi pribadi_vendor yang sudah
+                // dibuat (manual atau otomatis) melebihi sisa transfer is_transferred.
+                $details = PdoDetail::with('expenseItem')->whereIn('id', $pribadiVendorDetailIds)->get();
+                foreach ($details as $detail) {
+                    $stillTransferred = (int) TransferEntry::where('pdo_detail_id', $detail->id)
+                        ->whereIn('transfer_destination', [TransferEntry::DEST_PRIBADI, TransferEntry::DEST_VENDOR])
+                        ->where('is_transferred', true)
+                        ->sum('amount');
+                    $this->autoRealization->assertUnmarkAllowed($detail, $stillTransferred);
+                }
+
+                return ['updated' => $entries->count(), 'realizations_created' => 0];
+            }
+
+            $realizationsCreated = $this->autoRealization->createForDetails($pribadiVendorDetailIds, $actor, $vehicleByDetailId);
+
+            return ['updated' => $entries->count(), 'realizations_created' => $realizationsCreated];
+        });
     }
 
     /**
