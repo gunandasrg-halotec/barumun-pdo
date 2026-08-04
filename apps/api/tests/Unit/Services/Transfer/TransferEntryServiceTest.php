@@ -173,6 +173,37 @@ class TransferEntryServiceTest extends TestCase
     // summaryByPdo — sumber PDO per baris (Bulanan vs Tambahan)
     // ─────────────────────────────────────────────────────
 
+    /**
+     * Regresi: listAll() dulu memfilter is_auto_generated=false, sehingga entri
+     * NEGATIF (potongan panjar & koreksi manual) tidak ikut terjumlah di halaman
+     * Daftar Perintah Transfer. Subtotalnya jadi lebih besar dari uang yang
+     * benar-benar keluar dan berbeda dari Transfer Dana/Rekap/Dashboard.
+     */
+    public function test_list_all_includes_negative_auto_generated_entries(): void
+    {
+        $detail = $this->makeDetailWithStatus(PdoHeader::STATUS_FINAL, 5_000_000);
+
+        TransferEntry::factory()->create([
+            'pdo_detail_id'        => $detail->id,
+            'amount'               => 4_000_000,
+            'transfer_destination' => TransferEntry::DEST_REK_KEBUN,
+        ]);
+        TransferEntry::factory()->create([
+            'pdo_detail_id'        => $detail->id,
+            'amount'               => -1_000_000,
+            'transfer_destination' => TransferEntry::DEST_REK_KEBUN,
+            'entry_source'         => TransferEntry::SOURCE_SYSTEM,
+            'is_auto_generated'    => true,
+            'notes'                => 'Potongan otomatis (mengurangi transfer Rek. Kebun)',
+        ]);
+
+        $rows = $this->service->listAll($this->manajerKeuangan);
+
+        $this->assertCount(2, $rows, 'entri potongan harus ikut terkirim ke halaman');
+        // Jumlah bersih = yang benar-benar ditransfer ke rekening kebun.
+        $this->assertEquals(3_000_000, (int) $rows->sum('amount'));
+    }
+
     public function test_summary_by_pdo_marks_source_pdo_number_for_merged_tambahan_rows(): void
     {
         $pdo = PdoHeader::factory()->create([

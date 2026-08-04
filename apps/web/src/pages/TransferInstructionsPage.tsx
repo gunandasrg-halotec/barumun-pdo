@@ -18,6 +18,19 @@ function fullItemLabel(t: TransferEntry): string {
   return [item?.subcategory?.category?.name, item?.subcategory?.name, item?.name].filter(Boolean).join(' — ')
 }
 
+/**
+ * Baris bernilai negatif bukan perintah transfer — tidak ada yang bisa dikirim dari
+ * nilai minus. Ini mencakup potongan panjar (dibuat sistem saat Simpan Permanen) dan
+ * koreksi manual bernilai minus. Sengaja memakai nilai amount, bukan flag internal
+ * `is_auto_generated`, supaya keduanya tertangani dengan aturan yang sama.
+ *
+ * Barisnya tetap ditampilkan supaya subtotal halaman ini = uang yang benar-benar
+ * ditransfer, sama dengan Transfer Dana / Rekap Buku Kas / Dashboard.
+ */
+function isNonTransfer(t: TransferEntry): boolean {
+  return t.amount < 0
+}
+
 type TransferDest = 'rek_kebun' | 'pribadi' | 'vendor'
 
 interface DestTotals { rek_kebun: number; pribadi: number; vendor: number; total: number }
@@ -80,6 +93,7 @@ export function TransferInstructionsPage() {
   const [endDate,   setEndDate]   = useState('')
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({})
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
+  const [onlyPending, setOnlyPending] = useState(false)
   const [vehicleModalOpen, setVehicleModalOpen] = useState(false)
   const [vehicleValues, setVehicleValues] = useState<Record<string, string>>({})
 
@@ -94,7 +108,6 @@ export function TransferInstructionsPage() {
   const filtered = useMemo(() => {
     if (!entries) return []
     const q = search.trim().toLowerCase()
-    const hasFilter = !!q || !!startDate || !!endDate
     return entries.filter((t) => {
       const code = t.pdo_detail?.expense_item?.code ?? ''
       const label = fullItemLabel(t)
@@ -104,10 +117,18 @@ export function TransferInstructionsPage() {
       const matchDate =
         (!startDate || t.transfer_date >= startDate) &&
         (!endDate   || t.transfer_date <= endDate)
-      const matchTransferred = hasFilter || !t.is_transferred
+      // Dulu baris yang sudah ditransfer disembunyikan DIAM-DIAM (matchTransferred =
+      // hasFilter || !t.is_transferred). Karena subtotal dihitung dari daftar yang
+      // sudah tersaring, baris itu ikut hilang dari total — begitu Staff Purchasing
+      // mulai mencentang, angka halaman ini menyusut dan tidak lagi cocok dengan
+      // Transfer Dana. Sekarang semua baris tampil (statusnya sudah jelas lewat badge)
+      // dan penyembunyian jadi filter eksplisit yang dikendalikan user.
+      // Baris negatif tidak pernah dianggap "menunggu ditransfer" — tidak ada yang
+      // bisa dikirim dari nilai minus, jadi jangan tampilkan sebagai pekerjaan tertunda.
+      const matchTransferred = !onlyPending || (!t.is_transferred && !isNonTransfer(t))
       return matchSearch && matchDate && matchTransferred
     })
-  }, [entries, search, startDate, endDate])
+  }, [entries, search, startDate, endDate, onlyPending])
 
   const groups = useMemo<PdoGroup[]>(() => {
     const pdoMap = new Map<string, { pdoNumber: string; entries: TransferEntry[] }>()
@@ -153,7 +174,10 @@ export function TransferInstructionsPage() {
     onError: (err) => toast(errMsg(err, 'Gagal memperbarui status transfer'), 'error'),
   })
 
-  const selectableIds = useMemo(() => filtered.filter((t) => !t.is_transferred).map((t) => t.id), [filtered])
+  const selectableIds = useMemo(
+    () => filtered.filter((t) => !t.is_transferred && !isNonTransfer(t)).map((t) => t.id),
+    [filtered],
+  )
   const allSelected = selectableIds.length > 0 && selectableIds.every((id) => selectedIds.has(id))
 
   const toggleSelect = (id: string) => {
@@ -247,6 +271,15 @@ export function TransferInstructionsPage() {
             />
           </div>
         </div>
+        <label className="flex items-center gap-2 text-sm cursor-pointer select-none pb-2.5">
+          <input
+            type="checkbox"
+            className="rounded border-line accent-green"
+            checked={onlyPending}
+            onChange={(e) => setOnlyPending(e.target.checked)}
+          />
+          Hanya yang belum ditransfer
+        </label>
       </div>
 
       {/* Content */}
@@ -321,19 +354,36 @@ export function TransferInstructionsPage() {
                       {/* ── Baris item ── */}
                       {!pdoCollapsed && pdo.entries.map((t) => {
                         const dest = t.transfer_destination as TransferDest
+                        const nonTransfer = isNonTransfer(t)
                         return (
-                          <tr key={t.id} className="border-t border-line hover:bg-[#fbfdfb]">
+                          <tr
+                            key={t.id}
+                            className={nonTransfer
+                              ? 'border-t border-line bg-[#fdf6e8]'
+                              : 'border-t border-line hover:bg-[#fbfdfb]'}
+                          >
                             <td className="px-4 py-3">
-                              <input
-                                type="checkbox"
-                                checked={t.is_transferred || selectedIds.has(t.id)}
-                                disabled={!canToggle || t.is_transferred}
-                                onChange={() => toggleSelect(t.id)}
-                              />
+                              {!nonTransfer && (
+                                <input
+                                  type="checkbox"
+                                  checked={t.is_transferred || selectedIds.has(t.id)}
+                                  disabled={!canToggle || t.is_transferred}
+                                  onChange={() => toggleSelect(t.id)}
+                                />
+                              )}
                             </td>
                             <td className="px-4 py-3 text-sm">{t.pdo_detail?.expense_item?.code ?? '—'}</td>
-                            <td className="px-4 py-3 text-sm">{fullItemLabel(t)}</td>
-                            <td className="px-4 py-3 text-sm font-bold tabular-nums">{fmt(t.amount)}</td>
+                            <td className="px-4 py-3 text-sm">
+                              {fullItemLabel(t)}
+                              {nonTransfer && t.notes && (
+                                <span className="block text-xs text-[#633806] mt-0.5">{t.notes}</span>
+                              )}
+                            </td>
+                            <td className={nonTransfer
+                              ? 'px-4 py-3 text-sm font-bold tabular-nums text-[#633806]'
+                              : 'px-4 py-3 text-sm font-bold tabular-nums'}>
+                              {fmt(t.amount)}
+                            </td>
                             {DEST_COLS.map((col) => (
                               <td key={col} className={dest === col ? DEST_CELL_VALUE[col] : DEST_CELL_EMPTY[col]}>
                                 {dest === col ? fmt(t.amount) : '—'}
@@ -342,7 +392,9 @@ export function TransferInstructionsPage() {
                             <td className="px-4 py-3 text-sm">{fmtDate(t.transfer_date)}</td>
                             <td className="px-4 py-3 text-sm">{t.recorder?.full_name ?? '—'}</td>
                             <td className="px-4 py-3 text-sm">
-                              {t.is_transferred ? (
+                              {nonTransfer ? (
+                                <span className="badge bg-[#f5ddb8] text-[#633806]">Bukan perintah transfer</span>
+                              ) : t.is_transferred ? (
                                 <span className="badge badge-approved">
                                   Sudah Ditransfer{t.transferred_at ? ` — ${fmtDate(t.transferred_at)}` : ''}
                                   {t.transferred_by_user ? `, oleh ${t.transferred_by_user.full_name}` : ''}
@@ -367,7 +419,7 @@ export function TransferInstructionsPage() {
                         </td>
                         {DEST_COLS.map((col) => (
                           <td key={col} className={DEST_SUB[col]}>
-                            {sub[col] > 0 ? fmt(sub[col]) : '—'}
+                            {sub[col] !== 0 ? fmt(sub[col]) : '—'}
                           </td>
                         ))}
                         <td colSpan={3} className="bg-[#e8f3e8]" />
@@ -388,7 +440,7 @@ export function TransferInstructionsPage() {
                   </td>
                   {DEST_COLS.map((col) => (
                     <td key={col} className={DEST_GRAND[col]}>
-                      {grandTotals[col] > 0 ? fmt(grandTotals[col]) : '—'}
+                      {grandTotals[col] !== 0 ? fmt(grandTotals[col]) : '—'}
                     </td>
                   ))}
                   <td colSpan={3} className="bg-[#085041]" />

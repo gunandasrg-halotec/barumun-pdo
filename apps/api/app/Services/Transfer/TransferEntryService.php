@@ -23,9 +23,20 @@ class TransferEntryService
     }
 
     /**
-     * Daftar semua transfer dalam perusahaan (untuk halaman Transfer Dana).
+     * Daftar semua transfer dalam perusahaan (untuk halaman Daftar Perintah Transfer).
      * Scoped by company_id; unit-bound roles (KERANI/ASISTEN) juga scoped by unit.
      * HO user bisa memfilter dengan unit_ids.
+     *
+     * SENGAJA TIDAK memfilter `is_auto_generated = false`. Dulu difilter supaya daftar
+     * hanya berisi baris yang benar-benar bisa "ditransfer", tapi akibatnya entri
+     * NEGATIF (potongan panjar dari applyDeductionEntries(), dan koreksi manual
+     * bernilai minus) tidak ikut terjumlah — subtotal halaman jadi LEBIH BESAR dari
+     * uang yang benar-benar keluar, dan berbeda dari Transfer Dana, Rekap Buku Kas,
+     * serta Dashboard yang ketiganya memakai angka bersih (mis. Rek. Kebun SS Agustus:
+     * 123.764.804 di sini vs 119.264.804 di tiga halaman lain).
+     *
+     * Entri negatif kini ikut dikirim, dan frontend menampilkannya sebagai baris
+     * informatif yang tidak bisa dicentang — lihat TransferInstructionsPage.tsx.
      */
     public function listAll(User $actor, array $filters = []): Collection
     {
@@ -35,7 +46,6 @@ class TransferEntryService
                 'recorder',
                 'transferredByUser',
             ])
-            ->where('is_auto_generated', false)
             ->whereHas('pdoDetail.pdoHeader', fn ($q) => $q->where('company_id', $actor->company_id))
             ->when($actor->plantation_unit_id, fn ($q) => $q->whereHas('pdoDetail.pdoHeader', fn ($qq) => $qq->where('plantation_unit_id', $actor->plantation_unit_id)))
             ->when(!empty($filters['unit_ids']), fn ($q) => $q->whereHas('pdoDetail.pdoHeader', fn ($qq) => $qq->whereIn('plantation_unit_id', $filters['unit_ids'])))
