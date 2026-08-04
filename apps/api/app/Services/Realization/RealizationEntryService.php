@@ -3,16 +3,27 @@
 namespace App\Services\Realization;
 
 use App\Models\AuditLog;
+use App\Models\ExpenseItem;
 use App\Models\PdoDetail;
 use App\Models\PdoHeader;
 use App\Models\RealizationEntry;
 use App\Models\TransferEntry;
 use App\Models\User;
+use App\Services\Report\CashBookQueryService;
 use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Support\Facades\DB;
 
 class RealizationEntryService
 {
+    /** Sentinel pdo_detail_id untuk item PENGEMBALIAN SISA DANA BULAN LALU (tidak punya transfer). */
+    public const FUND_RETURN_SENTINEL = 'FUND_RETURN';
+
+    public function __construct(
+        private ?CashBookQueryService $cashBook = null,
+    ) {
+        $this->cashBook ??= new CashBookQueryService();
+    }
+
     /**
      * Daftar semua entri realisasi (dengan filter opsional).
      * Scoped by company_id; unit-bound roles also scoped by unit.
@@ -144,6 +155,29 @@ class RealizationEntryService
             ];
         }
 
+        // Item PENGEMBALIAN SISA DANA BULAN LALU: hanya untuk kantong Kas Kebun,
+        // tidak punya transfer (dananya dari saldo bulan lalu), jadi ditambahkan
+        // sebagai entri virtual terpisah dari loop pdo_details di atas.
+        if ($group === RealizationEntry::SETTLEMENT_KEBUN && $pdo->isFinal()) {
+            $fundReturnItem = ExpenseItem::where('code', 'PSD-KAS-001')->first();
+            if ($fundReturnItem) {
+                $result[] = [
+                    'pdo_detail_id'  => self::FUND_RETURN_SENTINEL,
+                    'expense_item'   => [
+                        'id'   => $fundReturnItem->id,
+                        'code' => $fundReturnItem->code,
+                        'name' => $fundReturnItem->name,
+                        'subcategory' => null,
+                    ],
+                    'description'    => $fundReturnItem->name,
+                    'bucket'         => null,
+                    'realized_group' => null,
+                    'saldo'          => $this->cashBook->currentBalance($pdo->plantation_unit_id),
+                    'is_fund_return' => true,
+                ];
+            }
+        }
+
         return [
             'items'             => $result,
             'remaining_kantong' => $remainingKantong,
@@ -263,8 +297,15 @@ class RealizationEntryService
      */
     public function store(array $data, User $actor): RealizationEntry
     {
-        $detail = PdoDetail::with('expenseItem')->findOrFail($data['pdo_detail_id']);
-        $pdo    = $detail->pdoHeader;
+        $isFundReturn = $data['pdo_detail_id'] === self::FUND_RETURN_SENTINEL;
+
+        if ($isFundReturn) {
+            $pdo    = PdoHeader::findOrFail($data['pdo_header_id']);
+            $detail = null;
+        } else {
+            $detail = PdoDetail::with('expenseItem')->findOrFail($data['pdo_detail_id']);
+            $pdo    = $detail->pdoHeader;
+        }
 
         // BR-AUTH-001: Verify PDO belongs to user's unit (row-level security)
         if ($actor->plantation_unit_id && $pdo->plantation_unit_id !== $actor->plantation_unit_id) {
@@ -300,21 +341,51 @@ class RealizationEntryService
         }
 
         // Item potongan tidak bisa direalisasi
-        if ($detail->expenseItem?->is_deduction) {
+        if ($detail && $detail->expenseItem?->is_deduction) {
             abort(response()->json([
                 'success' => false,
                 'error'   => ['code' => 'DEDUCTION_NOT_REALIZABLE', 'message' => 'Item potongan tidak bisa direalisasi.'],
             ], 403));
         }
 
-        return DB::transaction(function () use ($detail, $data, $actor, $group, $pdo) {
-            // Lock detail row to prevent race condition on cumulative validation
-            $detail = PdoDetail::lockForUpdate()->findOrFail($detail->id);
+        // Pengembalian sisa dana bulan lalu: hanya kantong Kas Kebun, hanya funding_source
+        // kas_kebun/rekening_kebun — dananya dari saldo bulan lalu, bukan transfer bulan ini.
+        if ($isFundReturn) {
+            if ($group !== RealizationEntry::SETTLEMENT_KEBUN) {
+                abort(response()->json([
+                    'success' => false,
+                    'error'   => ['code' => 'FUND_RETURN_KEBUN_ONLY', 'message' => 'Pengembalian sisa dana hanya berlaku untuk kantong Kas Kebun.'],
+                ], 403));
+            }
+            if (! in_array($data['funding_source'], [RealizationEntry::FUNDING_KAS_KEBUN, RealizationEntry::FUNDING_REKENING_KEBUN], true)) {
+                abort(response()->json([
+                    'success' => false,
+                    'error'   => ['code' => 'FUND_RETURN_FUNDING_SOURCE_INVALID', 'message' => 'Sumber dana pengembalian harus Kas Kebun/Rekening Kebun.'],
+                ], 422));
+            }
+        }
 
+        return DB::transaction(function () use ($detail, $data, $actor, $group, $pdo, $isFundReturn) {
             // Lock PDO header row untuk menyerialkan pembuatan/validasi proof_number
             // dalam PDO ini — mencegah dua request bersamaan menghasilkan nomor yang
             // sama (baik lewat auto-generate maupun input manual yang kebetulan bentrok).
             $pdo = PdoHeader::lockForUpdate()->findOrFail($pdo->id);
+
+            if ($isFundReturn) {
+                $fundReturnItem = ExpenseItem::where('code', 'PSD-KAS-001')->firstOrFail();
+                $detail = PdoDetail::firstOrCreate(
+                    ['pdo_header_id' => $pdo->id, 'expense_item_id' => $fundReturnItem->id],
+                    [
+                        'account_number' => $fundReturnItem->default_account_number,
+                        'description'    => $fundReturnItem->name,
+                        'amount'         => 0,
+                        'display_order'  => 999,
+                    ]
+                )->load('expenseItem');
+            }
+
+            // Lock detail row to prevent race condition on cumulative validation
+            $detail = PdoDetail::lockForUpdate()->findOrFail($detail->id);
 
             $itemCode    = $detail->expenseItem?->code ?? 'NOITEM';
             $proofNumber = trim((string) ($data['proof_number'] ?? ''));
@@ -331,21 +402,36 @@ class RealizationEntryService
                 ], 422));
             }
 
-            // BR-REAL-002: total realisasi kantong actor (PDO-level) tidak boleh melebihi
-            // total transfer ke kantong tersebut (saldo kas kebun / saldo pribadi-vendor).
-            $totalKantong       = $this->totalKantongForGroup($pdo, $group);
-            $totalRealizedGroup = $this->totalRealizedForGroup($pdo, $group);
-            $newGroupTotal = $totalRealizedGroup + $data['amount'];
+            if ($isFundReturn) {
+                // Bukan BR-REAL-002 (plafon transfer) — dananya dari saldo bulan lalu.
+                // Batasnya adalah Saldo Kas Kebun yang benar-benar tersedia saat ini.
+                $currentBalance = $this->cashBook->currentBalance($pdo->plantation_unit_id);
+                if ($data['amount'] > $currentBalance) {
+                    abort(response()->json([
+                        'success' => false,
+                        'error'   => [
+                            'code'    => 'FUND_RETURN_EXCEEDS_BALANCE',
+                            'message' => "Jumlah pengembalian (Rp " . number_format($data['amount'], 0, ',', '.') . ") melebihi Saldo Kas Kebun saat ini (Rp " . number_format($currentBalance, 0, ',', '.') . ").",
+                        ],
+                    ], 422));
+                }
+            } else {
+                // BR-REAL-002: total realisasi kantong actor (PDO-level) tidak boleh melebihi
+                // total transfer ke kantong tersebut (saldo kas kebun / saldo pribadi-vendor).
+                $totalKantong       = $this->totalKantongForGroup($pdo, $group);
+                $totalRealizedGroup = $this->totalRealizedForGroup($pdo, $group);
+                $newGroupTotal = $totalRealizedGroup + $data['amount'];
 
-            if ($newGroupTotal > $totalKantong) {
-                $sisa = $totalKantong - $totalRealizedGroup;
-                abort(response()->json([
-                    'success' => false,
-                    'error'   => [
-                        'code'    => 'REALIZATION_EXCEEDS_KANTONG',
-                        'message' => "Total realisasi kantong ini (Rp " . number_format($newGroupTotal, 0, ',', '.') . ") melebihi saldo kantong (Rp " . number_format($totalKantong, 0, ',', '.') . "). Sisa: Rp " . number_format($sisa, 0, ',', '.') . ".",
-                    ],
-                ], 422));
+                if ($newGroupTotal > $totalKantong) {
+                    $sisa = $totalKantong - $totalRealizedGroup;
+                    abort(response()->json([
+                        'success' => false,
+                        'error'   => [
+                            'code'    => 'REALIZATION_EXCEEDS_KANTONG',
+                            'message' => "Total realisasi kantong ini (Rp " . number_format($newGroupTotal, 0, ',', '.') . ") melebihi saldo kantong (Rp " . number_format($totalKantong, 0, ',', '.') . "). Sisa: Rp " . number_format($sisa, 0, ',', '.') . ".",
+                        ],
+                    ], 422));
+                }
             }
 
             $entry = RealizationEntry::create([

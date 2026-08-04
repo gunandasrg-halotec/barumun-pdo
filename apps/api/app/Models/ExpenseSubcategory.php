@@ -23,6 +23,7 @@ class ExpenseSubcategory extends Model
         'name',
         'display_order',
         'is_active',
+        'is_system',
         'notes',
     ];
 
@@ -31,6 +32,7 @@ class ExpenseSubcategory extends Model
         return [
             'display_order' => 'integer',
             'is_active'     => 'boolean',
+            'is_system'     => 'boolean',
             'deleted_at'    => 'datetime',
         ];
     }

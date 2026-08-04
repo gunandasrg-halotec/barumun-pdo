@@ -32,6 +32,7 @@ class MasterDataService
     public function listCategories(string $companyId, array $filters = []): Collection
     {
         return ExpenseCategory::where('company_id', $companyId)
+            ->where('is_system', false)
             ->when(isset($filters['is_active']), fn ($q) => $q->where('is_active', $filters['is_active']))
             ->orderBy('display_order')
             ->orderBy('code')
@@ -135,6 +136,7 @@ class MasterDataService
     public function listSubcategories(array $filters = []): Collection
     {
         return ExpenseSubcategory::with('category')
+            ->where('is_system', false)
             ->when(isset($filters['category_id']), fn ($q) => $q->where('category_id', $filters['category_id']))
             ->when(isset($filters['is_active']), fn ($q) => $q->where('is_active', $filters['is_active']))
             ->orderBy('display_order')
@@ -231,6 +233,7 @@ class MasterDataService
     public function listItems(array $filters = []): Collection
     {
         return ExpenseItem::with(['subcategory.category'])
+            ->where('is_system', false)
             ->when(isset($filters['subcategory_id']), fn ($q) => $q->where('subcategory_id', $filters['subcategory_id']))
             ->when(isset($filters['is_routine']), fn ($q) => $q->where('is_routine', $filters['is_routine']))
             ->when(isset($filters['is_active']), fn ($q) => $q->where('is_active', $filters['is_active']))

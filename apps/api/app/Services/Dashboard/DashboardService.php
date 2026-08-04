@@ -399,6 +399,7 @@ class DashboardService
             WHERE ec.company_id = ?
               AND ph.period_year  = ?
               AND ph.period_month = ?
+              AND ei.is_fund_return = FALSE
               {$unitClause}
             GROUP BY ec.id, ec.code, ec.name, ec.include_in_recap
             ORDER BY ec.display_order, ec.code

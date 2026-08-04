@@ -136,6 +136,7 @@ class RecapQueryService
                 pd.description,
                 CASE WHEN ei.is_deduction THEN -pd.amount ELSE pd.amount END AS pengajuan,
                 ei.is_deduction,
+                ei.is_fund_return,
                 COALESCE(te_agg.total_transfer, 0)      AS total_transfer,
                 COALESCE(te_kebun_agg.total_transfer_kebun, 0)     AS total_transfer_kebun,
                 COALESCE(te_pribadi_agg.total_transfer_pribadi, 0) AS total_transfer_pribadi,
@@ -275,8 +276,12 @@ class RecapQueryService
             // mencampur semua tujuan sebagai informasi saja). Ini supaya item yang
             // overspend di kantong kebun tetap terdeteksi walau total_transfer
             // gabungan (semua tujuan) masih terlihat besar.
-            $isOverbudgetKebun   = $transferKebunItem   < $realKebunItem;
-            $isOverbudgetPribadi = $transferPribadiItem < $realPribadiItem;
+            // Item pengembalian sisa dana bulan lalu sengaja tidak punya transfer
+            // (dananya dari saldo bulan lalu, bukan transfer bulan ini) — jangan
+            // pernah ditandai overbudget karena itu bukan pembengkakan biaya.
+            $isFundReturnItem = (bool) ($row->is_fund_return ?? false);
+            $isOverbudgetKebun   = ! $isFundReturnItem && $transferKebunItem   < $realKebunItem;
+            $isOverbudgetPribadi = ! $isFundReturnItem && $transferPribadiItem < $realPribadiItem;
             $isOverbudget = $kantong === 'kebun'
                 ? $isOverbudgetKebun
                 : ($kantong === 'pribadi'

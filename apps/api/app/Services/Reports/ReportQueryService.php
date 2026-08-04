@@ -101,6 +101,10 @@ class ReportQueryService
             $query->where('ph.status', $filters['pdo_status']);
         }
 
+        // Item pengembalian sisa dana bukan biaya beranggaran — kecualikan dari
+        // Laporan Realisasi & Over Budget.
+        $query->where('ei.is_fund_return', false);
+
         $query->orderBy('ec.display_order')
               ->orderBy('es.display_order')
               ->orderBy('pd.display_order');

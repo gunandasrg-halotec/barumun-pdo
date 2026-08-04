@@ -104,6 +104,7 @@ class ReportService
             WHERE ph.company_id = ?
               AND ph.period_year  = ?
               AND ph.period_month = ?
+              AND ei.is_fund_return = FALSE
               {$where}
             GROUP BY pu.code, ph.pdo_number, ei.code, ei.name, pd.amount
             HAVING COALESCE(SUM(re.amount), 0) > pd.amount
@@ -190,6 +191,7 @@ class ReportService
               AND ph.period_year  = ?
               AND ph.period_month = ?
               AND ec.include_in_recap = TRUE
+              AND ei.is_fund_return = FALSE
             GROUP BY ec.id, ec.code, ec.name, ec.include_in_recap, ec.display_order
             ORDER BY ec.display_order, ec.code
         ", $params);

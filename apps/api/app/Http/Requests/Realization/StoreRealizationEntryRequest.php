@@ -4,6 +4,7 @@ namespace App\Http\Requests\Realization;
 
 use App\Models\PdoDetail;
 use App\Models\RealizationEntry;
+use App\Services\Realization\RealizationEntryService;
 use App\Services\Realization\RealizationJournalExportService;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
@@ -18,7 +19,25 @@ class StoreRealizationEntryRequest extends FormRequest
     public function rules(): array
     {
         return [
-            'pdo_detail_id'    => ['required', 'uuid', 'exists:pdo_details,id'],
+            // 'FUND_RETURN' = sentinel untuk item PENGEMBALIAN SISA DANA BULAN LALU
+            // (belum tentu punya baris pdo_details, dibuat saat store()).
+            'pdo_detail_id'    => [
+                'required', 'string',
+                function ($attribute, $value, $fail) {
+                    if ($value === RealizationEntryService::FUND_RETURN_SENTINEL) {
+                        return;
+                    }
+                    if (! \Illuminate\Support\Str::isUuid($value) || ! PdoDetail::where('id', $value)->exists()) {
+                        $fail('pdo_detail_id yang dipilih tidak valid.');
+                    }
+                },
+            ],
+            // Hanya wajib saat pdo_detail_id = sentinel FUND_RETURN — dipakai
+            // untuk cari PdoHeader karena belum ada pdo_details untuk item ini.
+            'pdo_header_id'    => [
+                Rule::requiredIf(fn () => $this->input('pdo_detail_id') === RealizationEntryService::FUND_RETURN_SENTINEL),
+                'nullable', 'uuid', 'exists:pdo_headers,id',
+            ],
             'vehicle_id'       => ['nullable', 'uuid', 'exists:vehicles,id'],
             'transaction_date' => ['required', 'date'],
             'amount'           => ['required', 'integer', 'min:1'],

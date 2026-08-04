@@ -35,8 +35,10 @@ function isPribadiVendorRole(user: AuthUser | undefined): boolean {
 }
 
 // ── Form schema Input Realisasi ──────────────────────────────────────────────
+const FUND_RETURN_SENTINEL = 'FUND_RETURN'
+
 const realizationSchema = z.object({
-  pdo_detail_id:    z.string().uuid('Pilih item biaya'),
+  pdo_detail_id:    z.string().min(1, 'Pilih item biaya'),
   vehicle_id:       z.string().nullable().optional(),
   transaction_date: z.string().min(1, 'Tanggal wajib diisi'),
   amount:           z.coerce.number().min(1, 'Jumlah harus > 0'),
@@ -61,9 +63,10 @@ interface RealizationAvailableItem {
     subcategory?: { id: string; name: string; category?: { id: string; name: string } } | null
   } | null
   description:    string
-  bucket:         number
-  realized_group: number
+  bucket:         number | null
+  realized_group: number | null
   saldo:          number
+  is_fund_return?: boolean
 }
 
 interface RealizationAvailableResponse {
@@ -257,6 +260,7 @@ export function RekapitulasiPage() {
     ? (editingEntry.pdo_detail?.expense_item?.code ?? '')
     : (selectedItem?.expense_item?.code ?? '')
   const isInventoryItem  = INVENTORY_ITEM_CODES.includes(selectedItemCode)
+  const isFundReturnSelected = selectedItem?.is_fund_return ?? false
 
   const canEditRealization = role === 'KERANI'
   const openEditRealization = (entry: RealizationEntry) => {
@@ -296,20 +300,30 @@ export function RekapitulasiPage() {
   )
 
   useEffect(() => {
+    // Pengembalian sisa dana bulan lalu selalu dari kas kebun — dananya dari
+    // saldo bulan lalu, bukan transfer bulan ini.
+    if (isFundReturnSelected) {
+      setValue('funding_source', 'kas_kebun')
+      return
+    }
     if (isPribadiVendorRole(user ?? undefined)) {
       setValue('funding_source', 'rekening_utama')
       return
     }
     setValue('funding_source', selectedPaymentMethod === 'transfer' ? 'rekening_kebun' : 'kas_kebun')
-  }, [user, selectedPaymentMethod, setValue])
+  }, [user, selectedPaymentMethod, setValue, isFundReturnSelected])
 
   const availablePaymentMethods = isPribadiVendorRole(user ?? undefined) ? ['transfer'] : ['tunai', 'transfer']
 
   const saveRealization = useMutation({
-    mutationFn: (data: RealizationForm) =>
-      editingEntry
-        ? api.put<ApiResponse<RealizationEntry>>(`/realization-entries/${editingEntry.id}`, data)
-        : api.post<ApiResponse<RealizationEntry>>('/realization-entries', data),
+    mutationFn: (data: RealizationForm) => {
+      const payload = data.pdo_detail_id === FUND_RETURN_SENTINEL
+        ? { ...data, pdo_header_id: activePdo!.id }
+        : data
+      return editingEntry
+        ? api.put<ApiResponse<RealizationEntry>>(`/realization-entries/${editingEntry.id}`, payload)
+        : api.post<ApiResponse<RealizationEntry>>('/realization-entries', payload)
+    },
     onSuccess: (res) => {
       const wasEditing = !!editingEntry
       setApiError(null)

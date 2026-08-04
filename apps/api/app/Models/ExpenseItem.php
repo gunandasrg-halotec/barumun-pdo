@@ -98,6 +98,8 @@ class ExpenseItem extends Model
         'routine_plantation_unit_ids',
         'is_active',
         'is_deduction',
+        'is_system',
+        'is_fund_return',
         'notes',
     ];
 
@@ -233,6 +235,8 @@ class ExpenseItem extends Model
             'is_routine' => 'boolean',
             'is_active' => 'boolean',
             'is_deduction' => 'boolean',
+            'is_system' => 'boolean',
+            'is_fund_return' => 'boolean',
             'routine_plantation_unit_ids' => PgUuidArray::class,
             'deleted_at' => 'datetime',
         ];

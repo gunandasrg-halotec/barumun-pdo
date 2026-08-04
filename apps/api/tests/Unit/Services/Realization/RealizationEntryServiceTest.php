@@ -3,12 +3,16 @@
 namespace Tests\Unit\Services\Realization;
 
 use App\Models\Company;
+use App\Models\ExpenseCategory;
+use App\Models\ExpenseItem;
+use App\Models\ExpenseSubcategory;
 use App\Models\PdoDetail;
 use App\Models\PdoHeader;
 use App\Models\PlantationUnit;
 use App\Models\RealizationEntry;
 use App\Models\Role;
 use App\Models\TransferEntry;
+use App\Models\UnitOpeningBalance;
 use App\Models\User;
 use App\Services\Realization\RealizationEntryService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -379,6 +383,110 @@ class RealizationEntryServiceTest extends TestCase
     // ─────────────────────────────────────────────────────
     // HELPER
     // ─────────────────────────────────────────────────────
+
+    // ─────────────────────────────────────────────────────
+    // Pengembalian Sisa Dana Bulan Lalu (sentinel FUND_RETURN)
+    // ─────────────────────────────────────────────────────
+
+    private function seedFundReturnItem(): ExpenseItem
+    {
+        $category = ExpenseCategory::factory()->create([
+            'company_id'        => $this->companyId,
+            'code'              => 'PSD',
+            'include_in_recap'  => true,
+            'is_system'         => true,
+        ]);
+        $subcategory = ExpenseSubcategory::factory()->create([
+            'category_id' => $category->id,
+            'code'        => 'PSD-KAS',
+            'is_system'   => true,
+        ]);
+
+        return ExpenseItem::factory()->create([
+            'subcategory_id'          => $subcategory->id,
+            'code'                    => 'PSD-KAS-001',
+            'is_system'               => true,
+            'is_fund_return'          => true,
+            'default_account_number'  => '1-10019',
+        ]);
+    }
+
+    public function test_fund_return_succeeds_even_when_kantong_plafon_zero(): void
+    {
+        $this->seedFundReturnItem();
+        UnitOpeningBalance::create(['plantation_unit_id' => $this->unit->id, 'amount' => 5000000, 'as_of_date' => '2026-07-01']);
+
+        $pdo = PdoHeader::factory()->create([
+            'company_id'         => $this->companyId,
+            'plantation_unit_id' => $this->unit->id,
+            'created_by'         => $this->kerani->id,
+            'status'             => PdoHeader::STATUS_FINAL,
+        ]);
+        // Kantong kebun PDO ini 0 — tidak ada transfer sama sekali.
+        PdoDetail::factory()->create(['pdo_header_id' => $pdo->id, 'amount' => 1000000]);
+
+        $entry = $this->service->store([
+            'pdo_detail_id'    => RealizationEntryService::FUND_RETURN_SENTINEL,
+            'pdo_header_id'    => $pdo->id,
+            'transaction_date' => '2026-08-05',
+            'amount'           => 2000000,
+            'payment_method'   => RealizationEntry::PAYMENT_TUNAI,
+            'proof_number'     => '',
+            'funding_source'   => RealizationEntry::FUNDING_KAS_KEBUN,
+        ], $this->kerani);
+
+        $this->assertSame(2000000, $entry->amount);
+        $this->assertSame(RealizationEntry::SETTLEMENT_KEBUN, $entry->settlement_group);
+        $this->assertDatabaseHas('pdo_details', [
+            'pdo_header_id'   => $pdo->id,
+            'expense_item_id' => ExpenseItem::where('code', 'PSD-KAS-001')->first()->id,
+            'amount'          => 0,
+        ]);
+    }
+
+    public function test_fund_return_rejected_when_exceeding_current_balance(): void
+    {
+        $this->seedFundReturnItem();
+        UnitOpeningBalance::create(['plantation_unit_id' => $this->unit->id, 'amount' => 1000000, 'as_of_date' => '2026-07-01']);
+
+        $pdo = PdoHeader::factory()->create([
+            'company_id'         => $this->companyId,
+            'plantation_unit_id' => $this->unit->id,
+            'created_by'         => $this->kerani->id,
+            'status'             => PdoHeader::STATUS_FINAL,
+        ]);
+
+        $this->expectException(\Illuminate\Http\Exceptions\HttpResponseException::class);
+
+        $this->service->store([
+            'pdo_detail_id'    => RealizationEntryService::FUND_RETURN_SENTINEL,
+            'pdo_header_id'    => $pdo->id,
+            'transaction_date' => '2026-08-05',
+            'amount'           => 5000000,
+            'payment_method'   => RealizationEntry::PAYMENT_TUNAI,
+            'proof_number'     => '',
+            'funding_source'   => RealizationEntry::FUNDING_KAS_KEBUN,
+        ], $this->kerani);
+    }
+
+    public function test_fund_return_item_appears_in_available_items_for_kebun_without_transfer(): void
+    {
+        $this->seedFundReturnItem();
+        UnitOpeningBalance::create(['plantation_unit_id' => $this->unit->id, 'amount' => 3000000, 'as_of_date' => '2026-07-01']);
+
+        $pdo = PdoHeader::factory()->create([
+            'company_id'         => $this->companyId,
+            'plantation_unit_id' => $this->unit->id,
+            'created_by'         => $this->kerani->id,
+            'status'             => PdoHeader::STATUS_FINAL,
+        ]);
+
+        $result = $this->service->availableItemsForActor($pdo, $this->kerani);
+
+        $fundReturn = collect($result['items'])->firstWhere('pdo_detail_id', RealizationEntryService::FUND_RETURN_SENTINEL);
+        $this->assertNotNull($fundReturn);
+        $this->assertSame(3000000, $fundReturn['saldo']);
+    }
 
     private function makeDetail(string $status, int $budget, int $transferred, ?int $periodYear = null, ?int $periodMonth = null): PdoDetail
     {

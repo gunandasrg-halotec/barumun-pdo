@@ -24,6 +24,7 @@ class ExpenseCategory extends Model
         'display_order',
         'include_in_recap',
         'is_active',
+        'is_system',
         'notes',
     ];
 
@@ -33,6 +34,7 @@ class ExpenseCategory extends Model
             'display_order'    => 'integer',
             'include_in_recap' => 'boolean',
             'is_active'        => 'boolean',
+            'is_system'        => 'boolean',
             'deleted_at'       => 'datetime',
         ];
     }

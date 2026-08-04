@@ -145,6 +145,16 @@ class CashBookQueryService
     }
 
     /**
+     * Saldo Kas Kebun unit ini per HARI INI (kumulatif sejak transaksi pertama).
+     * Dipakai untuk memvalidasi bahwa pengembalian sisa dana tidak melebihi kas
+     * yang benar-benar tersedia.
+     */
+    public function currentBalance(string $unitId): int
+    {
+        return $this->cumulativeBalanceBefore($unitId, Carbon::tomorrow());
+    }
+
+    /**
      * Baris pengeluaran Buku Kas Harian, digabung per (subkategori, tanggal
      * transaksi) supaya tabel tidak terlalu panjang — item-item dalam 1
      * subkategori yang direalisasikan di tanggal yang sama (mis. GAJI + CATU
