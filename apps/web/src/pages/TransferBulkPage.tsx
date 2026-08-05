@@ -1,16 +1,26 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '@/lib/api'
 import { Button } from '@/components/ui/Button'
+import { Modal } from '@/components/ui/Modal'
 import { useToastStore } from '@/store/toast.store'
+import { useAuthStore } from '@/store/auth.store'
 import { fmt } from '@/lib/format'
-import { ArrowLeft, ChevronDown, ChevronUp, Download } from 'lucide-react'
-import type { ApiResponse } from '@/types'
+import { isDirekturKeuangan } from '@/lib/auth'
+import { buildTransferDetailGroups, type TransferCategoryGroup } from '@/lib/transferDetailGroups'
+import {
+  ALL_TRANSFER_DEST_OPTIONS,
+  getTransferDestOptions,
+  normalizeTransferDest,
+  TRANSFER_DEST_LABELS,
+  type TransferDest,
+} from '@/lib/transferDestinations'
+import { ArrowLeft, ChevronDown, ChevronUp, Download, GitBranch, Search, X } from 'lucide-react'
+import { DateRangePickerButton } from '@/components/ui/DateRangePickerButton'
+import type { ApiResponse, RoleCode } from '@/types'
 
 // ─── types ────────────────────────────────────────────────────────────────────
-
-type TransferDest = 'rek_kebun' | 'pribadi' | 'vendor'
 
 type TransferEntryRecord = {
   id: string
@@ -22,6 +32,16 @@ type TransferEntryRecord = {
   status?: 'draft' | 'committed'
 }
 
+/** Payload satu baris draft yang dikirim ke POST /pdo/{id}/transfers/bulk. */
+type DraftEntry = {
+  pdo_detail_id: string
+  amount: number
+  transfer_date: string
+  reference_number: string | null
+  notes: string | null
+  transfer_destination: TransferDest
+}
+
 interface ExpenseItemInfo {
   id: string
   code: string
@@ -31,12 +51,19 @@ interface ExpenseItemInfo {
   split_transfer_plantation_unit_ids: string[] | null
 }
 
-interface CategoryInfo { code: string; name: string }
+interface CategoryInfo {
+  id?: string
+  code: string
+  name: string
+  display_order?: number
+}
 
 type DestBreakdown = Record<TransferDest, number>
 
 interface PdoDetailSummary {
-  pdo_detail_id:     string
+  pdo_detail_id:        string
+  source_pdo_number:    string | null
+  source_pdo_merged_at: string | null
   expense_item:      ExpenseItemInfo | null
   category:          CategoryInfo | null
   subcategory:       CategoryInfo | null
@@ -82,14 +109,10 @@ type RowState = {
   split: SplitRow & { transfer_date: string; reference_number: string; notes: string }
 }
 
-const DEST_LABELS: Record<TransferDest, string> = {
-  rek_kebun: 'Rek. Kebun',
-  pribadi:   'Pribadi',
-  vendor:    'Vendor',
-}
-const DEST_OPTIONS: TransferDest[] = ['rek_kebun', 'pribadi', 'vendor']
+const DEST_OPTIONS = ALL_TRANSFER_DEST_OPTIONS
 
 const today = new Date().toISOString().split('T')[0]
+const collapseStateKey = (pdoId: string) => `transfer-bulk-groups:${pdoId}`
 
 const MONTH_NAMES = ['Januari','Februari','Maret','April','Mei','Juni','Juli','Agustus','September','Oktober','November','Desember']
 
@@ -415,8 +438,21 @@ export function TransferBulkPage() {
   const navigate     = useNavigate()
   const toast        = useToastStore((s) => s.push)
   const qc           = useQueryClient()
+  const user         = useAuthStore((s) => s.user)
+  const role         = user?.role.code as RoleCode | undefined
+  const canCommit    = !!role && isDirekturKeuangan(role)
   const [rows, setRows]           = useState<RowState[]>([])
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set())
+  const [collapsedCategories, setCollapsedCategories] = useState<Set<string>>(new Set())
+  const [collapsedSubcategories, setCollapsedSubcategories] = useState<Set<string>>(new Set())
+
+  // ── Filter & search state ────────────────────────────────────────────────────
+  const [searchName,     setSearchName]     = useState('')
+  const [filterHasDraft, setFilterHasDraft] = useState(false)
+  const [filterSaldo,    setFilterSaldo]    = useState<'all' | 'ada' | 'tidak'>('all')
+  const [filterDateFrom, setFilterDateFrom] = useState('')
+  const [filterDateTo,   setFilterDateTo]   = useState('')
+  const [filterDest,     setFilterDest]     = useState<TransferDest | 'all'>('all')
 
   const { data: summary, isLoading } = useQuery({
     queryKey: ['transfer-summary', pdoId],
@@ -451,6 +487,32 @@ export function TransferBulkPage() {
   }, [pdoId])
 
   useEffect(() => {
+    if (!pdoId || typeof window === 'undefined') return
+    try {
+      const raw = window.sessionStorage.getItem(collapseStateKey(pdoId))
+      if (!raw) {
+        setCollapsedCategories(new Set())
+        setCollapsedSubcategories(new Set())
+        return
+      }
+      const parsed = JSON.parse(raw) as { categories?: string[]; subcategories?: string[] }
+      setCollapsedCategories(new Set(parsed.categories ?? []))
+      setCollapsedSubcategories(new Set(parsed.subcategories ?? []))
+    } catch {
+      setCollapsedCategories(new Set())
+      setCollapsedSubcategories(new Set())
+    }
+  }, [pdoId])
+
+  useEffect(() => {
+    if (!pdoId || typeof window === 'undefined') return
+    window.sessionStorage.setItem(collapseStateKey(pdoId), JSON.stringify({
+      categories: [...collapsedCategories],
+      subcategories: [...collapsedSubcategories],
+    }))
+  }, [pdoId, collapsedCategories, collapsedSubcategories])
+
+  useEffect(() => {
     if (!summary?.details) return
     const firstLoad = !hasSavedRef.current
 
@@ -464,7 +526,13 @@ export function TransferBulkPage() {
           return {
             pdo_detail_id: d.pdo_detail_id,
             isSplit:       false,
-            normal: { amount: 0, transfer_date: today, reference_number: '', notes: '', dest: committedDest ?? 'rek_kebun' },
+            normal: {
+              amount: 0,
+              transfer_date: today,
+              reference_number: '',
+              notes: '',
+              dest: normalizeTransferDest(committedDest ?? 'rek_kebun', true),
+            },
             split: {
               amount1: 0, dest1: 'rek_kebun' as TransferDest,
               amount2: 0, dest2: 'pribadi' as TransferDest,
@@ -496,7 +564,17 @@ export function TransferBulkPage() {
           }
         }
 
-        const amount = d.draft_total > 0 ? d.draft_total : (firstLoad ? available : 0)
+        // Jangan prefill dengan sisa dana jika PDO ini sudah pernah punya draft ATAU
+        // committed transfer di item manapun (bukan cuma item ini) — hormati pilihan
+        // eksplisit user sebelumnya (termasuk item yang sengaja di-nol-kan), dan cegah
+        // item baru (mis. dari PDO Tambahan yang baru digabung) ikut ter-prefill diam-diam
+        // di PDO yang sebenarnya sudah pernah dipakai untuk transfer sebelumnya. Prefill
+        // hanya terjadi pada kunjungan pertama yang benar-benar belum pernah ada transfer
+        // sama sekali di PDO ini.
+        const pdoHasAnyHistory = summary.details.some((x) => x.draft_total > 0 || x.total_transferred > 0)
+        const amount = d.draft_total > 0
+          ? d.draft_total
+          : (firstLoad && !pdoHasAnyHistory ? available : 0)
         return {
           pdo_detail_id: d.pdo_detail_id,
           isSplit:       false,
@@ -518,6 +596,30 @@ export function TransferBulkPage() {
   }, [summary, unitId, pdoId])
 
   const details = useMemo(() => summary?.details ?? [], [summary])
+
+  const filteredDetails = useMemo(() => details.filter((d) => {
+    if (searchName) {
+      const name = (d.expense_item?.name ?? d.description).toLowerCase()
+      if (!name.includes(searchName.toLowerCase())) return false
+    }
+    if (filterHasDraft && d.draft_entries.length === 0) return false
+    if (filterSaldo === 'ada'   && d.remaining <= 0) return false
+    if (filterSaldo === 'tidak' && d.remaining >  0) return false
+    if (filterDateFrom || filterDateTo) {
+      const hasMatch = d.entries.some((e) => {
+        const date = e.transfer_date.slice(0, 10)
+        if (filterDateFrom && date < filterDateFrom) return false
+        if (filterDateTo   && date > filterDateTo)   return false
+        return true
+      })
+      if (!hasMatch) return false
+    }
+    if (filterDest !== 'all') {
+      const hasMatch = d.entries.some((e) => e.transfer_destination === filterDest)
+      if (!hasMatch) return false
+    }
+    return true
+  }), [details, searchName, filterHasDraft, filterSaldo, filterDateFrom, filterDateTo, filterDest])
 
   // ── Cards ringkasan: hanya transfer yang SUDAH tercatat (committed + draft) ─────
   // Nilai kolom "Jumlah" pada form (input yang belum disimpan) TIDAK diikutkan —
@@ -551,6 +653,27 @@ export function TransferBulkPage() {
 
   const hasDrafts = useMemo(() => details.some((d) => d.draft_entries.length > 0), [details])
 
+  /** Jumlah entri draft yang saat ini tersimpan — dipakai modal untuk memberi tahu
+   *  berapa yang akan diganti/dihapus, karena simpan draft bersifat sinkronisasi penuh. */
+  const existingDraftCount = useMemo(
+    () => details.reduce((n, d) => n + d.draft_entries.length, 0),
+    [details],
+  )
+
+  /** Entri yang menunggu konfirmasi user di modal. null = modal tertutup. */
+  const [confirmSave, setConfirmSave] = useState<DraftEntry[] | null>(null)
+
+  const confirmSummary = useMemo(() => {
+    const entries = confirmSave ?? []
+    const dest = { rek_kebun: 0, pribadi: 0, vendor: 0 }
+    let total = 0
+    for (const e of entries) {
+      total += e.amount
+      dest[e.transfer_destination] += e.amount
+    }
+    return { count: entries.length, total, dest }
+  }, [confirmSave])
+
   const toggleExpand = (id: string) => {
     setExpandedIds((prev) => {
       const next = new Set(prev)
@@ -559,12 +682,12 @@ export function TransferBulkPage() {
     })
   }
 
-  const updateNormal = (idx: number, field: keyof NormalRow, value: string | number) => {
-    setRows((prev) => prev.map((r, i) => i === idx ? { ...r, normal: { ...r.normal, [field]: value } } : r))
+  const updateNormal = (pdoDetailId: string, field: keyof NormalRow, value: string | number) => {
+    setRows((prev) => prev.map((r) => r.pdo_detail_id === pdoDetailId ? { ...r, normal: { ...r.normal, [field]: value } } : r))
   }
 
-  const updateSplit = (idx: number, field: keyof RowState['split'], value: string | number) => {
-    setRows((prev) => prev.map((r, i) => i === idx ? { ...r, split: { ...r.split, [field]: value } } : r))
+  const updateSplit = (pdoDetailId: string, field: keyof RowState['split'], value: string | number) => {
+    setRows((prev) => prev.map((r) => r.pdo_detail_id === pdoDetailId ? { ...r, split: { ...r.split, [field]: value } } : r))
   }
 
   const invalidate = () => {
@@ -576,21 +699,26 @@ export function TransferBulkPage() {
     (err as { response?: { data?: { error?: { message?: string } } }; message?: string })
       ?.response?.data?.error?.message ?? (err as { message?: string })?.message ?? fallback
 
+  // Dipisah dari save.mutationFn supaya jumlah & total entri bisa dihitung SEBELUM
+  // disimpan — dipakai modal konfirmasi di bawah. Logikanya tidak diubah.
+  const buildEntries = useCallback((): DraftEntry[] => {
+    const entries: DraftEntry[] = []
+    rows.forEach((row) => {
+      if (row.isSplit) {
+        if (Number(row.split.amount1) > 0) entries.push({ pdo_detail_id: row.pdo_detail_id, amount: Number(row.split.amount1), transfer_date: row.split.transfer_date, reference_number: row.split.reference_number || null, notes: row.split.notes || null, transfer_destination: row.split.dest1 })
+        if (Number(row.split.amount2) > 0) entries.push({ pdo_detail_id: row.pdo_detail_id, amount: Number(row.split.amount2), transfer_date: row.split.transfer_date, reference_number: row.split.reference_number || null, notes: row.split.notes || null, transfer_destination: row.split.dest2 })
+      } else if (Number(row.normal.amount) > 0) {
+        entries.push({ pdo_detail_id: row.pdo_detail_id, amount: Number(row.normal.amount), transfer_date: row.normal.transfer_date, reference_number: row.normal.reference_number || null, notes: row.normal.notes || null, transfer_destination: row.normal.dest })
+      }
+    })
+    return entries
+  }, [rows])
+
   const save = useMutation({
-    mutationFn: () => {
-      const entries: object[] = []
-      rows.forEach((row) => {
-        if (row.isSplit) {
-          if (Number(row.split.amount1) > 0) entries.push({ pdo_detail_id: row.pdo_detail_id, amount: Number(row.split.amount1), transfer_date: row.split.transfer_date, reference_number: row.split.reference_number || null, notes: row.split.notes || null, transfer_destination: row.split.dest1 })
-          if (Number(row.split.amount2) > 0) entries.push({ pdo_detail_id: row.pdo_detail_id, amount: Number(row.split.amount2), transfer_date: row.split.transfer_date, reference_number: row.split.reference_number || null, notes: row.split.notes || null, transfer_destination: row.split.dest2 })
-        } else if (Number(row.normal.amount) > 0) {
-          entries.push({ pdo_detail_id: row.pdo_detail_id, amount: Number(row.normal.amount), transfer_date: row.normal.transfer_date, reference_number: row.normal.reference_number || null, notes: row.normal.notes || null, transfer_destination: row.normal.dest })
-        }
-      })
+    mutationFn: (entries: DraftEntry[]) =>
       // entries kosong = hapus semua draft (sinkronisasi form → draft)
-      return api.post(`/pdo/${pdoId}/transfers/bulk`, { entries })
-    },
-    onSuccess: () => { hasSavedRef.current = true; toast('Draft transfer berhasil disimpan'); invalidate() },
+      api.post(`/pdo/${pdoId}/transfers/bulk`, { entries }),
+    onSuccess: () => { hasSavedRef.current = true; setConfirmSave(null); toast('Draft transfer berhasil disimpan'); invalidate() },
     onError: (err) => toast(errMsg(err, 'Gagal menyimpan draft'), 'error'),
   })
 
@@ -633,13 +761,306 @@ export function TransferBulkPage() {
         return
       }
     }
-    save.mutate()
+
+    // Validasi lolos → minta konfirmasi dulu. Simpan draft mengganti SELURUH draft
+    // PDO ini (sinkronisasi form → draft), jadi form kosong berarti menghapus semua.
+    const entries = buildEntries()
+    if (entries.length === 0 && !hasDrafts) {
+      toast('Belum ada nominal yang diisi — tidak ada yang perlu disimpan', 'error')
+      return
+    }
+    setConfirmSave(entries)
   }
 
   const handleCommit = () => {
     if (!hasDrafts) { toast('Belum ada draft untuk disimpan permanen', 'error'); return }
     if (!window.confirm('Simpan permanen semua draft transfer PDO ini? Setelah permanen, transfer akan dihitung di semua laporan.')) return
     commit.mutate()
+  }
+
+  // ── Pengelompokan tampilan: item Bulanan dulu, lalu item Tambahan per PDO
+  // asal dengan divider — mirip PdoDetailPage, agar user tidak salah transfer
+  // item dari PDO yang berbeda dari yang dimaksud. Ini murni pengelompokan
+  // untuk RENDER; `rows`/`details` sendiri tetap dalam urutan asli.
+  const rowsByDetailId = useMemo(() => new Map(rows.map((r) => [r.pdo_detail_id, r])), [rows])
+  const bulananDetails = filteredDetails.filter((d) => !d.source_pdo_number)
+  const bulananGroups = useMemo(() => buildTransferDetailGroups(bulananDetails), [bulananDetails])
+  const tambahanGroups = useMemo(() => {
+    const groups = new Map<string, { pdoNumber: string; mergedAt: string | null; items: PdoDetailSummary[] }>()
+    for (const d of filteredDetails) {
+      if (!d.source_pdo_number) continue
+      if (!groups.has(d.source_pdo_number)) {
+        groups.set(d.source_pdo_number, { pdoNumber: d.source_pdo_number, mergedAt: d.source_pdo_merged_at, items: [] })
+      }
+      groups.get(d.source_pdo_number)!.items.push(d)
+    }
+    return [...groups.values()].sort((a, b) => (a.mergedAt ?? '').localeCompare(b.mergedAt ?? ''))
+  }, [filteredDetails])
+
+  const groupedTambahan = useMemo(
+    () => tambahanGroups.map((group) => ({ ...group, categoryGroups: buildTransferDetailGroups(group.items) })),
+    [tambahanGroups],
+  )
+
+  useEffect(() => {
+    if (!pdoId || typeof window === 'undefined') return
+    if (window.sessionStorage.getItem(collapseStateKey(pdoId))) return
+
+    const nextCollapsedSubs = new Set<string>()
+    bulananGroups.forEach((group) => {
+      group.subs.forEach((sub) => nextCollapsedSubs.add(`bulanan::${group.catKey}::${sub.subKey}`))
+    })
+    groupedTambahan.forEach((section) => {
+      section.categoryGroups.forEach((group) => {
+        group.subs.forEach((sub) => nextCollapsedSubs.add(`supp:${section.pdoNumber}::${group.catKey}::${sub.subKey}`))
+      })
+    })
+    setCollapsedSubcategories(nextCollapsedSubs)
+  }, [pdoId, bulananGroups, groupedTambahan])
+
+  const toggleCategory = (catKey: string) => {
+    setCollapsedCategories((prev) => {
+      const next = new Set(prev)
+      next.has(catKey) ? next.delete(catKey) : next.add(catKey)
+      return next
+    })
+  }
+
+  const toggleSubcategory = (scope: string, subKey: string) => {
+    const fullKey = `${scope}::${subKey}`
+    setCollapsedSubcategories((prev) => {
+      const next = new Set(prev)
+      next.has(fullKey) ? next.delete(fullKey) : next.add(fullKey)
+      return next
+    })
+  }
+
+  const renderGroupedDetails = (scope: string, groups: TransferCategoryGroup<PdoDetailSummary>[]) => groups.map((group) => {
+    const searchActive = searchName.trim() !== ''
+    const catStorageKey = `${scope}::${group.catKey}`
+    const catCollapsed = searchActive ? false : collapsedCategories.has(catStorageKey)
+
+    return (
+      <Fragment key={`${scope}-cat-${group.catKey}`}>
+        <tr className="border-t-2 border-line bg-[#eef6ee] cursor-pointer select-none" onClick={() => toggleCategory(catStorageKey)}>
+          <td colSpan={11} className="px-3 py-2.5">
+            <div className="flex items-center gap-2">
+              <span className={`text-muted transition-transform duration-150 ${catCollapsed ? '' : 'rotate-90'}`} style={{ display: 'inline-block' }}>▶</span>
+              <span className="text-sm font-[900] text-ink">{group.catLabel}</span>
+              <span className="ml-auto text-xs font-[700] text-muted">{group.subs.reduce((sum, sub) => sum + sub.items.length, 0)} item</span>
+            </div>
+          </td>
+        </tr>
+
+        {!catCollapsed && group.subs.map((subgroup) => {
+          const subStorageKey = `${scope}::${group.catKey}::${subgroup.subKey}`
+          const subCollapsed = searchActive ? false : collapsedSubcategories.has(subStorageKey)
+
+          return (
+            <Fragment key={`${scope}-sub-${group.catKey}-${subgroup.subKey}`}>
+              <tr className="border-t border-line bg-[#f7faf7] cursor-pointer select-none" onClick={() => toggleSubcategory(scope, `${group.catKey}::${subgroup.subKey}`)}>
+                <td colSpan={11} className="pl-8 pr-3 py-2">
+                  <div className="flex items-center gap-2">
+                    <span className={`text-muted transition-transform duration-150 ${subCollapsed ? '' : 'rotate-90'}`} style={{ display: 'inline-block', fontSize: 10 }}>▶</span>
+                    <span className="text-[11px] font-[850] uppercase tracking-wider text-muted">{subgroup.subLabel}</span>
+                    <span className="ml-auto text-xs font-[700] text-muted">{subgroup.items.length} item</span>
+                  </div>
+                </td>
+              </tr>
+
+              {!subCollapsed && subgroup.items.map((detail) => {
+                const row = rowsByDetailId.get(detail.pdo_detail_id)
+                return row ? renderDetailRow(detail, row) : null
+              })}
+            </Fragment>
+          )
+        })}
+      </Fragment>
+    )
+  })
+
+  const renderDetailRow = (detail: PdoDetailSummary, row: RowState) => {
+    const hasHistory   = detail.entries.length > 0
+    const draftCount   = detail.draft_entries.length
+    const isDeduction  = detail.expense_item?.is_deduction ?? false
+    // Potongan dianggap sudah committed bila total transfernya negatif
+    // (entri potongan otomatis sudah dibuat saat simpan permanen).
+    const isDeductionCommitted = isDeduction && detail.total_transferred < 0
+    const available    = Math.max(detail.amount_approved - detail.total_transferred, 0)
+    const isExpanded   = expandedIds.has(detail.pdo_detail_id)
+    const itemCode     = detail.expense_item?.code
+    const itemName     = detail.expense_item?.name ?? '—'
+    const itemLabel    = itemCode ? `[${itemCode}] ${itemName}` : itemName
+    const categoryLabel = detail.category ? `${detail.category.code} — ${detail.category.name}` : '—'
+    const subcategoryLabel = detail.subcategory ? `${detail.subcategory.code} — ${detail.subcategory.name}` : null
+    const destOptions = getTransferDestOptions(isDeduction)
+    const deductionDest = normalizeTransferDest(row.normal.dest, isDeduction)
+
+    const toggles = (
+      <span className="inline-flex gap-2 ml-2">
+        {draftCount > 0 && (
+          <button type="button" onClick={() => toggleExpand(detail.pdo_detail_id)} className="inline-flex items-center gap-0.5 text-xs text-amber-600 hover:text-amber-800 font-normal">
+            Draft ({draftCount})
+            {isExpanded ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
+          </button>
+        )}
+        {hasHistory && (
+          <button type="button" onClick={() => toggleExpand(detail.pdo_detail_id)} className="inline-flex items-center gap-0.5 text-xs text-blue-600 hover:text-blue-800 font-normal">
+            Riwayat ({detail.entries.length})
+          </button>
+        )}
+      </span>
+    )
+
+    const metaCols = isDeduction ? (
+      <>
+        {/* Item potongan: Total Pengajuan minus; kolom transfer/sisa tak berlaku */}
+        <td className="px-3 py-2 text-sm text-red-600 font-medium">-{fmt(detail.amount_approved)}</td>
+        {/* Sudah Ditransfer = potongan yang sudah diterapkan (negatif) bila sudah committed */}
+        <td className="px-3 py-2 text-sm text-red-600 font-medium">{detail.total_transferred < 0 ? fmt(detail.total_transferred) : '—'}</td>
+        <td className="px-3 py-2 text-sm text-muted">—</td>
+        <td className="px-3 py-2 text-sm text-muted">—</td>
+      </>
+    ) : (
+      <>
+        <td className="px-3 py-2 text-sm">{fmt(detail.amount_approved)}</td>
+        <td className="px-3 py-2 text-sm text-teal-700 font-medium">{fmt(detail.total_transferred)}</td>
+        <td className="px-3 py-2 text-sm text-amber-600 font-medium">{detail.draft_total > 0 ? fmt(detail.draft_total) : '—'}</td>
+        <td className="px-3 py-2 text-sm font-bold text-green-700">{fmt(detail.remaining)}</td>
+      </>
+    )
+
+    const expandedRow = isExpanded && (
+      <tr key={`${detail.pdo_detail_id}-exp`}>
+        <td colSpan={11} className="px-0 py-0 bg-gray-50 border-t border-dashed border-line">
+          {draftCount > 0 && <DraftTable entries={detail.draft_entries} />}
+          {hasHistory && <HistoryTable entries={detail.entries} />}
+        </td>
+      </tr>
+    )
+
+    if (row.isSplit) {
+      const totalSplit  = Number(row.split.amount1) + Number(row.split.amount2)
+      const overLimit   = totalSplit > available
+      const sameDestErr = Number(row.split.amount1) > 0 && Number(row.split.amount2) > 0 && row.split.dest1 === row.split.dest2
+
+      return (
+        <Fragment key={detail.pdo_detail_id}>
+          <tr key={`${detail.pdo_detail_id}-header`} className="border-t-2 border-line bg-[#f7faf7]">
+            <td className="px-3 py-2 text-xs text-muted">
+              <div className="font-[700] text-ink">{categoryLabel}</div>
+              {subcategoryLabel && <div className="text-[11px] mt-0.5">{subcategoryLabel}</div>}
+            </td>
+            <td className="px-3 py-2 font-bold text-sm">
+              {itemLabel}
+              <span className="ml-2 text-xs bg-blue-100 text-blue-700 px-1.5 py-0.5 rounded font-normal">Split</span>
+              {toggles}
+            </td>
+            {metaCols}
+            <td colSpan={5} className="px-3 py-2 text-xs text-muted">
+              <div className="flex items-center gap-2 flex-wrap">
+                <div><span className="font-bold mr-1">Tgl:</span>
+                  <input type="date" value={row.split.transfer_date} onChange={(e) => updateSplit(detail.pdo_detail_id, 'transfer_date', e.target.value)} className="input-base w-36 text-sm" /></div>
+                <div><span className="font-bold mr-1">Ref:</span>
+                  <input type="text" placeholder="No. Referensi" value={row.split.reference_number} onChange={(e) => updateSplit(detail.pdo_detail_id, 'reference_number', e.target.value)} className="input-base w-32 text-sm" /></div>
+                <div><span className="font-bold mr-1">Catatan:</span>
+                  <input type="text" placeholder="Catatan" value={row.split.notes} onChange={(e) => updateSplit(detail.pdo_detail_id, 'notes', e.target.value)} className="input-base w-32 text-sm" /></div>
+              </div>
+              {overLimit && <p className="text-red-500 text-xs mt-1">Total split melebihi sisa dana</p>}
+              {sameDestErr && <p className="text-red-500 text-xs">Tujuan 1 dan 2 tidak boleh sama</p>}
+            </td>
+          </tr>
+          <tr key={`${detail.pdo_detail_id}-s1`} className="border-t border-dashed border-line">
+            <td className="px-3 py-2 pl-8 text-xs text-muted">↳ Tujuan 1</td>
+            <td colSpan={5} />
+            <td className="px-3 py-2">
+              <select value={row.split.dest1} onChange={(e) => updateSplit(detail.pdo_detail_id, 'dest1', e.target.value as TransferDest)} className={`input-base w-32 text-sm ${sameDestErr ? 'border-red-400' : ''}`}>
+                {DEST_OPTIONS.map((d) => <option key={d} value={d}>{TRANSFER_DEST_LABELS[d]}</option>)}
+              </select>
+            </td>
+            <td className="px-3 py-2">
+              <input type="number" min={0} value={row.split.amount1} onChange={(e) => updateSplit(detail.pdo_detail_id, 'amount1', e.target.value)} className={`input-base w-36 ${overLimit ? 'border-red-400' : ''}`} />
+            </td>
+            <td colSpan={3} />
+          </tr>
+          <tr key={`${detail.pdo_detail_id}-s2`} className="border-t border-dashed border-line">
+            <td className="px-3 py-2 pl-8 text-xs text-muted">↳ Tujuan 2</td>
+            <td colSpan={5} />
+            <td className="px-3 py-2">
+              <select value={row.split.dest2} onChange={(e) => updateSplit(detail.pdo_detail_id, 'dest2', e.target.value as TransferDest)} className={`input-base w-32 text-sm ${sameDestErr ? 'border-red-400' : ''}`}>
+                {DEST_OPTIONS.map((d) => <option key={d} value={d}>{TRANSFER_DEST_LABELS[d]}</option>)}
+              </select>
+            </td>
+            <td className="px-3 py-2">
+              <input type="number" min={0} value={row.split.amount2} onChange={(e) => updateSplit(detail.pdo_detail_id, 'amount2', e.target.value)} className={`input-base w-36 ${overLimit ? 'border-red-400' : ''}`} />
+            </td>
+            <td colSpan={3} />
+          </tr>
+          {expandedRow}
+        </Fragment>
+      )
+    }
+
+    // Normal mode
+    const overLim = Number(row.normal.amount) > available
+
+    return (
+      <Fragment key={detail.pdo_detail_id}>
+        <tr key={detail.pdo_detail_id} className="border-t border-line hover:bg-[#fbfdfb]">
+          <td className="px-3 py-3 text-xs text-muted">
+            <div className="font-[700] text-ink">{categoryLabel}</div>
+            {subcategoryLabel && <div className="text-[11px] mt-0.5">{subcategoryLabel}</div>}
+          </td>
+          <td className="px-3 py-3 text-sm font-medium whitespace-nowrap">
+            {itemLabel}
+            {isDeduction && <span className="ml-2 text-xs bg-red-100 text-red-700 px-1.5 py-0.5 rounded font-normal">Potongan</span>}
+            {toggles}
+          </td>
+          {metaCols}
+          {isDeduction ? (
+            isDeductionCommitted ? (
+              <td colSpan={5} className="px-3 py-2 text-xs text-muted italic">
+                Potongan sudah dikurangkan dari transfer {TRANSFER_DEST_LABELS[deductionDest]} (−{fmt(detail.amount_approved)}).
+              </td>
+            ) : (
+              <>
+                {/* Belum committed: tujuan boleh dipilih; field lain disabled */}
+                <td className="px-3 py-2">
+                  <select value={deductionDest} onChange={(e) => updateNormal(detail.pdo_detail_id, 'dest', e.target.value as TransferDest)} className="input-base w-32 text-sm">
+                    {destOptions.map((d) => <option key={d} value={d}>{TRANSFER_DEST_LABELS[d]}</option>)}
+                  </select>
+                </td>
+                <td colSpan={4} className="px-3 py-2 text-xs text-muted italic">
+                  Potongan −{fmt(detail.amount_approved)} akan dikurangkan dari transfer {TRANSFER_DEST_LABELS[deductionDest]} saat simpan permanen.
+                </td>
+              </>
+            )
+          ) : (
+            <>
+              <td className="px-3 py-2">
+                <select value={row.normal.dest} onChange={(e) => updateNormal(detail.pdo_detail_id, 'dest', e.target.value as TransferDest)} className="input-base w-32 text-sm">
+                  {DEST_OPTIONS.map((d) => <option key={d} value={d}>{TRANSFER_DEST_LABELS[d]}</option>)}
+                </select>
+              </td>
+              <td className="px-3 py-2">
+                <input type="number" min={0} max={available} value={row.normal.amount} onChange={(e) => updateNormal(detail.pdo_detail_id, 'amount', e.target.value)} className={`input-base w-36 ${overLim ? 'border-red-400' : ''}`} />
+                {overLim && <p className="text-red-500 text-xs mt-1">Melebihi sisa dana</p>}
+              </td>
+              <td className="px-3 py-2">
+                <input type="date" value={row.normal.transfer_date} onChange={(e) => updateNormal(detail.pdo_detail_id, 'transfer_date', e.target.value)} className="input-base w-36" />
+              </td>
+              <td className="px-3 py-2">
+                <input type="text" placeholder="TRF/2026/001" value={row.normal.reference_number} onChange={(e) => updateNormal(detail.pdo_detail_id, 'reference_number', e.target.value)} className="input-base w-36" />
+              </td>
+              <td className="px-3 py-2">
+                <input type="text" value={row.normal.notes} onChange={(e) => updateNormal(detail.pdo_detail_id, 'notes', e.target.value)} className="input-base w-40" />
+              </td>
+            </>
+          )}
+        </tr>
+        {expandedRow}
+      </Fragment>
+    )
   }
 
   return (
@@ -672,6 +1093,118 @@ export function TransferBulkPage() {
         <SummaryCard label="Sisa Dana" value={cards.sisa} tone={cards.sisa < 0 ? 'red' : 'green'} />
       </div>
 
+      {/* ── Filter & Search bar ─────────────────────────────────────────────── */}
+      {(() => {
+        const activeCount = [
+          searchName !== '',
+          filterHasDraft,
+          filterSaldo !== 'all',
+          filterDateFrom !== '' || filterDateTo !== '',
+          filterDest !== 'all',
+        ].filter(Boolean).length
+
+        const resetAll = () => {
+          setSearchName('')
+          setFilterHasDraft(false)
+          setFilterSaldo('all')
+          setFilterDateFrom('')
+          setFilterDateTo('')
+          setFilterDest('all')
+        }
+
+        return (
+          <div className="mb-3 flex flex-wrap items-end gap-3 rounded-drawer border border-line bg-white px-4 py-3">
+            {/* Pencarian nama */}
+            <div className="flex-1 min-w-[180px]">
+              <label className="block text-[11px] font-bold uppercase tracking-wider text-muted mb-1">Cari Item</label>
+              <div className="relative">
+                <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted pointer-events-none" />
+                <input
+                  type="text"
+                  placeholder="Nama item biaya..."
+                  value={searchName}
+                  onChange={(e) => setSearchName(e.target.value)}
+                  className="input-base pl-8 text-sm"
+                />
+                {searchName && (
+                  <button type="button" onClick={() => setSearchName('')} className="absolute right-2 top-1/2 -translate-y-1/2 text-muted hover:text-ink">
+                    <X className="w-3.5 h-3.5" />
+                  </button>
+                )}
+              </div>
+            </div>
+
+            {/* Filter sisa saldo */}
+            <div className="min-w-[140px]">
+              <label className="block text-[11px] font-bold uppercase tracking-wider text-muted mb-1">Sisa Saldo</label>
+              <select value={filterSaldo} onChange={(e) => setFilterSaldo(e.target.value as 'all' | 'ada' | 'tidak')} className="input-base text-sm">
+                <option value="all">Semua</option>
+                <option value="ada">Ada sisa</option>
+                <option value="tidak">Tidak ada sisa</option>
+              </select>
+            </div>
+
+            {/* Filter tujuan transfer */}
+            <div className="min-w-[150px]">
+              <label className="block text-[11px] font-bold uppercase tracking-wider text-muted mb-1">Tujuan Transfer</label>
+              <select value={filterDest} onChange={(e) => setFilterDest(e.target.value as TransferDest | 'all')} className="input-base text-sm">
+                <option value="all">Semua Tujuan</option>
+                {DEST_OPTIONS.map((d) => <option key={d} value={d}>{TRANSFER_DEST_LABELS[d]}</option>)}
+              </select>
+            </div>
+
+            {/* Filter tanggal transfer */}
+            <div className="flex flex-col justify-end">
+              <label className="block text-[11px] font-bold uppercase tracking-wider text-muted mb-1">Tanggal Transfer</label>
+              <DateRangePickerButton
+                startDate={filterDateFrom}
+                endDate={filterDateTo}
+                min=""
+                max=""
+                label="Tanggal Transfer"
+                onChange={(s, e) => { setFilterDateFrom(s); setFilterDateTo(e) }}
+              />
+            </div>
+
+            {/* Filter ada draft */}
+            <div className="flex flex-col justify-end">
+              <label className="block text-[11px] font-bold uppercase tracking-wider text-muted mb-1">&nbsp;</label>
+              <label className="flex items-center gap-2 cursor-pointer select-none h-9 px-3 border border-line rounded-card text-sm font-medium text-ink hover:bg-[#f7faf7]">
+                <input
+                  type="checkbox"
+                  checked={filterHasDraft}
+                  onChange={(e) => setFilterHasDraft(e.target.checked)}
+                  className="rounded border-line accent-green-600"
+                />
+                Ada Draft
+              </label>
+            </div>
+
+            {/* Reset & jumlah aktif */}
+            {activeCount > 0 && (
+              <div className="flex flex-col justify-end">
+                <label className="block text-[11px] font-bold uppercase tracking-wider text-muted mb-1">&nbsp;</label>
+                <button
+                  type="button"
+                  onClick={resetAll}
+                  className="flex items-center gap-1.5 h-9 px-3 text-sm text-red-600 hover:text-red-800 border border-red-200 rounded-card hover:bg-red-50"
+                >
+                  <X className="w-3.5 h-3.5" />
+                  Reset ({activeCount})
+                </button>
+              </div>
+            )}
+
+            {/* Info hasil filter */}
+            {activeCount > 0 && (
+              <div className="w-full text-[11px] text-muted pt-1 border-t border-line">
+                Menampilkan <span className="font-bold text-ink">{filteredDetails.length}</span> dari <span className="font-bold">{details.length}</span> item
+              </div>
+            )}
+          </div>
+        )
+      })()}
+
       <div className="overflow-auto border border-line rounded-drawer bg-white mb-4">
         <table className="w-full border-collapse" style={{ minWidth: 1400 }}>
           <thead>
@@ -692,202 +1225,151 @@ export function TransferBulkPage() {
                   ))}
                 </tr>
               ))
-            ) : details.map((detail, idx) => {
-              const row      = rows[idx]
-              if (!row) return null
-              const hasHistory   = detail.entries.length > 0
-              const draftCount   = detail.draft_entries.length
-              const isDeduction  = detail.expense_item?.is_deduction ?? false
-              // Potongan dianggap sudah committed bila total transfernya negatif
-              // (entri potongan otomatis sudah dibuat saat simpan permanen).
-              const isDeductionCommitted = isDeduction && detail.total_transferred < 0
-              const available    = Math.max(detail.amount_approved - detail.total_transferred, 0)
-              const isExpanded   = expandedIds.has(detail.pdo_detail_id)
-              const itemCode     = detail.expense_item?.code
-              const itemName     = detail.expense_item?.name ?? '—'
-              const itemLabel    = itemCode ? `[${itemCode}] ${itemName}` : itemName
-              const categoryLabel = detail.category ? `${detail.category.code} — ${detail.category.name}` : '—'
-              const subcategoryLabel = detail.subcategory ? `${detail.subcategory.code} — ${detail.subcategory.name}` : null
-
-              const toggles = (
-                <span className="inline-flex gap-2 ml-2">
-                  {draftCount > 0 && (
-                    <button type="button" onClick={() => toggleExpand(detail.pdo_detail_id)} className="inline-flex items-center gap-0.5 text-xs text-amber-600 hover:text-amber-800 font-normal">
-                      Draft ({draftCount})
-                      {isExpanded ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
-                    </button>
-                  )}
-                  {hasHistory && (
-                    <button type="button" onClick={() => toggleExpand(detail.pdo_detail_id)} className="inline-flex items-center gap-0.5 text-xs text-blue-600 hover:text-blue-800 font-normal">
-                      Riwayat ({detail.entries.length})
-                    </button>
-                  )}
-                </span>
-              )
-
-              const metaCols = isDeduction ? (
-                <>
-                  {/* Item potongan: Total Pengajuan minus; kolom transfer/sisa tak berlaku */}
-                  <td className="px-3 py-2 text-sm text-red-600 font-medium">-{fmt(detail.amount_approved)}</td>
-                  {/* Sudah Ditransfer = potongan yang sudah diterapkan (negatif) bila sudah committed */}
-                  <td className="px-3 py-2 text-sm text-red-600 font-medium">{detail.total_transferred < 0 ? fmt(detail.total_transferred) : '—'}</td>
-                  <td className="px-3 py-2 text-sm text-muted">—</td>
-                  <td className="px-3 py-2 text-sm text-muted">—</td>
-                </>
-              ) : (
-                <>
-                  <td className="px-3 py-2 text-sm">{fmt(detail.amount_approved)}</td>
-                  <td className="px-3 py-2 text-sm text-teal-700 font-medium">{fmt(detail.total_transferred)}</td>
-                  <td className="px-3 py-2 text-sm text-amber-600 font-medium">{detail.draft_total > 0 ? fmt(detail.draft_total) : '—'}</td>
-                  <td className="px-3 py-2 text-sm font-bold text-green-700">{fmt(detail.remaining)}</td>
-                </>
-              )
-
-              const expandedRow = isExpanded && (
-                <tr key={`${detail.pdo_detail_id}-exp`}>
-                  <td colSpan={11} className="px-0 py-0 bg-gray-50 border-t border-dashed border-line">
-                    {draftCount > 0 && <DraftTable entries={detail.draft_entries} />}
-                    {hasHistory && <HistoryTable entries={detail.entries} />}
-                  </td>
-                </tr>
-              )
-
-              if (row.isSplit) {
-                const totalSplit  = Number(row.split.amount1) + Number(row.split.amount2)
-                const overLimit   = totalSplit > available
-                const sameDestErr = Number(row.split.amount1) > 0 && Number(row.split.amount2) > 0 && row.split.dest1 === row.split.dest2
-
-                return (
+            ) : (
+              <>
+                {renderGroupedDetails('bulanan', bulananGroups)}
+                {groupedTambahan.length > 0 && (
                   <>
-                    <tr key={`${detail.pdo_detail_id}-header`} className="border-t-2 border-line bg-[#f7faf7]">
-                      <td className="px-3 py-2 text-xs text-muted">
-                        <div className="font-[700] text-ink">{categoryLabel}</div>
-                        {subcategoryLabel && <div className="text-[11px] mt-0.5">{subcategoryLabel}</div>}
-                      </td>
-                      <td className="px-3 py-2 font-bold text-sm">
-                        {itemLabel}
-                        <span className="ml-2 text-xs bg-blue-100 text-blue-700 px-1.5 py-0.5 rounded font-normal">Split</span>
-                        {toggles}
-                      </td>
-                      {metaCols}
-                      <td colSpan={5} className="px-3 py-2 text-xs text-muted">
-                        <div className="flex items-center gap-2 flex-wrap">
-                          <div><span className="font-bold mr-1">Tgl:</span>
-                            <input type="date" value={row.split.transfer_date} onChange={(e) => updateSplit(idx, 'transfer_date', e.target.value)} className="input-base w-36 text-sm" /></div>
-                          <div><span className="font-bold mr-1">Ref:</span>
-                            <input type="text" placeholder="No. Referensi" value={row.split.reference_number} onChange={(e) => updateSplit(idx, 'reference_number', e.target.value)} className="input-base w-32 text-sm" /></div>
-                          <div><span className="font-bold mr-1">Catatan:</span>
-                            <input type="text" placeholder="Catatan" value={row.split.notes} onChange={(e) => updateSplit(idx, 'notes', e.target.value)} className="input-base w-32 text-sm" /></div>
+                    {/* Divider — item dari PDO Tambahan */}
+                    <tr>
+                      <td colSpan={11} className="px-0 pt-2 pb-0">
+                        <div className="flex items-center gap-2 px-3 py-2.5 bg-amber-50 border-t-2 border-amber-400">
+                          <GitBranch className="w-4 h-4 text-amber-700 shrink-0" />
+                          <span className="text-[12px] font-[850] text-amber-800 uppercase tracking-wide">Item dari PDO Tambahan</span>
+                          <span className="ml-auto text-[11px] font-[700] text-amber-700 bg-amber-100 border border-amber-300 px-2 py-0.5 rounded-full whitespace-nowrap">
+                            digabung setelah disetujui Direktur
+                          </span>
                         </div>
-                        {overLimit && <p className="text-red-500 text-xs mt-1">Total split melebihi sisa dana</p>}
-                        {sameDestErr && <p className="text-red-500 text-xs">Tujuan 1 dan 2 tidak boleh sama</p>}
                       </td>
                     </tr>
-                    <tr key={`${detail.pdo_detail_id}-s1`} className="border-t border-dashed border-line">
-                      <td className="px-3 py-2 pl-8 text-xs text-muted">↳ Tujuan 1</td>
-                      <td colSpan={5} />
-                      <td className="px-3 py-2">
-                        <select value={row.split.dest1} onChange={(e) => updateSplit(idx, 'dest1', e.target.value as TransferDest)} className={`input-base w-32 text-sm ${sameDestErr ? 'border-red-400' : ''}`}>
-                          {DEST_OPTIONS.map((d) => <option key={d} value={d}>{DEST_LABELS[d]}</option>)}
-                        </select>
-                      </td>
-                      <td className="px-3 py-2">
-                        <input type="number" min={0} value={row.split.amount1} onChange={(e) => updateSplit(idx, 'amount1', e.target.value)} className={`input-base w-36 ${overLimit ? 'border-red-400' : ''}`} />
-                      </td>
-                      <td colSpan={3} />
-                    </tr>
-                    <tr key={`${detail.pdo_detail_id}-s2`} className="border-t border-dashed border-line">
-                      <td className="px-3 py-2 pl-8 text-xs text-muted">↳ Tujuan 2</td>
-                      <td colSpan={5} />
-                      <td className="px-3 py-2">
-                        <select value={row.split.dest2} onChange={(e) => updateSplit(idx, 'dest2', e.target.value as TransferDest)} className={`input-base w-32 text-sm ${sameDestErr ? 'border-red-400' : ''}`}>
-                          {DEST_OPTIONS.map((d) => <option key={d} value={d}>{DEST_LABELS[d]}</option>)}
-                        </select>
-                      </td>
-                      <td className="px-3 py-2">
-                        <input type="number" min={0} value={row.split.amount2} onChange={(e) => updateSplit(idx, 'amount2', e.target.value)} className={`input-base w-36 ${overLimit ? 'border-red-400' : ''}`} />
-                      </td>
-                      <td colSpan={3} />
-                    </tr>
-                    {expandedRow}
-                  </>
-                )
-              }
-
-              // Normal mode
-              const overLim = Number(row.normal.amount) > available
-
-              return (
-                <>
-                  <tr key={detail.pdo_detail_id} className="border-t border-line hover:bg-[#fbfdfb]">
-                    <td className="px-3 py-3 text-xs text-muted">
-                      <div className="font-[700] text-ink">{categoryLabel}</div>
-                      {subcategoryLabel && <div className="text-[11px] mt-0.5">{subcategoryLabel}</div>}
-                    </td>
-                    <td className="px-3 py-3 text-sm font-medium whitespace-nowrap">
-                      {itemLabel}
-                      {isDeduction && <span className="ml-2 text-xs bg-red-100 text-red-700 px-1.5 py-0.5 rounded font-normal">Potongan</span>}
-                      {toggles}
-                    </td>
-                    {metaCols}
-                    {isDeduction ? (
-                      isDeductionCommitted ? (
-                        <td colSpan={5} className="px-3 py-2 text-xs text-muted italic">
-                          Potongan sudah dikurangkan dari transfer {DEST_LABELS[row.normal.dest]} (−{fmt(detail.amount_approved)}).
-                        </td>
-                      ) : (
-                        <>
-                          {/* Belum committed: tujuan boleh dipilih; field lain disabled */}
-                          <td className="px-3 py-2">
-                            <select value={row.normal.dest} onChange={(e) => updateNormal(idx, 'dest', e.target.value as TransferDest)} className="input-base w-32 text-sm">
-                              {DEST_OPTIONS.map((d) => <option key={d} value={d}>{DEST_LABELS[d]}</option>)}
-                            </select>
-                          </td>
-                          <td colSpan={4} className="px-3 py-2 text-xs text-muted italic">
-                            Potongan −{fmt(detail.amount_approved)} akan dikurangkan dari transfer {DEST_LABELS[row.normal.dest]} saat simpan permanen.
-                          </td>
-                        </>
+                    {groupedTambahan.map((g) => {
+                      const groupSubtotal = g.items.reduce((s, d) => s + (d.expense_item?.is_deduction ? -d.amount_approved : d.amount_approved), 0)
+                      return (
+                        <Fragment key={g.pdoNumber}>
+                          <tr>
+                            <td colSpan={11} className="px-6 py-1.5 bg-amber-50 border-t border-amber-200">
+                              <div className="flex items-center gap-2 text-[12px] text-amber-700">
+                                <span className="font-[850]">{g.pdoNumber}</span>
+                                {g.mergedAt && <span className="text-amber-500">· digabung {fmtDate(g.mergedAt)}</span>}
+                                <span className="ml-auto font-[700]">{fmt(groupSubtotal)}</span>
+                              </div>
+                            </td>
+                          </tr>
+                          {renderGroupedDetails(`supp:${g.pdoNumber}`, g.categoryGroups)}
+                        </Fragment>
                       )
-                    ) : (
-                      <>
-                        <td className="px-3 py-2">
-                          <select value={row.normal.dest} onChange={(e) => updateNormal(idx, 'dest', e.target.value as TransferDest)} className="input-base w-32 text-sm">
-                            {DEST_OPTIONS.map((d) => <option key={d} value={d}>{DEST_LABELS[d]}</option>)}
-                          </select>
-                        </td>
-                        <td className="px-3 py-2">
-                          <input type="number" min={0} max={available} value={row.normal.amount} onChange={(e) => updateNormal(idx, 'amount', e.target.value)} className={`input-base w-36 ${overLim ? 'border-red-400' : ''}`} />
-                          {overLim && <p className="text-red-500 text-xs mt-1">Melebihi sisa dana</p>}
-                        </td>
-                        <td className="px-3 py-2">
-                          <input type="date" value={row.normal.transfer_date} onChange={(e) => updateNormal(idx, 'transfer_date', e.target.value)} className="input-base w-36" />
-                        </td>
-                        <td className="px-3 py-2">
-                          <input type="text" placeholder="TRF/2026/001" value={row.normal.reference_number} onChange={(e) => updateNormal(idx, 'reference_number', e.target.value)} className="input-base w-36" />
-                        </td>
-                        <td className="px-3 py-2">
-                          <input type="text" value={row.normal.notes} onChange={(e) => updateNormal(idx, 'notes', e.target.value)} className="input-base w-40" />
-                        </td>
-                      </>
-                    )}
-                  </tr>
-                  {expandedRow}
-                </>
-              )
-            })}
+                    })}
+                  </>
+                )}
+              </>
+            )}
           </tbody>
         </table>
       </div>
 
-      <div className="flex justify-end gap-2">
+      <div className="flex items-center justify-end gap-2">
+        {!canCommit && hasDrafts && (
+          <p className="text-xs text-amber-700 mr-auto">
+            Menunggu persetujuan Direktur Keuangan untuk simpan permanen.
+          </p>
+        )}
         <Button variant="secondary" onClick={() => navigate('/transfer')}>Kembali</Button>
         <Button variant="secondary" onClick={handleSave} loading={save.isPending}>
           Simpan sebagai Draft
         </Button>
-        <Button onClick={handleCommit} loading={commit.isPending} disabled={!hasDrafts}>
-          Simpan Permanen
-        </Button>
+        {canCommit && (
+          <Button onClick={handleCommit} loading={commit.isPending} disabled={!hasDrafts}>
+            Simpan Permanen
+          </Button>
+        )}
       </div>
+
+      {/* Konfirmasi simpan draft — mencegah klik tak sengaja mengubah/menghapus draft.
+          Simpan draft = sinkronisasi penuh: isi form MENGGANTI seluruh draft PDO ini,
+          sehingga form kosong berarti menghapus semuanya. */}
+      <Modal
+        open={confirmSave !== null}
+        onClose={() => setConfirmSave(null)}
+        title={confirmSummary.count > 0 ? 'Simpan Draft Transfer Dana?' : 'Hapus Semua Draft Transfer?'}
+        width="w-[520px]"
+      >
+        {confirmSummary.count > 0 ? (
+          <>
+            <div className="rounded-drawer border border-line bg-[#f7faf7] p-4 mb-4">
+              <div className="flex items-baseline justify-between">
+                <span className="text-sm text-muted">Jumlah draft</span>
+                <span className="text-[17px] font-[850] text-ink tabular-nums">
+                  {confirmSummary.count} entri
+                </span>
+              </div>
+              <div className="flex items-baseline justify-between mt-2 pt-2 border-t border-line">
+                <span className="text-sm text-muted">Total nilai</span>
+                <span className="text-[19px] font-[900] text-green tabular-nums">
+                  {fmt(confirmSummary.total)}
+                </span>
+              </div>
+            </div>
+
+            <div className="space-y-1.5 mb-4">
+              {([
+                ['Rek. Kebun', confirmSummary.dest.rek_kebun],
+                ['Rek. Pribadi', confirmSummary.dest.pribadi],
+                ['Vendor', confirmSummary.dest.vendor],
+              ] as const)
+                .filter(([, v]) => v > 0)
+                .map(([label, v]) => (
+                  <div key={label} className="flex items-baseline justify-between text-sm">
+                    <span className="text-muted">{label}</span>
+                    <span className="font-bold tabular-nums">{fmt(v)}</span>
+                  </div>
+                ))}
+            </div>
+
+            {existingDraftCount > 0 && (
+              <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-btn p-3 mb-4">
+                {existingDraftCount} entri draft yang sudah tersimpan akan <b>diganti seluruhnya</b>,
+                bukan ditambahkan.
+              </p>
+            )}
+
+            <div className="flex justify-end gap-2">
+              <Button variant="secondary" type="button" onClick={() => setConfirmSave(null)}>
+                Batal
+              </Button>
+              <Button
+                type="button"
+                loading={save.isPending}
+                onClick={() => confirmSave && save.mutate(confirmSave)}
+              >
+                Ya, Simpan Draft
+              </Button>
+            </div>
+          </>
+        ) : (
+          <>
+            <p className="text-sm text-ink mb-3">
+              Semua nominal pada form kosong. Menyimpan sekarang akan <b>menghapus seluruh draft
+              transfer</b> pada PDO ini.
+            </p>
+            <p className="text-sm text-red bg-red-50 border border-red-200 rounded-btn p-3 mb-4">
+              {existingDraftCount} entri draft akan dihapus dan tidak bisa dikembalikan dari halaman ini.
+            </p>
+            <div className="flex justify-end gap-2">
+              <Button variant="secondary" type="button" onClick={() => setConfirmSave(null)}>
+                Batal
+              </Button>
+              <Button
+                variant="danger"
+                type="button"
+                loading={save.isPending}
+                onClick={() => confirmSave && save.mutate(confirmSave)}
+              >
+                Ya, Hapus Semua Draft
+              </Button>
+            </div>
+          </>
+        )}
+      </Modal>
     </div>
   )
 }
@@ -914,12 +1396,6 @@ function SummaryCard({ label, value, tone }: { label: string; value: number; ton
 }
 
 // ─── sub-component: draft editor ────────────────────────────────────────────────
-
-const DEST_LABELS_MAP: Record<string, string> = {
-  rek_kebun: 'Rek. Kebun',
-  pribadi:   'Pribadi',
-  vendor:    'Vendor',
-}
 
 function fmtRp(n: number): string {
   return 'Rp ' + n.toLocaleString('id-ID')
@@ -949,7 +1425,7 @@ function DraftTable({ entries }: { entries: TransferEntryRecord[] }) {
           {entries.map((e) => (
             <tr key={e.id} className="border-t border-line">
               <td className="py-1.5 pr-4">{fmtDate(e.transfer_date)}</td>
-              <td className="py-1.5 pr-4">{DEST_LABELS_MAP[e.transfer_destination] ?? e.transfer_destination}</td>
+              <td className="py-1.5 pr-4">{TRANSFER_DEST_LABELS[e.transfer_destination] ?? e.transfer_destination}</td>
               <td className="py-1.5 pr-4 font-medium text-amber-600">{fmtRp(e.amount)}</td>
               <td className="py-1.5 pr-4 text-muted">{e.reference_number ?? '—'}</td>
               <td className="py-1.5 text-muted">{e.notes ?? '—'}</td>
@@ -981,7 +1457,7 @@ function HistoryTable({ entries }: { entries: TransferEntryRecord[] }) {
           {entries.map((e) => (
             <tr key={e.id} className="border-t border-line">
               <td className="py-1.5 pr-4">{fmtDate(e.transfer_date)}</td>
-              <td className="py-1.5 pr-4">{DEST_LABELS_MAP[e.transfer_destination] ?? e.transfer_destination}</td>
+              <td className="py-1.5 pr-4">{TRANSFER_DEST_LABELS[e.transfer_destination] ?? e.transfer_destination}</td>
               <td className="py-1.5 pr-4 font-medium">{fmtRp(e.amount)}</td>
               <td className="py-1.5 pr-4 text-muted">{e.reference_number ?? '—'}</td>
               <td className="py-1.5 text-muted">{e.notes ?? '—'}</td>
