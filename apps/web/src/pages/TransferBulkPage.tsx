@@ -9,13 +9,18 @@ import { useAuthStore } from '@/store/auth.store'
 import { fmt } from '@/lib/format'
 import { isDirekturKeuangan } from '@/lib/auth'
 import { buildTransferDetailGroups, type TransferCategoryGroup } from '@/lib/transferDetailGroups'
+import {
+  ALL_TRANSFER_DEST_OPTIONS,
+  getTransferDestOptions,
+  normalizeTransferDest,
+  TRANSFER_DEST_LABELS,
+  type TransferDest,
+} from '@/lib/transferDestinations'
 import { ArrowLeft, ChevronDown, ChevronUp, Download, GitBranch, Search, X } from 'lucide-react'
 import { DateRangePickerButton } from '@/components/ui/DateRangePickerButton'
 import type { ApiResponse, RoleCode } from '@/types'
 
 // ─── types ────────────────────────────────────────────────────────────────────
-
-type TransferDest = 'rek_kebun' | 'pribadi' | 'vendor'
 
 type TransferEntryRecord = {
   id: string
@@ -104,12 +109,7 @@ type RowState = {
   split: SplitRow & { transfer_date: string; reference_number: string; notes: string }
 }
 
-const DEST_LABELS: Record<TransferDest, string> = {
-  rek_kebun: 'Rek. Kebun',
-  pribadi:   'Pribadi',
-  vendor:    'Vendor',
-}
-const DEST_OPTIONS: TransferDest[] = ['rek_kebun', 'pribadi', 'vendor']
+const DEST_OPTIONS = ALL_TRANSFER_DEST_OPTIONS
 
 const today = new Date().toISOString().split('T')[0]
 const collapseStateKey = (pdoId: string) => `transfer-bulk-groups:${pdoId}`
@@ -526,7 +526,13 @@ export function TransferBulkPage() {
           return {
             pdo_detail_id: d.pdo_detail_id,
             isSplit:       false,
-            normal: { amount: 0, transfer_date: today, reference_number: '', notes: '', dest: committedDest ?? 'rek_kebun' },
+            normal: {
+              amount: 0,
+              transfer_date: today,
+              reference_number: '',
+              notes: '',
+              dest: normalizeTransferDest(committedDest ?? 'rek_kebun', true),
+            },
             split: {
               amount1: 0, dest1: 'rek_kebun' as TransferDest,
               amount2: 0, dest2: 'pribadi' as TransferDest,
@@ -887,6 +893,8 @@ export function TransferBulkPage() {
     const itemLabel    = itemCode ? `[${itemCode}] ${itemName}` : itemName
     const categoryLabel = detail.category ? `${detail.category.code} — ${detail.category.name}` : '—'
     const subcategoryLabel = detail.subcategory ? `${detail.subcategory.code} — ${detail.subcategory.name}` : null
+    const destOptions = getTransferDestOptions(isDeduction)
+    const deductionDest = normalizeTransferDest(row.normal.dest, isDeduction)
 
     const toggles = (
       <span className="inline-flex gap-2 ml-2">
@@ -967,7 +975,7 @@ export function TransferBulkPage() {
             <td colSpan={5} />
             <td className="px-3 py-2">
               <select value={row.split.dest1} onChange={(e) => updateSplit(detail.pdo_detail_id, 'dest1', e.target.value as TransferDest)} className={`input-base w-32 text-sm ${sameDestErr ? 'border-red-400' : ''}`}>
-                {DEST_OPTIONS.map((d) => <option key={d} value={d}>{DEST_LABELS[d]}</option>)}
+                {DEST_OPTIONS.map((d) => <option key={d} value={d}>{TRANSFER_DEST_LABELS[d]}</option>)}
               </select>
             </td>
             <td className="px-3 py-2">
@@ -980,7 +988,7 @@ export function TransferBulkPage() {
             <td colSpan={5} />
             <td className="px-3 py-2">
               <select value={row.split.dest2} onChange={(e) => updateSplit(detail.pdo_detail_id, 'dest2', e.target.value as TransferDest)} className={`input-base w-32 text-sm ${sameDestErr ? 'border-red-400' : ''}`}>
-                {DEST_OPTIONS.map((d) => <option key={d} value={d}>{DEST_LABELS[d]}</option>)}
+                {DEST_OPTIONS.map((d) => <option key={d} value={d}>{TRANSFER_DEST_LABELS[d]}</option>)}
               </select>
             </td>
             <td className="px-3 py-2">
@@ -1012,18 +1020,18 @@ export function TransferBulkPage() {
           {isDeduction ? (
             isDeductionCommitted ? (
               <td colSpan={5} className="px-3 py-2 text-xs text-muted italic">
-                Potongan sudah dikurangkan dari transfer {DEST_LABELS[row.normal.dest]} (−{fmt(detail.amount_approved)}).
+                Potongan sudah dikurangkan dari transfer {TRANSFER_DEST_LABELS[deductionDest]} (−{fmt(detail.amount_approved)}).
               </td>
             ) : (
               <>
                 {/* Belum committed: tujuan boleh dipilih; field lain disabled */}
                 <td className="px-3 py-2">
-                  <select value={row.normal.dest} onChange={(e) => updateNormal(detail.pdo_detail_id, 'dest', e.target.value as TransferDest)} className="input-base w-32 text-sm">
-                    {DEST_OPTIONS.map((d) => <option key={d} value={d}>{DEST_LABELS[d]}</option>)}
+                  <select value={deductionDest} onChange={(e) => updateNormal(detail.pdo_detail_id, 'dest', e.target.value as TransferDest)} className="input-base w-32 text-sm">
+                    {destOptions.map((d) => <option key={d} value={d}>{TRANSFER_DEST_LABELS[d]}</option>)}
                   </select>
                 </td>
                 <td colSpan={4} className="px-3 py-2 text-xs text-muted italic">
-                  Potongan −{fmt(detail.amount_approved)} akan dikurangkan dari transfer {DEST_LABELS[row.normal.dest]} saat simpan permanen.
+                  Potongan −{fmt(detail.amount_approved)} akan dikurangkan dari transfer {TRANSFER_DEST_LABELS[deductionDest]} saat simpan permanen.
                 </td>
               </>
             )
@@ -1031,7 +1039,7 @@ export function TransferBulkPage() {
             <>
               <td className="px-3 py-2">
                 <select value={row.normal.dest} onChange={(e) => updateNormal(detail.pdo_detail_id, 'dest', e.target.value as TransferDest)} className="input-base w-32 text-sm">
-                  {DEST_OPTIONS.map((d) => <option key={d} value={d}>{DEST_LABELS[d]}</option>)}
+                  {DEST_OPTIONS.map((d) => <option key={d} value={d}>{TRANSFER_DEST_LABELS[d]}</option>)}
                 </select>
               </td>
               <td className="px-3 py-2">
@@ -1141,7 +1149,7 @@ export function TransferBulkPage() {
               <label className="block text-[11px] font-bold uppercase tracking-wider text-muted mb-1">Tujuan Transfer</label>
               <select value={filterDest} onChange={(e) => setFilterDest(e.target.value as TransferDest | 'all')} className="input-base text-sm">
                 <option value="all">Semua Tujuan</option>
-                {DEST_OPTIONS.map((d) => <option key={d} value={d}>{DEST_LABELS[d]}</option>)}
+                {DEST_OPTIONS.map((d) => <option key={d} value={d}>{TRANSFER_DEST_LABELS[d]}</option>)}
               </select>
             </div>
 
@@ -1389,12 +1397,6 @@ function SummaryCard({ label, value, tone }: { label: string; value: number; ton
 
 // ─── sub-component: draft editor ────────────────────────────────────────────────
 
-const DEST_LABELS_MAP: Record<string, string> = {
-  rek_kebun: 'Rek. Kebun',
-  pribadi:   'Pribadi',
-  vendor:    'Vendor',
-}
-
 function fmtRp(n: number): string {
   return 'Rp ' + n.toLocaleString('id-ID')
 }
@@ -1423,7 +1425,7 @@ function DraftTable({ entries }: { entries: TransferEntryRecord[] }) {
           {entries.map((e) => (
             <tr key={e.id} className="border-t border-line">
               <td className="py-1.5 pr-4">{fmtDate(e.transfer_date)}</td>
-              <td className="py-1.5 pr-4">{DEST_LABELS_MAP[e.transfer_destination] ?? e.transfer_destination}</td>
+              <td className="py-1.5 pr-4">{TRANSFER_DEST_LABELS[e.transfer_destination] ?? e.transfer_destination}</td>
               <td className="py-1.5 pr-4 font-medium text-amber-600">{fmtRp(e.amount)}</td>
               <td className="py-1.5 pr-4 text-muted">{e.reference_number ?? '—'}</td>
               <td className="py-1.5 text-muted">{e.notes ?? '—'}</td>
@@ -1455,7 +1457,7 @@ function HistoryTable({ entries }: { entries: TransferEntryRecord[] }) {
           {entries.map((e) => (
             <tr key={e.id} className="border-t border-line">
               <td className="py-1.5 pr-4">{fmtDate(e.transfer_date)}</td>
-              <td className="py-1.5 pr-4">{DEST_LABELS_MAP[e.transfer_destination] ?? e.transfer_destination}</td>
+              <td className="py-1.5 pr-4">{TRANSFER_DEST_LABELS[e.transfer_destination] ?? e.transfer_destination}</td>
               <td className="py-1.5 pr-4 font-medium">{fmtRp(e.amount)}</td>
               <td className="py-1.5 pr-4 text-muted">{e.reference_number ?? '—'}</td>
               <td className="py-1.5 text-muted">{e.notes ?? '—'}</td>
