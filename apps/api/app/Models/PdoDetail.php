@@ -38,6 +38,7 @@ class PdoDetail extends Model
         'pdo_header_id',
         'expense_item_id',
         'source_pdo_supplementary_id',
+        'funding_option',
         'account_number',
         'description',
         'quantity',

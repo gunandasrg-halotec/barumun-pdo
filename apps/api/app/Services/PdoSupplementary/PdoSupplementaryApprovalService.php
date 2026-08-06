@@ -10,6 +10,7 @@ use App\Models\Role;
 use App\Models\User;
 use App\Services\Notification\WhatsAppNotificationService;
 use App\Services\PDO\PdoService;
+use App\Services\Report\CashBookQueryService;
 use Illuminate\Support\Facades\DB;
 
 class PdoSupplementaryApprovalService
@@ -32,10 +33,17 @@ class PdoSupplementaryApprovalService
 
     public function __construct(
         private readonly WhatsAppNotificationService $wa = new WhatsAppNotificationService(),
-        private readonly PdoService $pdoService = new PdoService()
+        private readonly PdoService $pdoService = new PdoService(),
+        private readonly CashBookQueryService $cashBook = new CashBookQueryService(),
     ) {}
 
-    /** Submit PDO Tambahan: draft/rejected → submitted */
+    /**
+     * Submit PDO Tambahan: draft/rejected → submitted.
+     *
+     * funding_option = kas_kebun: tidak ada dana baru dari HO, jadi TIDAK melalui approval
+     * berjenjang sama sekali — tervalidasi terhadap saldo kas kebun tersedia lalu langsung
+     * final_merged dalam transaksi yang sama, tanpa WhatsApp notification.
+     */
     public function submit(PdoSupplementaryHeader $supp, string $submissionDate, User $actor): PdoSupplementaryHeader
     {
         if (! $actor->hasRole(Role::KERANI)) {
@@ -47,8 +55,13 @@ class PdoSupplementaryApprovalService
             abort(response()->json(['success' => false, 'error' => ['code' => 'INVALID_STATUS', 'message' => 'PDO Tambahan harus berstatus draft atau rejected untuk di-submit.']], 409));
         }
 
-        if ($supp->details()->where('amount', '>', 0)->doesntExist()) {
+        $totalAmount = (int) $supp->details()->where('amount', '>', 0)->sum('amount');
+        if ($totalAmount === 0) {
             abort(response()->json(['success' => false, 'error' => ['code' => 'SUPPLEMENTARY_EMPTY', 'message' => 'PDO Tambahan harus memiliki minimal satu item dengan jumlah > 0.']], 422));
+        }
+
+        if ($supp->usesKasKebun()) {
+            return $this->submitKasKebun($supp, $submissionDate, $actor, $totalAmount);
         }
 
         return DB::transaction(function () use ($supp, $submissionDate, $actor) {
@@ -67,6 +80,38 @@ class PdoSupplementaryApprovalService
             $this->wa->notifySupplementarySubmitted($fresh);
 
             return $fresh;
+        });
+    }
+
+    /** Jalur "Gunakan Kas Kebun": validasi saldo lalu langsung final_merged, tanpa approval/WA. */
+    private function submitKasKebun(PdoSupplementaryHeader $supp, string $submissionDate, User $actor, int $totalAmount): PdoSupplementaryHeader
+    {
+        $available = $this->cashBook->currentBalance($supp->plantation_unit_id);
+
+        if ($totalAmount > $available) {
+            abort(response()->json(['success' => false, 'error' => [
+                'code'    => 'KAS_KEBUN_INSUFFICIENT',
+                'message' => "Total pengajuan (Rp " . number_format($totalAmount, 0, ',', '.') . ") melebihi Saldo Kas Kebun tersedia (Rp " . number_format($available, 0, ',', '.') . ").",
+            ]], 422));
+        }
+
+        return DB::transaction(function () use ($supp, $submissionDate, $actor) {
+            $action = $supp->isRejected()
+                ? PdoSupplementaryApprovalLog::ACTION_RESUBMIT
+                : PdoSupplementaryApprovalLog::ACTION_SUBMIT;
+
+            $supp->update([
+                'status'          => PdoSupplementaryHeader::STATUS_SUBMITTED,
+                'submission_date' => $submissionDate,
+            ]);
+            $this->appendLog($supp, $actor, 'kerani_submit', $action);
+
+            $supp->update(['status' => PdoSupplementaryHeader::STATUS_FINAL_MERGED]);
+            $this->appendLog($supp, $actor, PdoSupplementaryHeader::STATUS_SUBMITTED, PdoSupplementaryApprovalLog::ACTION_APPROVE, 'Auto-merge: gunakan kas kebun, tanpa approval.');
+
+            $this->mergeIntoParent($supp, $actor);
+
+            return $supp->fresh()->load(['creator', 'plantationUnit']);
         });
     }
 
@@ -255,6 +300,7 @@ class PdoSupplementaryApprovalService
                 'pdo_header_id'               => $parentPdo->id,
                 'expense_item_id'             => $suppDetail->expense_item_id,
                 'source_pdo_supplementary_id' => $supp->id,
+                'funding_option'              => $supp->usesKasKebun() ? PdoSupplementaryHeader::FUNDING_KAS_KEBUN : null,
                 'account_number'              => $suppDetail->account_number,
                 'description'                 => $suppDetail->description,
                 'quantity'                    => $suppDetail->quantity,

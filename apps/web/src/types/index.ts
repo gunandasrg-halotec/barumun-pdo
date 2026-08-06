@@ -345,6 +345,7 @@ export interface PdoSupplementaryHeader {
   period_year: number
   submission_date: string | null
   status: SupplementaryStatus
+  funding_option: 'ho_transfer' | 'kas_kebun'
   manager_kebun_approved: boolean | null
   manager_keuangan_approved: boolean | null
   merged_at: string | null

@@ -55,7 +55,7 @@ class StoreRealizationEntryRequest extends FormRequest
     {
         $validator->after(function ($validator): void {
             $pdoDetailId = $this->input('pdo_detail_id');
-            if (! $pdoDetailId) {
+            if (! $pdoDetailId || $pdoDetailId === RealizationEntryService::FUND_RETURN_SENTINEL) {
                 return;
             }
 

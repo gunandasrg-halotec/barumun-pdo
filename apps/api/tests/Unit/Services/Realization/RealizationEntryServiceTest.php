@@ -488,6 +488,42 @@ class RealizationEntryServiceTest extends TestCase
         $this->assertSame(3000000, $fundReturn['saldo']);
     }
 
+    // ─────────────────────────────────────────────────────
+    // PDO Tambahan "Gunakan Kas Kebun": funding_source dipaksa kas_kebun
+    // ─────────────────────────────────────────────────────
+
+    public function test_realization_forces_kas_kebun_funding_source_for_supplementary_kas_kebun_item(): void
+    {
+        $pdo = PdoHeader::factory()->create([
+            'company_id'         => $this->companyId,
+            'plantation_unit_id' => $this->unit->id,
+            'created_by'         => $this->kerani->id,
+            'status'             => PdoHeader::STATUS_FINAL,
+        ]);
+
+        // Item lain di PDO yang sama, dengan transfer, supaya BR-REAL-002 (plafon kantong)
+        // terpenuhi — funding_option=kas_kebun sendiri memang tidak punya TransferEntry.
+        $fundedDetail = PdoDetail::factory()->create(['pdo_header_id' => $pdo->id, 'amount' => 1000000]);
+        TransferEntry::factory()->create(['pdo_detail_id' => $fundedDetail->id, 'amount' => 1000000]);
+
+        $kasKebunDetail = PdoDetail::factory()->create([
+            'pdo_header_id'   => $pdo->id,
+            'amount'          => 0,
+            'funding_option'  => 'kas_kebun',
+        ]);
+
+        $entry = $this->service->store([
+            'pdo_detail_id'    => $kasKebunDetail->id,
+            'transaction_date' => '2026-08-05',
+            'amount'           => 200000,
+            'payment_method'   => RealizationEntry::PAYMENT_TUNAI,
+            'proof_number'     => 'KW-KK-001',
+            'funding_source'   => RealizationEntry::FUNDING_REKENING_UTAMA, // dikirim salah, harus diabaikan
+        ], $this->kerani);
+
+        $this->assertEquals(RealizationEntry::FUNDING_KAS_KEBUN, $entry->funding_source);
+    }
+
     private function makeDetail(string $status, int $budget, int $transferred, ?int $periodYear = null, ?int $periodMonth = null): PdoDetail
     {
         $pdo = PdoHeader::factory()->create([

@@ -10,18 +10,34 @@ use App\Http\Requests\PdoSupplementary\UpdatePdoSupplementaryRequest;
 use App\Models\PdoSupplementaryDetail;
 use App\Models\PdoSupplementaryHeader;
 use App\Services\PdoSupplementary\PdoSupplementaryService;
+use App\Services\Report\CashBookQueryService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 
 class PdoSupplementaryController extends Controller
 {
-    public function __construct(private readonly PdoSupplementaryService $service) {}
+    public function __construct(
+        private readonly PdoSupplementaryService $service,
+        private readonly CashBookQueryService $cashBook,
+    ) {}
 
-    /** GET /pdo-supplementary?parent_pdo_header_id=&status= */
+    /** GET /pdo-supplementary/kas-kebun-balance?unit_id= — saldo tersedia untuk opsi "Gunakan Kas Kebun" */
+    public function kasKebunBalance(Request $request): JsonResponse
+    {
+        $request->validate(['unit_id' => ['required', 'uuid', 'exists:plantation_units,id']]);
+
+        return response()->json([
+            'success' => true,
+            'data'    => ['balance' => $this->cashBook->currentBalance((string) $request->query('unit_id'))],
+        ]);
+    }
+
+    /** GET /pdo-supplementary?parent_pdo_header_id=&status=&per_page= (status bisa array: status[]=a&status[]=b) */
     public function index(Request $request): JsonResponse
     {
-        $filters = $request->only(['parent_pdo_header_id', 'status', 'plantation_unit_id']);
-        $result  = $this->service->list($request->user(), $filters);
+        $filters  = $request->only(['parent_pdo_header_id', 'status', 'plantation_unit_id']);
+        $perPage  = in_array((int) $request->query('per_page'), [10, 25, 50], true) ? (int) $request->query('per_page') : 10;
+        $result   = $this->service->list($request->user(), $filters, $perPage);
 
         return response()->json([
             'success' => true,

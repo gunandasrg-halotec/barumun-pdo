@@ -27,6 +27,7 @@ const detailSchema = z.object({
 
 const schema = z.object({
   parent_pdo_header_id: z.string().uuid('Pilih PDO Induk'),
+  funding_option:       z.enum(['ho_transfer', 'kas_kebun']).default('ho_transfer'),
   notes:                z.string().nullable().optional(),
   details:              z.array(detailSchema).min(1, 'Minimal 1 item biaya'),
 })
@@ -61,11 +62,25 @@ export function PdoSupplementaryFormPage() {
 
   const { register, control, handleSubmit, watch, reset, setValue, formState: { errors } } = useForm<Form>({
     resolver: zodResolver(schema),
-    defaultValues: { details: [] },
+    defaultValues: { details: [], funding_option: 'ho_transfer' },
   })
 
   const { fields, append, remove } = useFieldArray({ control, name: 'details' })
-  const detailValues = watch('details')
+  const detailValues   = watch('details')
+  const fundingOption  = watch('funding_option')
+  const parentPdoId    = watch('parent_pdo_header_id')
+  const selectedUnitId = pdoList?.find((p) => p.id === parentPdoId)?.plantation_unit_id
+
+  const { data: kasKebunBalance } = useQuery({
+    queryKey: ['pdo-supplementary-kas-kebun-balance', selectedUnitId],
+    queryFn: async () => {
+      const res = await api.get<ApiResponse<{ balance: number }>>('/pdo-supplementary/kas-kebun-balance', {
+        params: { unit_id: selectedUnitId },
+      })
+      return res.data.data.balance
+    },
+    enabled: fundingOption === 'kas_kebun' && !!selectedUnitId,
+  })
 
   // Item potongan MENGURANGI total — konsisten dengan PdoFormPage & backend.
   const totalAmount = detailValues?.reduce((s, d) => {
@@ -80,7 +95,11 @@ export function PdoSupplementaryFormPage() {
 
   useEffect(() => {
     if (existing) {
-      reset({ parent_pdo_header_id: existing.parent_pdo_header_id, notes: existing.notes ?? '' })
+      reset({
+        parent_pdo_header_id: existing.parent_pdo_header_id,
+        funding_option:       existing.funding_option ?? 'ho_transfer',
+        notes:                existing.notes ?? '',
+      })
       originalDetailIds.current = (existing.details ?? []).map((d) => d.id)
       existing.details?.forEach((d) => append({
         id:              d.id,
@@ -138,7 +157,11 @@ export function PdoSupplementaryFormPage() {
 
   const save = useMutation({
     mutationFn: async (data: Form) => {
-      const headerPayload = { parent_pdo_header_id: data.parent_pdo_header_id, notes: data.notes }
+      const headerPayload = {
+        parent_pdo_header_id: data.parent_pdo_header_id,
+        funding_option:       data.funding_option,
+        notes:                data.notes,
+      }
 
       // Step 1 — create or update the header
       const headerRes = isEdit
@@ -171,7 +194,11 @@ export function PdoSupplementaryFormPage() {
 
   const submit = useMutation({
     mutationFn: async (data: Form) => {
-      const headerPayload = { parent_pdo_header_id: data.parent_pdo_header_id, notes: data.notes }
+      const headerPayload = {
+        parent_pdo_header_id: data.parent_pdo_header_id,
+        funding_option:       data.funding_option,
+        notes:                data.notes,
+      }
 
       const headerRes = isEdit
         ? await api.put(`/pdo-supplementary/${id}`, headerPayload)
@@ -195,7 +222,11 @@ export function PdoSupplementaryFormPage() {
       return header
     },
     onSuccess: (header) => {
-      toast('PDO Tambahan berhasil diajukan')
+      toast(
+        fundingOption === 'kas_kebun'
+          ? 'PDO Tambahan langsung digabung ke PDO Bulanan — tidak perlu approval.'
+          : 'PDO Tambahan berhasil diajukan, menunggu approval Asisten.'
+      )
       qc.invalidateQueries({ queryKey: ['pdo-supplementary'] })
       navigate(`/pdo-tambahan/${header.id}`)
     },
@@ -228,6 +259,34 @@ export function PdoSupplementaryFormPage() {
             </select>
             {errors.parent_pdo_header_id && <p className="field-error">{errors.parent_pdo_header_id.message}</p>}
           </div>
+
+          <div className="mt-4">
+            <label className="label">Sumber Dana</label>
+            <div className="flex flex-col gap-2">
+              <label className="flex items-center gap-2 text-sm">
+                <input type="radio" value="ho_transfer" {...register('funding_option')} />
+                Butuh Dana dari HO <span className="text-muted">(perlu approval berjenjang, seperti biasa)</span>
+              </label>
+              <label className="flex items-center gap-2 text-sm">
+                <input type="radio" value="kas_kebun" {...register('funding_option')} />
+                Gunakan Kas Kebun <span className="text-muted">(langsung digabung ke PDO Bulanan, tanpa approval)</span>
+              </label>
+            </div>
+            {fundingOption === 'kas_kebun' && (
+              <p className="text-sm mt-2">
+                Saldo Kas Kebun tersedia:{' '}
+                <span className="font-[850]">
+                  {selectedUnitId
+                    ? (kasKebunBalance !== undefined ? fmt(kasKebunBalance) : 'Memuat...')
+                    : 'Pilih PDO Induk dahulu'}
+                </span>
+                {selectedUnitId && kasKebunBalance !== undefined && totalAmount > kasKebunBalance && (
+                  <span className="text-red block">Total pengajuan melebihi saldo tersedia.</span>
+                )}
+              </p>
+            )}
+          </div>
+
           <div className="mt-4">
             <label className="label">Catatan Umum (opsional)</label>
             <textarea {...register('notes')} className="input-base resize-none" rows={2} />
@@ -359,7 +418,7 @@ export function PdoSupplementaryFormPage() {
             loading={submit.isPending}
             onClick={handleSubmit((d) => submit.mutate(d))}
           >
-            Simpan & Ajukan
+            {fundingOption === 'kas_kebun' ? 'Simpan dan gabung ke PDO Bulanan' : 'Simpan & Ajukan'}
           </Button>
           <Button type="button" variant="secondary" onClick={() => navigate('/pdo-tambahan')}>Batal</Button>
         </div>

@@ -135,6 +135,7 @@ Route::prefix('v1')->middleware(['auth:sanctum', 'ensure.unit.access'])->group(f
     Route::delete('realization-entries/{entry}/attachments/{attachment}', [RealizationAttachmentController::class, 'destroy']);
 
     // ── PDO Tambahan ──────────────────────────────────
+    Route::get('pdo-supplementary/kas-kebun-balance', [PdoSupplementaryController::class, 'kasKebunBalance']);
     Route::apiResource('pdo-supplementary', PdoSupplementaryController::class)->except(['destroy']);
 
     Route::prefix('pdo-supplementary/{supplementary}')->group(function () {
