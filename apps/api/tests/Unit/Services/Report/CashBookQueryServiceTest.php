@@ -185,4 +185,57 @@ class CashBookQueryServiceTest extends TestCase
 
         $this->assertEquals(10_000_000, $opening);
     }
+
+    /**
+     * TransferEntry auto-generated untuk PDOT funding_option=kas_kebun BUKAN
+     * uang baru masuk — tidak boleh menaikkan saldo/penerimaan Buku Kas Kebun.
+     * Realisasi terhadap item ini tetap harus mengurangi saldo seperti biasa.
+     */
+    public function test_kas_kebun_auto_transfer_entry_excluded_from_receipts_and_balance(): void
+    {
+        $cat  = ExpenseCategory::factory()->create(['company_id' => $this->companyId]);
+        $sub  = ExpenseSubcategory::factory()->create(['category_id' => $cat->id]);
+        $pdo  = PdoHeader::factory()->create([
+            'company_id'         => $this->companyId,
+            'plantation_unit_id' => $this->unit->id,
+            'created_by'         => $this->kerani->id,
+            'status'             => PdoHeader::STATUS_FINAL,
+            'period_year'        => 2026,
+            'period_month'       => 8,
+        ]);
+
+        $item   = ExpenseItem::factory()->create(['subcategory_id' => $sub->id]);
+        $detail = PdoDetail::factory()->create([
+            'pdo_header_id'   => $pdo->id,
+            'expense_item_id' => $item->id,
+            'amount'          => 1_200_000,
+            'funding_option'  => 'kas_kebun',
+        ]);
+        TransferEntry::factory()->create([
+            'pdo_detail_id'         => $detail->id,
+            'amount'                => 1_200_000,
+            'transfer_destination'  => 'rek_kebun',
+            'transfer_date'         => '2026-08-01',
+            'entry_source'          => 'system',
+            'is_auto_generated'     => true,
+        ]);
+
+        $cashBook = $this->service->getCashBookData([
+            'period_year' => 2026, 'period_month' => 8, 'unit_id' => $this->unit->id,
+        ]);
+        $this->assertEquals(0, $cashBook['total_penerimaan']);
+        $this->assertEquals(0, $cashBook['closing_balance']);
+
+        // Realisasi terhadap item kas_kebun ini HARUS tetap mengurangi saldo —
+        // dana benar-benar keluar dari kas kebun walau tidak pernah "masuk" di sini.
+        RealizationEntry::factory()->create([
+            'pdo_detail_id'    => $detail->id,
+            'amount'           => 1_200_000,
+            'funding_source'   => RealizationEntry::FUNDING_KAS_KEBUN,
+            'transaction_date' => '2026-08-05',
+        ]);
+
+        $closing = $this->service->closingBalanceForPeriod($this->unit->id, 2026, 8);
+        $this->assertEquals(-1_200_000, $closing);
+    }
 }

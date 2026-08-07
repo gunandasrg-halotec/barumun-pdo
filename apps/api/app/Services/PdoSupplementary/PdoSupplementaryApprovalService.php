@@ -7,6 +7,7 @@ use App\Models\PdoDetail;
 use App\Models\PdoSupplementaryApprovalLog;
 use App\Models\PdoSupplementaryHeader;
 use App\Models\Role;
+use App\Models\TransferEntry;
 use App\Models\User;
 use App\Services\Notification\WhatsAppNotificationService;
 use App\Services\PDO\PdoService;
@@ -294,9 +295,10 @@ class PdoSupplementaryApprovalService
         $parentPdo = $supp->parentPdo;
         $nextOrder = ($parentPdo->details()->max('display_order') ?? 0) + 1;
         $detailsAdded = 0;
+        $now = now();
 
         foreach ($supp->details()->orderBy('display_order')->get() as $suppDetail) {
-            PdoDetail::create([
+            $detail = PdoDetail::create([
                 'pdo_header_id'               => $parentPdo->id,
                 'expense_item_id'             => $suppDetail->expense_item_id,
                 'source_pdo_supplementary_id' => $supp->id,
@@ -311,9 +313,41 @@ class PdoSupplementaryApprovalService
                 'display_order'               => $nextOrder++,
             ]);
             $detailsAdded++;
+
+            // Item kas_kebun: dana sudah "ada" di kas kebun (tidak lewat transfer
+            // HO), jadi buat entri transfer committed otomatis ke rek_kebun supaya
+            // muncul di Buku Kas Kebun dan KERANI bisa mencatat realisasinya.
+            // Sama persis dengan pola di PdoSupplementaryMergeService::merge() —
+            // path itu dipakai untuk merge manual PDOT ho_transfer, TIDAK PERNAH
+            // dieksekusi untuk kas_kebun (yang selalu lewat method ini).
+            if ($supp->usesKasKebun()) {
+                $entry = TransferEntry::create([
+                    'pdo_detail_id'        => $detail->id,
+                    'recorded_by'          => $actor->id,
+                    'entry_source'         => TransferEntry::SOURCE_SYSTEM,
+                    'is_auto_generated'    => true,
+                    'status'               => TransferEntry::STATUS_COMMITTED,
+                    'committed_at'         => $now,
+                    'committed_by'         => $actor->id,
+                    'transfer_date'        => $now->toDateString(),
+                    'amount'               => $detail->amount,
+                    'reference_number'     => null,
+                    'notes'                => "Dibuat otomatis — dana diambil dari Kas Kebun (PDOT {$supp->pdo_number})",
+                    'transfer_destination' => TransferEntry::DEST_REK_KEBUN,
+                ]);
+
+                AuditLog::record(
+                    actor: $actor,
+                    entityType: 'transfer_entries',
+                    entityId: $entry->id,
+                    action: 'INSERT',
+                    oldValues: null,
+                    newValues: $entry->toArray()
+                );
+            }
         }
 
-        $supp->update(['merged_at' => now()]);
+        $supp->update(['merged_at' => $now]);
 
         // Detail baru di-insert langsung (bypass PdoService), jadi grand_total_amount
         // yang tersimpan di parent harus di-resync manual agar Total Pengajuan tidak

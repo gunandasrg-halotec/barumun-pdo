@@ -44,18 +44,31 @@ class RecapQueryService
         $deductionPribadi    = 0; // negatif
 
         foreach ($kpiRows as $row) {
-            $isDeduction = (bool) $row->is_deduction;
-            $tKebun      = (int) $row->total_transfer_kebun;
-            $tPribadi    = (int) $row->total_transfer_pribadi;
+            $isDeduction      = (bool) $row->is_deduction;
+            $isKasKebunFunded = ($row->funding_option ?? null) === 'kas_kebun';
+            $tKebun           = (int) $row->total_transfer_kebun;
+            $tPribadi         = (int) $row->total_transfer_pribadi;
 
-            $transferKebun   += $tKebun;
-            $transferPribadi += $tPribadi;
+            // Item PDOT funding_option=kas_kebun: TransferEntry auto-generated di
+            // sini (lihat PdoSupplementaryApprovalService::mergeIntoParent()) BUKAN
+            // dana baru masuk — dana sudah ada di kas kebun sebelum PDO ini. Entri
+            // itu murni artefak teknis supaya KERANI bisa realisasi
+            // (RealizationEntryService masih menghitungnya, TIDAK di sini) — jadi
+            // dikecualikan dari akumulasi KPI transfer/deduction supaya tidak
+            // menggelembungkan "Saldo Kas Kebun". Baris tabel per-item TETAP
+            // menampilkan nilai aslinya (lihat buildHierarchy(), tidak diubah).
+            if (! $isKasKebunFunded) {
+                $transferKebun   += $tKebun;
+                $transferPribadi += $tPribadi;
+            }
 
             if ($isDeduction) {
                 // Item potongan tidak pernah punya realization_entries — nilainya
                 // hidup sebagai transfer negatif.
-                $deductionKebun   += $tKebun;
-                $deductionPribadi += $tPribadi;
+                if (! $isKasKebunFunded) {
+                    $deductionKebun   += $tKebun;
+                    $deductionPribadi += $tPribadi;
+                }
                 continue;
             }
 
@@ -134,6 +147,7 @@ class RecapQueryService
                 pd.id            AS pdo_detail_id,
                 pd.account_number,
                 pd.description,
+                pd.funding_option,
                 CASE WHEN ei.is_deduction THEN -pd.amount ELSE pd.amount END AS pengajuan,
                 ei.is_deduction,
                 ei.is_fund_return,

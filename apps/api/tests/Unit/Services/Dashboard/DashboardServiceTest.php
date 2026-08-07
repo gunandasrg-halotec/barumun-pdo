@@ -313,4 +313,48 @@ class DashboardServiceTest extends TestCase
         $this->assertEquals(13_065_000, $summary['total_realized']);
         $this->assertEquals(13_065_000, $unitRow['total_realized']);
     }
+
+    /**
+     * TransferEntry auto-generated untuk PDOT funding_option=kas_kebun BUKAN
+     * uang baru masuk — tidak boleh menaikkan KPI total_transferred maupun
+     * breakdown per destinasi. PDO lain dengan transfer normal (funding_option
+     * null) tetap harus terhitung seperti biasa (regression guard LEFT JOIN).
+     */
+    public function test_total_transferred_excludes_kas_kebun_auto_entries(): void
+    {
+        $keraniRole = Role::factory()->create(['code' => Role::KERANI]);
+        $kerani     = User::factory()->create(['company_id' => $this->companyId, 'role_id' => $keraniRole->id]);
+
+        $pdo = PdoHeader::factory()->create([
+            'company_id'         => $this->companyId,
+            'plantation_unit_id' => $this->unit->id,
+            'created_by'         => $kerani->id,
+            'status'             => PdoHeader::STATUS_FINAL,
+            'period_month'       => now()->month,
+            'period_year'        => now()->year,
+        ]);
+
+        // Transfer normal (ho_transfer) — harus tetap terhitung.
+        $normalDetail = PdoDetail::factory()->create(['pdo_header_id' => $pdo->id, 'amount' => 3_000_000]);
+        TransferEntry::factory()->create(['pdo_detail_id' => $normalDetail->id, 'amount' => 3_000_000, 'transfer_destination' => 'rek_kebun']);
+
+        // Item kas_kebun — TransferEntry auto tidak boleh menambah KPI.
+        $kasKebunDetail = PdoDetail::factory()->create([
+            'pdo_header_id'   => $pdo->id,
+            'amount'          => 1_200_000,
+            'funding_option'  => 'kas_kebun',
+        ]);
+        TransferEntry::factory()->create([
+            'pdo_detail_id'         => $kasKebunDetail->id,
+            'amount'                => 1_200_000,
+            'transfer_destination'  => 'rek_kebun',
+            'entry_source'          => 'system',
+            'is_auto_generated'     => true,
+        ]);
+
+        $summary = $this->service->summary($this->manajer);
+
+        $this->assertEquals(3_000_000, $summary['total_transferred']);
+        $this->assertEquals(3_000_000, $summary['transferred_by_destination']['rek_kebun']);
+    }
 }

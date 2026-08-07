@@ -57,13 +57,16 @@ class DashboardService
               {$unitClause}
         ", $params);
 
-        // Query transfer amount
+        // Query transfer amount. Entri kas_kebun (pd.funding_option='kas_kebun')
+        // dikecualikan — bukan dana baru masuk, cuma artefak teknis supaya KERANI
+        // bisa realisasi (lihat PdoSupplementaryApprovalService::mergeIntoParent()).
         $transferStats = DB::selectOne("
             SELECT
                 COALESCE(SUM(te.amount), 0)  AS total_transferred
             FROM pdo_headers ph
             LEFT JOIN pdo_details pd ON pd.pdo_header_id = ph.id
             LEFT JOIN transfer_entries te ON te.pdo_detail_id = pd.id AND te.status = 'committed'
+                AND (pd.funding_option IS NULL OR pd.funding_option != 'kas_kebun')
             WHERE ph.company_id = ?
               AND ph.period_month = ?
               AND ph.period_year  = ?
@@ -131,6 +134,7 @@ class DashboardService
             FROM pdo_headers ph
             LEFT JOIN pdo_details pd ON pd.pdo_header_id = ph.id
             LEFT JOIN transfer_entries te ON te.pdo_detail_id = pd.id AND te.status = 'committed'
+                AND (pd.funding_option IS NULL OR pd.funding_option != 'kas_kebun')
             WHERE ph.company_id = ?
               AND ph.period_month = ?
               AND ph.period_year  = ?

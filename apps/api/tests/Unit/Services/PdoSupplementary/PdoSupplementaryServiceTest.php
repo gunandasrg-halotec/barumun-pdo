@@ -6,6 +6,7 @@ use App\Models\Company;
 use App\Models\ExpenseCategory;
 use App\Models\ExpenseItem;
 use App\Models\ExpenseSubcategory;
+use App\Models\PdoDetail;
 use App\Models\PdoHeader;
 use App\Models\PdoSupplementaryApprovalLog;
 use App\Models\PdoSupplementaryDetail;
@@ -200,6 +201,18 @@ class PdoSupplementaryServiceTest extends TestCase
             'pdo_header_id'                => $parentPdo->id,
             'source_pdo_supplementary_id'  => $supp->id,
             'funding_option'               => 'kas_kebun',
+        ]);
+
+        // Dana kas_kebun harus otomatis terekam sebagai TransferEntry committed
+        // ke rek_kebun, supaya item ini muncul di Buku Kas Kebun dan KERANI bisa
+        // mencatat realisasinya (BR-REAL-005 / availableItemsForActor()).
+        $detail = PdoDetail::where('source_pdo_supplementary_id', $supp->id)->firstOrFail();
+        $this->assertDatabaseHas('transfer_entries', [
+            'pdo_detail_id'        => $detail->id,
+            'status'               => 'committed',
+            'transfer_destination' => 'rek_kebun',
+            'is_auto_generated'    => true,
+            'amount'               => 500000,
         ]);
 
         // Tidak melalui tahap approval Asisten/Manajer/Direktur sama sekali.

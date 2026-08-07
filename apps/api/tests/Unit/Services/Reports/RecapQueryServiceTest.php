@@ -334,6 +334,56 @@ class RecapQueryServiceTest extends TestCase
         $this->assertEquals(-600_000, $result['saldo_pribadi']);
     }
 
+    /**
+     * TransferEntry auto-generated untuk PDOT funding_option=kas_kebun BUKAN
+     * uang baru masuk — tidak boleh menaikkan KPI transfer_kebun/saldo_kebun.
+     * Baris tabel per-item TETAP menampilkan nilai aslinya (tidak di-nol-kan).
+     * Setelah item ini direalisasikan KERANI, KPI saldo tetap harus turun
+     * sesuai realisasi (rawRealisasiKebun tidak ikut di-skip).
+     */
+    public function test_kpi_transfer_kebun_excludes_kas_kebun_auto_entry_but_row_and_realization_unaffected(): void
+    {
+        $pdo = $this->makeFinalPdo();
+        $cat = ExpenseCategory::factory()->create(['company_id' => $this->companyId, 'include_in_recap' => true]);
+        $sub = ExpenseSubcategory::factory()->create(['category_id' => $cat->id]);
+
+        $item   = ExpenseItem::factory()->create(['subcategory_id' => $sub->id]);
+        $detail = PdoDetail::factory()->create([
+            'pdo_header_id'   => $pdo->id,
+            'expense_item_id' => $item->id,
+            'amount'          => 1_200_000,
+            'funding_option'  => 'kas_kebun',
+        ]);
+        TransferEntry::factory()->create([
+            'pdo_detail_id'         => $detail->id,
+            'amount'                => 1_200_000,
+            'transfer_destination'  => 'rek_kebun',
+            'entry_source'          => 'system',
+            'is_auto_generated'     => true,
+        ]);
+
+        $result = $this->query();
+
+        // KPI level PDO tidak boleh naik akibat entri kas_kebun.
+        $this->assertEquals(0, $result['transfer_kebun']);
+
+        // Baris tabel per-item tetap menampilkan nilai aslinya (informatif).
+        $row = $result['categories'][0]['subcategories'][0]['items'][0];
+        $this->assertEquals(1_200_000, $row['total_transfer']);
+
+        // Setelah direalisasikan KERANI, KPI saldo tetap turun sesuai realisasi.
+        RealizationEntry::factory()->create([
+            'pdo_detail_id'  => $detail->id,
+            'amount'         => 1_200_000,
+            'funding_source' => RealizationEntry::FUNDING_KAS_KEBUN,
+        ]);
+
+        $result = $this->query();
+        $this->assertEquals(0, $result['transfer_kebun']);
+        $this->assertEquals(1_200_000, $result['realisasi_kebun']);
+        $this->assertEquals(-1_200_000, $result['saldo_kebun']);
+    }
+
     // ── 8: kerani unit is enforced by controller (tested via feature) ─────────
 
     public function test_kerani_unit_filter_enforced_regardless_of_request_param(): void
