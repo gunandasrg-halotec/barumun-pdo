@@ -6,6 +6,7 @@ use App\Models\RealizationEntry;
 use App\Models\TransferEntry;
 use App\Models\UnitOpeningBalance;
 use Carbon\Carbon;
+use Illuminate\Database\Eloquent\Builder;
 
 class CashBookQueryService
 {
@@ -14,6 +15,19 @@ class CashBookQueryService
         RealizationEntry::FUNDING_KAS_KEBUN,
         RealizationEntry::FUNDING_REKENING_KEBUN,
     ];
+
+    /**
+     * TransferEntry auto-generated untuk PDOT funding_option=kas_kebun BUKAN uang
+     * baru masuk — dana sudah ada di kas kebun sebelum PDO ini (lihat
+     * PdoSupplementaryApprovalService::mergeIntoParent()). Dikecualikan dari semua
+     * agregasi "penerimaan" di file ini supaya tidak menggelembungkan saldo kas.
+     * TIDAK memengaruhi RealizationEntryService — entri ini tetap dihitung di sana
+     * supaya KERANI bisa merealisasikannya.
+     */
+    private function excludingKasKebunFunded(Builder $query): Builder
+    {
+        return $query->where(fn ($q) => $q->whereNull('funding_option')->orWhere('funding_option', '!=', 'kas_kebun'));
+    }
 
     /**
      * Buku kas harian kronologis untuk "kantong" kas kebun 1 unit dalam 1 periode PDO.
@@ -58,6 +72,7 @@ class CashBookQueryService
         // yang membuktikan secara matematis kedua sisi saling menetralkan).
         $receiptsQuery = TransferEntry::query()
             ->whereIn('transfer_destination', self::RECEIPT_DESTINATIONS)
+            ->whereHas('pdoDetail', fn ($q) => $this->excludingKasKebunFunded($q))
             ->whereHas('pdoDetail.pdoHeader', fn ($q) => $q
                 ->where('plantation_unit_id', $unitId)
                 ->where('period_year', $year)
@@ -182,6 +197,7 @@ class CashBookQueryService
 
         $deductionBySubcategory = TransferEntry::query()
             ->whereIn('transfer_destination', self::RECEIPT_DESTINATIONS)
+            ->whereHas('pdoDetail', fn ($q) => $this->excludingKasKebunFunded($q))
             ->whereHas('pdoDetail.expenseItem', fn ($q) => $q->where('is_deduction', true))
             ->whereHas('pdoDetail.pdoHeader', fn ($q) => $q
                 ->where('plantation_unit_id', $unitId)
@@ -278,6 +294,7 @@ class CashBookQueryService
 
         $totalReceipts = (int) TransferEntry::query()
             ->whereIn('transfer_destination', self::RECEIPT_DESTINATIONS)
+            ->whereHas('pdoDetail', fn ($q) => $this->excludingKasKebunFunded($q))
             ->whereHas('pdoDetail.pdoHeader', fn ($q) => $q->where('plantation_unit_id', $unitId))
             ->where('transfer_date', '<', $before->toDateString())
             ->sum('amount');
@@ -293,6 +310,7 @@ class CashBookQueryService
 
         $deductionByPdo = TransferEntry::query()
             ->whereIn('transfer_destination', self::RECEIPT_DESTINATIONS)
+            ->whereHas('pdoDetail', fn ($q) => $this->excludingKasKebunFunded($q))
             ->whereHas('pdoDetail.expenseItem', fn ($q) => $q->where('is_deduction', true))
             ->whereHas('pdoDetail.pdoHeader', fn ($q) => $q->where('plantation_unit_id', $unitId))
             ->where('transfer_date', '<', $before->toDateString())

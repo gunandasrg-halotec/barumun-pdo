@@ -64,6 +64,7 @@ interface PdoDetailSummary {
   pdo_detail_id:        string
   source_pdo_number:    string | null
   source_pdo_merged_at: string | null
+  funding_option:       string | null
   expense_item:      ExpenseItemInfo | null
   category:          CategoryInfo | null
   subcategory:       CategoryInfo | null
@@ -886,6 +887,9 @@ export function TransferBulkPage() {
     // Potongan dianggap sudah committed bila total transfernya negatif
     // (entri potongan otomatis sudah dibuat saat simpan permanen).
     const isDeductionCommitted = isDeduction && detail.total_transferred < 0
+    // Item dari PDOT funding_option=kas_kebun: dana sudah diambil dari kas kebun
+    // saat merge, tidak boleh ditransfer lagi lewat halaman ini.
+    const isKasKebunFunded = detail.funding_option === 'kas_kebun'
     const available    = Math.max(detail.amount_approved - detail.total_transferred, 0)
     const isExpanded   = expandedIds.has(detail.pdo_detail_id)
     const itemCode     = detail.expense_item?.code
@@ -938,6 +942,29 @@ export function TransferBulkPage() {
         </td>
       </tr>
     )
+
+    if (isKasKebunFunded) {
+      return (
+        <Fragment key={detail.pdo_detail_id}>
+          <tr key={detail.pdo_detail_id} className="border-t border-line bg-gray-50">
+            <td className="px-3 py-3 text-xs text-muted">
+              <div className="font-[700] text-ink">{categoryLabel}</div>
+              {subcategoryLabel && <div className="text-[11px] mt-0.5">{subcategoryLabel}</div>}
+            </td>
+            <td className="px-3 py-3 text-sm font-medium whitespace-nowrap">
+              {itemLabel}
+              <span className="ml-2 text-xs bg-purple-100 text-purple-700 px-1.5 py-0.5 rounded font-normal">Kas Kebun</span>
+              {toggles}
+            </td>
+            {metaCols}
+            <td colSpan={5} className="px-3 py-2 text-xs text-muted italic">
+              Biaya item ini diambil dari Kas Kebun — tidak perlu transfer.
+            </td>
+          </tr>
+          {expandedRow}
+        </Fragment>
+      )
+    }
 
     if (row.isSplit) {
       const totalSplit  = Number(row.split.amount1) + Number(row.split.amount2)

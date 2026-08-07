@@ -7,9 +7,11 @@ use App\Models\PdoDetail;
 use App\Models\PdoSupplementaryApprovalLog;
 use App\Models\PdoSupplementaryHeader;
 use App\Models\Role;
+use App\Models\TransferEntry;
 use App\Models\User;
 use App\Services\Notification\WhatsAppNotificationService;
 use App\Services\PDO\PdoService;
+use App\Services\Report\CashBookQueryService;
 use Illuminate\Support\Facades\DB;
 
 class PdoSupplementaryApprovalService
@@ -32,10 +34,17 @@ class PdoSupplementaryApprovalService
 
     public function __construct(
         private readonly WhatsAppNotificationService $wa = new WhatsAppNotificationService(),
-        private readonly PdoService $pdoService = new PdoService()
+        private readonly PdoService $pdoService = new PdoService(),
+        private readonly CashBookQueryService $cashBook = new CashBookQueryService(),
     ) {}
 
-    /** Submit PDO Tambahan: draft/rejected → submitted */
+    /**
+     * Submit PDO Tambahan: draft/rejected → submitted.
+     *
+     * funding_option = kas_kebun: tidak ada dana baru dari HO, jadi TIDAK melalui approval
+     * berjenjang sama sekali — tervalidasi terhadap saldo kas kebun tersedia lalu langsung
+     * final_merged dalam transaksi yang sama, tanpa WhatsApp notification.
+     */
     public function submit(PdoSupplementaryHeader $supp, string $submissionDate, User $actor): PdoSupplementaryHeader
     {
         if (! $actor->hasRole(Role::KERANI)) {
@@ -47,8 +56,13 @@ class PdoSupplementaryApprovalService
             abort(response()->json(['success' => false, 'error' => ['code' => 'INVALID_STATUS', 'message' => 'PDO Tambahan harus berstatus draft atau rejected untuk di-submit.']], 409));
         }
 
-        if ($supp->details()->where('amount', '>', 0)->doesntExist()) {
+        $totalAmount = (int) $supp->details()->where('amount', '>', 0)->sum('amount');
+        if ($totalAmount === 0) {
             abort(response()->json(['success' => false, 'error' => ['code' => 'SUPPLEMENTARY_EMPTY', 'message' => 'PDO Tambahan harus memiliki minimal satu item dengan jumlah > 0.']], 422));
+        }
+
+        if ($supp->usesKasKebun()) {
+            return $this->submitKasKebun($supp, $submissionDate, $actor, $totalAmount);
         }
 
         return DB::transaction(function () use ($supp, $submissionDate, $actor) {
@@ -67,6 +81,38 @@ class PdoSupplementaryApprovalService
             $this->wa->notifySupplementarySubmitted($fresh);
 
             return $fresh;
+        });
+    }
+
+    /** Jalur "Gunakan Kas Kebun": validasi saldo lalu langsung final_merged, tanpa approval/WA. */
+    private function submitKasKebun(PdoSupplementaryHeader $supp, string $submissionDate, User $actor, int $totalAmount): PdoSupplementaryHeader
+    {
+        $available = $this->cashBook->currentBalance($supp->plantation_unit_id);
+
+        if ($totalAmount > $available) {
+            abort(response()->json(['success' => false, 'error' => [
+                'code'    => 'KAS_KEBUN_INSUFFICIENT',
+                'message' => "Total pengajuan (Rp " . number_format($totalAmount, 0, ',', '.') . ") melebihi Saldo Kas Kebun tersedia (Rp " . number_format($available, 0, ',', '.') . ").",
+            ]], 422));
+        }
+
+        return DB::transaction(function () use ($supp, $submissionDate, $actor) {
+            $action = $supp->isRejected()
+                ? PdoSupplementaryApprovalLog::ACTION_RESUBMIT
+                : PdoSupplementaryApprovalLog::ACTION_SUBMIT;
+
+            $supp->update([
+                'status'          => PdoSupplementaryHeader::STATUS_SUBMITTED,
+                'submission_date' => $submissionDate,
+            ]);
+            $this->appendLog($supp, $actor, 'kerani_submit', $action);
+
+            $supp->update(['status' => PdoSupplementaryHeader::STATUS_FINAL_MERGED]);
+            $this->appendLog($supp, $actor, PdoSupplementaryHeader::STATUS_SUBMITTED, PdoSupplementaryApprovalLog::ACTION_APPROVE, 'Auto-merge: gunakan kas kebun, tanpa approval.');
+
+            $this->mergeIntoParent($supp, $actor);
+
+            return $supp->fresh()->load(['creator', 'plantationUnit']);
         });
     }
 
@@ -249,12 +295,14 @@ class PdoSupplementaryApprovalService
         $parentPdo = $supp->parentPdo;
         $nextOrder = ($parentPdo->details()->max('display_order') ?? 0) + 1;
         $detailsAdded = 0;
+        $now = now();
 
         foreach ($supp->details()->orderBy('display_order')->get() as $suppDetail) {
-            PdoDetail::create([
+            $detail = PdoDetail::create([
                 'pdo_header_id'               => $parentPdo->id,
                 'expense_item_id'             => $suppDetail->expense_item_id,
                 'source_pdo_supplementary_id' => $supp->id,
+                'funding_option'              => $supp->usesKasKebun() ? PdoSupplementaryHeader::FUNDING_KAS_KEBUN : null,
                 'account_number'              => $suppDetail->account_number,
                 'description'                 => $suppDetail->description,
                 'quantity'                    => $suppDetail->quantity,
@@ -265,9 +313,41 @@ class PdoSupplementaryApprovalService
                 'display_order'               => $nextOrder++,
             ]);
             $detailsAdded++;
+
+            // Item kas_kebun: dana sudah "ada" di kas kebun (tidak lewat transfer
+            // HO), jadi buat entri transfer committed otomatis ke rek_kebun supaya
+            // muncul di Buku Kas Kebun dan KERANI bisa mencatat realisasinya.
+            // Sama persis dengan pola di PdoSupplementaryMergeService::merge() —
+            // path itu dipakai untuk merge manual PDOT ho_transfer, TIDAK PERNAH
+            // dieksekusi untuk kas_kebun (yang selalu lewat method ini).
+            if ($supp->usesKasKebun()) {
+                $entry = TransferEntry::create([
+                    'pdo_detail_id'        => $detail->id,
+                    'recorded_by'          => $actor->id,
+                    'entry_source'         => TransferEntry::SOURCE_SYSTEM,
+                    'is_auto_generated'    => true,
+                    'status'               => TransferEntry::STATUS_COMMITTED,
+                    'committed_at'         => $now,
+                    'committed_by'         => $actor->id,
+                    'transfer_date'        => $now->toDateString(),
+                    'amount'               => $detail->amount,
+                    'reference_number'     => null,
+                    'notes'                => "Dibuat otomatis — dana diambil dari Kas Kebun (PDOT {$supp->pdo_number})",
+                    'transfer_destination' => TransferEntry::DEST_REK_KEBUN,
+                ]);
+
+                AuditLog::record(
+                    actor: $actor,
+                    entityType: 'transfer_entries',
+                    entityId: $entry->id,
+                    action: 'INSERT',
+                    oldValues: null,
+                    newValues: $entry->toArray()
+                );
+            }
         }
 
-        $supp->update(['merged_at' => now()]);
+        $supp->update(['merged_at' => $now]);
 
         // Detail baru di-insert langsung (bypass PdoService), jadi grand_total_amount
         // yang tersimpan di parent harus di-resync manual agar Total Pengajuan tidak

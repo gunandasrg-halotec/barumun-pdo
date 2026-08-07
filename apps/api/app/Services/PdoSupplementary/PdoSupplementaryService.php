@@ -13,15 +13,17 @@ use Illuminate\Support\Facades\DB;
 
 class PdoSupplementaryService
 {
-    public function list(User $user, array $filters = []): LengthAwarePaginator
+    public function list(User $user, array $filters = [], int $perPage = 20): LengthAwarePaginator
     {
         return PdoSupplementaryHeader::with(['parentPdo', 'plantationUnit', 'creator'])
             ->where('company_id', $user->company_id)
             ->when(isset($filters['parent_pdo_header_id']), fn ($q) => $q->where('parent_pdo_header_id', $filters['parent_pdo_header_id']))
-            ->when(isset($filters['status']), fn ($q) => $q->where('status', $filters['status']))
+            ->when(isset($filters['status']), fn ($q) => is_array($filters['status'])
+                ? $q->whereIn('status', $filters['status'])
+                : $q->where('status', $filters['status']))
             ->when(isset($filters['plantation_unit_id']), fn ($q) => $q->where('plantation_unit_id', $filters['plantation_unit_id']))
             ->orderByDesc('created_at')
-            ->paginate(20);
+            ->paginate($perPage);
     }
 
     public function find(string $id): PdoSupplementaryHeader
@@ -77,6 +79,7 @@ class PdoSupplementaryService
                 'period_month'         => $parentPdo->period_month,
                 'period_year'          => $parentPdo->period_year,
                 'status'               => PdoSupplementaryHeader::STATUS_DRAFT,
+                'funding_option'       => $data['funding_option'] ?? PdoSupplementaryHeader::FUNDING_HO_TRANSFER,
                 'notes'                => $data['notes'] ?? null,
             ]);
 
@@ -177,6 +180,23 @@ class PdoSupplementaryService
             actor: $actor,
             entityType: 'pdo_supplementary_details',
             entityId: $detail->id,
+            action: 'DELETE',
+            oldValues: $old,
+            newValues: null
+        );
+    }
+
+    public function delete(PdoSupplementaryHeader $supp, User $actor): void
+    {
+        $old = $supp->toArray();
+        $supp->details()->delete();
+        $supp->approvalLogs()->delete();
+        $supp->delete();
+
+        AuditLog::record(
+            actor: $actor,
+            entityType: 'pdo_supplementary_headers',
+            entityId: $supp->id,
             action: 'DELETE',
             oldValues: $old,
             newValues: null

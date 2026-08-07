@@ -6,11 +6,14 @@ use App\Models\Company;
 use App\Models\ExpenseCategory;
 use App\Models\ExpenseItem;
 use App\Models\ExpenseSubcategory;
+use App\Models\PdoDetail;
 use App\Models\PdoHeader;
 use App\Models\PdoSupplementaryApprovalLog;
+use App\Models\PdoSupplementaryDetail;
 use App\Models\PdoSupplementaryHeader;
 use App\Models\PlantationUnit;
 use App\Models\Role;
+use App\Models\UnitOpeningBalance;
 use App\Models\User;
 use App\Services\PdoSupplementary\PdoSupplementaryApprovalService;
 use App\Services\PdoSupplementary\PdoSupplementaryMergeService;
@@ -154,6 +157,95 @@ class PdoSupplementaryServiceTest extends TestCase
             'pdo_supplementary_header_id' => $supp->id,
             'action'                      => PdoSupplementaryApprovalLog::ACTION_RESUBMIT,
         ]);
+    }
+
+    // ─────────────────────────────────────────────────────
+    // funding_option = kas_kebun: tanpa approval, langsung final_merged
+    // ─────────────────────────────────────────────────────
+
+    private function makeKasKebunSupplementary(?PdoHeader $parentPdo = null, int $amount = 500000): PdoSupplementaryHeader
+    {
+        $parentPdo ??= $this->makeParentPdo(PdoHeader::STATUS_FINAL);
+
+        $supp = $this->service->create([
+            'parent_pdo_header_id' => $parentPdo->id,
+            'funding_option'       => PdoSupplementaryHeader::FUNDING_KAS_KEBUN,
+        ], $this->kerani);
+
+        $category = ExpenseCategory::factory()->create(['company_id' => $this->companyId]);
+        $sub      = ExpenseSubcategory::factory()->create(['category_id' => $category->id]);
+        $item     = ExpenseItem::factory()->create(['subcategory_id' => $sub->id, 'is_active' => true]);
+
+        PdoSupplementaryDetail::factory()->create([
+            'pdo_supplementary_header_id' => $supp->id,
+            'expense_item_id'             => $item->id,
+            'amount'                      => $amount,
+        ]);
+
+        return $supp;
+    }
+
+    public function test_submit_kas_kebun_with_sufficient_balance_merges_immediately_without_approval(): void
+    {
+        UnitOpeningBalance::create(['plantation_unit_id' => $this->unit->id, 'amount' => 1000000, 'as_of_date' => '2026-06-01']);
+
+        $parentPdo = $this->makeParentPdo(PdoHeader::STATUS_FINAL);
+        $supp      = $this->makeKasKebunSupplementary($parentPdo, 500000);
+
+        $updated = $this->approvalService->submit($supp, '2026-08-05', $this->kerani);
+
+        $this->assertEquals(PdoSupplementaryHeader::STATUS_FINAL_MERGED, $updated->status);
+        $this->assertNotNull($updated->merged_at);
+
+        $this->assertDatabaseHas('pdo_details', [
+            'pdo_header_id'                => $parentPdo->id,
+            'source_pdo_supplementary_id'  => $supp->id,
+            'funding_option'               => 'kas_kebun',
+        ]);
+
+        // Dana kas_kebun harus otomatis terekam sebagai TransferEntry committed
+        // ke rek_kebun, supaya item ini muncul di Buku Kas Kebun dan KERANI bisa
+        // mencatat realisasinya (BR-REAL-005 / availableItemsForActor()).
+        $detail = PdoDetail::where('source_pdo_supplementary_id', $supp->id)->firstOrFail();
+        $this->assertDatabaseHas('transfer_entries', [
+            'pdo_detail_id'        => $detail->id,
+            'status'               => 'committed',
+            'transfer_destination' => 'rek_kebun',
+            'is_auto_generated'    => true,
+            'amount'               => 500000,
+        ]);
+
+        // Tidak melalui tahap approval Asisten/Manajer/Direktur sama sekali.
+        $this->assertDatabaseMissing('pdo_supplementary_approval_logs', [
+            'pdo_supplementary_header_id' => $supp->id,
+            'approval_stage'              => PdoSupplementaryHeader::STATUS_REVIEWED_ASISTEN,
+        ]);
+        $this->assertDatabaseMissing('pdo_supplementary_approval_logs', [
+            'pdo_supplementary_header_id' => $supp->id,
+            'approval_stage'              => PdoSupplementaryHeader::STATUS_IN_REVIEW_MANAGER,
+        ]);
+        $this->assertDatabaseMissing('pdo_supplementary_approval_logs', [
+            'pdo_supplementary_header_id' => $supp->id,
+            'approval_stage'              => PdoSupplementaryHeader::STATUS_IN_REVIEW_DIREKTUR,
+        ]);
+    }
+
+    public function test_submit_kas_kebun_rejected_when_balance_insufficient(): void
+    {
+        UnitOpeningBalance::create(['plantation_unit_id' => $this->unit->id, 'amount' => 100000, 'as_of_date' => '2026-06-01']);
+
+        $supp = $this->makeKasKebunSupplementary(amount: 500000);
+
+        try {
+            $this->approvalService->submit($supp, '2026-08-05', $this->kerani);
+            $this->fail('Expected HttpResponseException was not thrown.');
+        } catch (\Illuminate\Http\Exceptions\HttpResponseException $e) {
+            $this->assertEquals(422, $e->getResponse()->getStatusCode());
+        }
+
+        // Status tidak berubah — tetap draft, tidak ada merge.
+        $this->assertEquals(PdoSupplementaryHeader::STATUS_DRAFT, $supp->fresh()->status);
+        $this->assertNull($supp->fresh()->merged_at);
     }
 
     // ─────────────────────────────────────────────────────

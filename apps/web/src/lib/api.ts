@@ -47,6 +47,7 @@ export function getApiErrorMessage(error: unknown): string {
     const data = error.response?.data as ApiError | undefined
     return data?.error?.message ?? error.message
   }
+  if (error instanceof Error) return error.message
   return 'Terjadi kesalahan. Silakan coba lagi.'
 }
 

@@ -2,6 +2,7 @@
 
 namespace App\Models;
 
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Concerns\HasUuids;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
@@ -16,6 +17,19 @@ class PdoSupplementaryHeader extends Model
     public $incrementing = false;
     protected $keyType = 'string';
 
+    /**
+     * TAD 5.2: Row-level security untuk KERANI dan ASISTEN — sama seperti PdoHeader.
+     * Middleware EnsureUnitAccess bind 'current_unit_id' ke container.
+     */
+    protected static function booted(): void
+    {
+        static::addGlobalScope('unit_access', function (Builder $builder) {
+            if (app()->bound('current_unit_id')) {
+                $builder->where('plantation_unit_id', app('current_unit_id'));
+            }
+        });
+    }
+
     const STATUS_DRAFT              = 'draft';
     const STATUS_SUBMITTED          = 'submitted';
     const STATUS_REVIEWED_ASISTEN   = 'reviewed_asisten';
@@ -23,6 +37,9 @@ class PdoSupplementaryHeader extends Model
     const STATUS_IN_REVIEW_DIREKTUR = 'in_review_direktur';
     const STATUS_FINAL_MERGED       = 'final_merged';
     const STATUS_REJECTED           = 'rejected';
+
+    const FUNDING_HO_TRANSFER = 'ho_transfer';
+    const FUNDING_KAS_KEBUN   = 'kas_kebun';
 
     protected $fillable = [
         'parent_pdo_header_id',
@@ -34,6 +51,7 @@ class PdoSupplementaryHeader extends Model
         'period_year',
         'submission_date',
         'status',
+        'funding_option',
         'manager_kebun_approved',
         'manager_keuangan_approved',
         'merged_at',
@@ -97,6 +115,11 @@ class PdoSupplementaryHeader extends Model
     public function isMerged(): bool
     {
         return $this->status === self::STATUS_FINAL_MERGED;
+    }
+
+    public function usesKasKebun(): bool
+    {
+        return $this->funding_option === self::FUNDING_KAS_KEBUN;
     }
 
     public function nextApprovalSequence(): int

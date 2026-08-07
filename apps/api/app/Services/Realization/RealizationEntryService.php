@@ -6,6 +6,7 @@ use App\Models\AuditLog;
 use App\Models\ExpenseItem;
 use App\Models\PdoDetail;
 use App\Models\PdoHeader;
+use App\Models\PdoSupplementaryHeader;
 use App\Models\RealizationEntry;
 use App\Models\TransferEntry;
 use App\Models\User;
@@ -172,7 +173,10 @@ class RealizationEntryService
                     'description'    => $fundReturnItem->name,
                     'bucket'         => null,
                     'realized_group' => null,
-                    'saldo'          => $this->cashBook->currentBalance($pdo->plantation_unit_id),
+                    // Sisa dana BULAN LALU yang dibawa masuk ke periode PDO ini —
+                    // saldo AWAL periode, bukan saldo berjalan hari ini (currentBalance
+                    // sudah mencakup transaksi bulan berjalan, jadi tidak tepat di sini).
+                    'saldo'          => $this->cashBook->openingBalanceForPeriod($pdo->plantation_unit_id, $pdo->period_year, $pdo->period_month),
                     'is_fund_return' => true,
                 ];
             }
@@ -321,6 +325,13 @@ class RealizationEntryService
                 'success' => false,
                 'error'   => ['code' => 'PDO_NOT_FINAL', 'message' => 'Realisasi hanya bisa dicatat saat PDO berstatus final.'],
             ], 409));
+        }
+
+        // PDO Tambahan "Gunakan Kas Kebun": item ini tidak punya dana transfer dari HO,
+        // jadi funding_source dipaksa kas_kebun terlepas dari pilihan di request — dicek
+        // sebelum BR-REAL-004 supaya larangan role tetap berlaku untuk nilai efektifnya.
+        if ($detail && $detail->funding_option === PdoSupplementaryHeader::FUNDING_KAS_KEBUN) {
+            $data['funding_source'] = RealizationEntry::FUNDING_KAS_KEBUN;
         }
 
         // BR-REAL-004: STAFF_PURCHASING tidak boleh menggunakan kas_kebun sebagai sumber dana
@@ -487,6 +498,12 @@ class RealizationEntryService
                 'success' => false,
                 'error'   => ['code' => 'PDO_CLOSED', 'message' => 'Realisasi tidak bisa diubah setelah PDO ditutup.'],
             ], 409));
+        }
+
+        // PDO Tambahan "Gunakan Kas Kebun": funding_source item ini tetap dipaksa kas_kebun
+        // saat koreksi, sama seperti store().
+        if ($entry->pdoDetail->funding_option === PdoSupplementaryHeader::FUNDING_KAS_KEBUN) {
+            $data['funding_source'] = RealizationEntry::FUNDING_KAS_KEBUN;
         }
 
         // BR-REAL-004: STAFF_PURCHASING tidak boleh menggunakan kas_kebun sebagai sumber dana

@@ -85,7 +85,7 @@ export function PdoSupplementaryDetailPage() {
       toast('PDO Tambahan berhasil diajukan')
       qc.invalidateQueries({ queryKey: ['pdo-supplementary', id] })
     },
-    onError: () => toast('Gagal mengajukan', 'error'),
+    onError: (error) => toast(getApiErrorMessage(error), 'error'),
   })
 
   const onApprovalSettled = () => {
@@ -135,7 +135,7 @@ export function PdoSupplementaryDetailPage() {
             <>
               <Button variant="secondary" onClick={() => navigate(`/pdo-tambahan/${id}/edit`)}>Edit</Button>
               <Button loading={submitMut.isPending} onClick={() => submitMut.mutate()}>
-                Ajukan ke Asisten
+                {supp.funding_option === 'kas_kebun' ? 'Simpan dan gabung ke PDO Bulanan' : 'Ajukan ke Asisten'}
               </Button>
             </>
           )}
