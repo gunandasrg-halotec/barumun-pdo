@@ -111,4 +111,22 @@ class PdoSupplementaryController extends Controller
 
         return response()->json(['success' => true, 'message' => 'Item PDO Tambahan berhasil dihapus.']);
     }
+
+    /** DELETE /pdo-supplementary/{pdo_supplementary} — hanya KERANI, hanya status draft */
+    public function destroy(Request $request, PdoSupplementaryHeader $pdo_supplementary): JsonResponse
+    {
+        $user = $request->user();
+
+        if (! $user->hasRole('KERANI')) {
+            return response()->json(['success' => false, 'error' => ['code' => 'FORBIDDEN', 'message' => 'Hanya Kerani yang dapat menghapus PDO Tambahan.']], 403);
+        }
+
+        if ($pdo_supplementary->status !== 'draft') {
+            return response()->json(['success' => false, 'error' => ['code' => 'INVALID_STATUS', 'message' => 'PDO Tambahan hanya dapat dihapus saat berstatus Draft.']], 422);
+        }
+
+        $this->service->delete($pdo_supplementary, $user);
+
+        return response()->json(['success' => true, 'message' => 'PDO Tambahan berhasil dihapus.']);
+    }
 }

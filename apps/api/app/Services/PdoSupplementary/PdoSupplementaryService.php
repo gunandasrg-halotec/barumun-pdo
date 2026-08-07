@@ -186,6 +186,23 @@ class PdoSupplementaryService
         );
     }
 
+    public function delete(PdoSupplementaryHeader $supp, User $actor): void
+    {
+        $old = $supp->toArray();
+        $supp->details()->delete();
+        $supp->approvalLogs()->delete();
+        $supp->delete();
+
+        AuditLog::record(
+            actor: $actor,
+            entityType: 'pdo_supplementary_headers',
+            entityId: $supp->id,
+            action: 'DELETE',
+            oldValues: $old,
+            newValues: null
+        );
+    }
+
     // ─────────────────────────────────────────────────────
     // PRIVATE
     // ─────────────────────────────────────────────────────

@@ -62,6 +62,7 @@ class PdoSupplementaryMergeService
                     'pdo_header_id'              => $parentPdo->id,
                     'expense_item_id'            => $suppDetail->expense_item_id,
                     'source_pdo_supplementary_id'=> $supp->id, // traceability
+                    'funding_option'             => $supp->funding_option, // kas_kebun → tidak boleh ditransfer lagi
                     'account_number'             => $suppDetail->account_number,
                     'description'                => $suppDetail->description,
                     'quantity'                   => $suppDetail->quantity,

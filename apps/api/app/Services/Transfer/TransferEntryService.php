@@ -242,6 +242,9 @@ class TransferEntryService
                 'pdo_detail_id'    => $detail->id,
                 'source_pdo_number'    => $detail->sourceSupplementary?->pdo_number,
                 'source_pdo_merged_at' => $detail->sourceSupplementary?->merged_at,
+                // 'kas_kebun' → dana item ini sudah diambil dari kas kebun saat PDOT
+                // dibuat/di-merge, tidak boleh ditransfer lagi lewat halaman ini.
+                'funding_option'   => $detail->funding_option,
                 'expense_item'     => $detail->expenseItem
                     ? array_merge(
                         $detail->expenseItem->only(['id', 'code', 'name']),

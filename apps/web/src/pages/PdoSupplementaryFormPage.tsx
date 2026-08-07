@@ -93,6 +93,11 @@ export function PdoSupplementaryFormPage() {
   // detect which ones were removed in this edit session and issue DELETE for them.
   const originalDetailIds = useRef<string[]>([])
 
+  // Tracks a PDOT header created during a failed submit attempt (e.g. kas_kebun
+  // balance check failed after header was already persisted). On retry we reuse
+  // that header via PUT instead of creating a duplicate via POST.
+  const pendingHeaderIdRef = useRef<string | null>(null)
+
   useEffect(() => {
     if (existing) {
       reset({
@@ -194,18 +199,41 @@ export function PdoSupplementaryFormPage() {
 
   const submit = useMutation({
     mutationFn: async (data: Form) => {
+      // Client-side guard: mirror the backend's kas_kebun balance check so an
+      // over-budget submission never reaches the API — no draft record is
+      // created just to be rejected.
+      if (data.funding_option === 'kas_kebun' && kasKebunBalance !== undefined && totalAmount > kasKebunBalance) {
+        throw new Error(`Total pengajuan (${fmt(totalAmount)}) melebihi Saldo Kas Kebun tersedia (${fmt(kasKebunBalance)}).`)
+      }
+
       const headerPayload = {
         parent_pdo_header_id: data.parent_pdo_header_id,
         funding_option:       data.funding_option,
         notes:                data.notes,
       }
 
-      const headerRes = isEdit
-        ? await api.put(`/pdo-supplementary/${id}`, headerPayload)
+      // On retry after a failed submit, reuse the header that was already created.
+      const resolvedId = isEdit ? id : (pendingHeaderIdRef.current ?? undefined)
+      const headerRes = resolvedId
+        ? await api.put(`/pdo-supplementary/${resolvedId}`, headerPayload)
         : await api.post('/pdo-supplementary', headerPayload)
       const header = (headerRes.data as ApiResponse<PdoSupplementaryHeader>).data
 
-      if (isEdit) await deleteRemovedDetails(header.id, data)
+      // Remember this header so a failed /submit doesn't leave an orphaned draft.
+      const isRetry = !isEdit && !!pendingHeaderIdRef.current
+      pendingHeaderIdRef.current = header.id
+
+      if (isEdit) {
+        await deleteRemovedDetails(header.id, data)
+      } else if (isRetry) {
+        // A prior attempt already POSTed detail rows for this header (they have
+        // no local `d.id` since they're new). Wipe them so they aren't duplicated.
+        const existingRes = await api.get<ApiResponse<PdoSupplementaryHeader>>(`/pdo-supplementary/${header.id}`)
+        const existingDetails = existingRes.data.data.details ?? []
+        for (const ed of existingDetails) {
+          await api.delete(`/pdo-supplementary/${header.id}/details/${ed.id}`)
+        }
+      }
 
       for (const d of data.details) {
         const payload = buildDetailPayload(d)
@@ -219,6 +247,8 @@ export function PdoSupplementaryFormPage() {
       await api.post(`/pdo-supplementary/${header.id}/submit`, {
         submission_date: new Date().toISOString().split('T')[0],
       })
+
+      pendingHeaderIdRef.current = null
       return header
     },
     onSuccess: (header) => {

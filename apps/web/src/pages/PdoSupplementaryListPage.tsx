@@ -1,7 +1,8 @@
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { useQuery } from '@tanstack/react-query'
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '@/lib/api'
+import { getApiErrorMessage } from '@/lib/api'
 import { useAuthStore } from '@/store/auth.store'
 import { Badge } from '@/components/ui/Badge'
 import { Button } from '@/components/ui/Button'
@@ -10,6 +11,7 @@ import { Pagination } from '@/components/ui/Pagination'
 import { fmt, fmtPeriode, fmtDate } from '@/lib/format'
 import { isKerani } from '@/lib/auth'
 import { Search } from 'lucide-react'
+import { useToastStore } from '@/store/toast.store'
 import type { PaginatedResponse, PdoSupplementaryHeader, RoleCode } from '@/types'
 
 const STATUS_LABELS: Record<string, string> = {
@@ -58,10 +60,25 @@ function SupplementaryTable({
   search: string
   canCreate: boolean
 }) {
-  const navigate = useNavigate()
+  const navigate   = useNavigate()
+  const toast      = useToastStore((s) => s.push)
+  const queryClient = useQueryClient()
   const group = GROUPS[groupKey]
   const [page, setPage] = useState(1)
   const [perPage, setPerPage] = useState(10)
+  const deleteMut = useMutation({
+    mutationFn: (id: string) => api.delete(`/pdo-supplementary/${id}`),
+    onSuccess: () => {
+      toast('PDO Tambahan berhasil dihapus')
+      queryClient.invalidateQueries({ queryKey: ['pdo-supplementary'] })
+    },
+    onError: (error) => toast(getApiErrorMessage(error), 'error'),
+  })
+
+  const handleDelete = (s: PdoSupplementaryHeader) => {
+    if (!window.confirm(`Hapus ${s.pdo_number}? Tindakan ini tidak dapat dibatalkan.`)) return
+    deleteMut.mutate(s.id)
+  }
 
   const { data, isLoading } = useQuery({
     queryKey: ['pdo-supplementary', groupKey, page, perPage, search],
@@ -130,12 +147,21 @@ function SupplementaryTable({
                       Detail
                     </button>
                     {canCreate && s.status === 'draft' && (
-                      <button
-                        className="text-sm font-bold text-green hover:underline"
-                        onClick={() => navigate(`/pdo-tambahan/${s.id}/edit`)}
-                      >
-                        Edit
-                      </button>
+                      <>
+                        <button
+                          className="text-sm font-bold text-green hover:underline"
+                          onClick={() => navigate(`/pdo-tambahan/${s.id}/edit`)}
+                        >
+                          Edit
+                        </button>
+                        <button
+                          className="text-sm font-bold text-red-600 hover:underline disabled:opacity-50"
+                          disabled={deleteMut.isPending}
+                          onClick={() => handleDelete(s)}
+                        >
+                          Hapus
+                        </button>
+                      </>
                     )}
                   </div>
                 </td>

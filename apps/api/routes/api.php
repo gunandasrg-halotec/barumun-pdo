@@ -136,7 +136,7 @@ Route::prefix('v1')->middleware(['auth:sanctum', 'ensure.unit.access'])->group(f
 
     // ── PDO Tambahan ──────────────────────────────────
     Route::get('pdo-supplementary/kas-kebun-balance', [PdoSupplementaryController::class, 'kasKebunBalance']);
-    Route::apiResource('pdo-supplementary', PdoSupplementaryController::class)->except(['destroy']);
+    Route::apiResource('pdo-supplementary', PdoSupplementaryController::class);
 
     Route::prefix('pdo-supplementary/{supplementary}')->group(function () {
         Route::post('details', [PdoSupplementaryController::class, 'storeDetail']);
