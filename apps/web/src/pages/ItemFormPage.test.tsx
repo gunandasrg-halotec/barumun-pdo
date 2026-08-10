@@ -148,6 +148,7 @@ describe('ItemFormPage Payroll component options', () => {
         is_active: true,
         role: { id: 'role-1', code: 'ADMIN', name: 'Admin' },
         plantation_unit: null,
+        linked_plantation_unit: null,
         company_id: 'company-1',
       },
       token: 'token',

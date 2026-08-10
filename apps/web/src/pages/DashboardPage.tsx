@@ -9,7 +9,7 @@ import { Modal } from '@/components/ui/Modal'
 import { Button } from '@/components/ui/Button'
 import { api } from '@/lib/api'
 import { fmt, fmtShort, fmtPeriode, fmtPct } from '@/lib/format'
-import { isKerani } from '@/lib/auth'
+import { isKerani, getAccessibleUnitIds } from '@/lib/auth'
 import type { ApiResponse, PlantationUnit, RoleCode } from '@/types'
 import { BarChart2, AlertCircle, ChevronDown } from 'lucide-react'
 
@@ -33,13 +33,18 @@ export function DashboardPage() {
   const [unitDropOpen, setUnitDropOpen]       = useState(false)
   const [activeModal, setActiveModal]         = useState<ModalType>(null)
 
-  const { data: units } = useQuery({
+  const { data: allUnits } = useQuery({
     queryKey: ['plantation-units'],
     queryFn: async () => {
       const res = await api.get<ApiResponse<PlantationUnit[]>>('/plantation-units')
       return res.data.data
     },
   })
+
+  // Role unit-bound (KERANI/ASISTEN) hanya boleh lihat unit sendiri + unit
+  // yang di-link (mis. "Sosa Replanting") — role cross-unit tetap lihat semua.
+  const accessibleUnitIds = getAccessibleUnitIds(user)
+  const units = accessibleUnitIds ? allUnits?.filter((u) => accessibleUnitIds.includes(u.id)) : allUnits
 
   const unitFilterParams = selectedUnitIds.length > 0
     ? { plantation_unit_ids: selectedUnitIds }

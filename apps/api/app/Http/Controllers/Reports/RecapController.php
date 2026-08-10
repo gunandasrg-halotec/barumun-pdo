@@ -118,8 +118,15 @@ class RecapController extends Controller
     {
         $roleCode = $user->role?->code;
 
-        // Locked roles — always use own unit
+        // Unit-bound roles: boleh pilih salah satu unit accessible (unit sendiri
+        // + unit yang di-link, mis. Sosa Replanting) — bukan cuma unit rumah.
         if (in_array($roleCode, [Role::KERANI, Role::ASISTEN_KEBUN], true)) {
+            $requestedUnit = $request->input('unit_id');
+
+            if ($requestedUnit && app()->bound('current_unit_ids') && in_array($requestedUnit, app('current_unit_ids'), true)) {
+                return $requestedUnit;
+            }
+
             return $user->plantation_unit_id;
         }
 

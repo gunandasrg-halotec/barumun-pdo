@@ -124,6 +124,7 @@ describe('PdoFormPage bulk external pull', () => {
         is_active: true,
         role: { id: 'role-1', code: 'KERANI', name: 'Kerani' },
         plantation_unit: { id: 'unit-1', code: 'KP', name: 'Kebun Pusat', is_active: true },
+        linked_plantation_unit: null,
         company_id: 'company-1',
       },
       token: 'token',

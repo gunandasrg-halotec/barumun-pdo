@@ -23,7 +23,7 @@ class DashboardService
         $companyId  = $user->company_id;
         $month      = $filters['period_month'] ?? now()->month;
         $year       = $filters['period_year']  ?? now()->year;
-        $unitIds    = $this->resolveUnitIds($filters);
+        $unitIds    = $this->resolveUnitIds($filters, $user);
 
         $pdoQuery = PdoHeader::withoutGlobalScopes()->where('company_id', $companyId);
         if ($unitIds) {
@@ -355,7 +355,7 @@ class DashboardService
         $companyId = $user->company_id;
         $year      = $filters['year']  ?? now()->year;
         $month     = $filters['month'] ?? now()->month;
-        $unitIds   = $this->resolveUnitIds($filters);
+        $unitIds   = $this->resolveUnitIds($filters, $user);
 
         $unitClause = $unitIds
             ? 'AND ph.plantation_unit_id = ANY(ARRAY[' . implode(',', array_fill(0, count($unitIds), '?')) . ']::uuid[])'
@@ -434,14 +434,34 @@ class DashboardService
     // ─────────────────────────────────────────────────────
 
     /** Resolve plantation_unit_ids dari filter; null = semua unit */
-    private function resolveUnitIds(array $filters): ?array
+    /**
+     * Filter unit dari request. Untuk role unit-bound (KERANI/ASISTEN_KEBUN) —
+     * PRE-EXISTING GAP yang ditutup di sini: dulu request bisa kirim
+     * plantation_unit_ids[] APA PUN tanpa dibatasi role, jadi KERANI unit mana
+     * pun bisa lihat Dashboard unit lain di company. Sekarang di-clamp ke
+     * app('current_unit_ids') (unit sendiri + unit yang di-link, mis. Sosa
+     * Replanting) — request tanpa filter eksplisit pun otomatis dibatasi.
+     */
+    private function resolveUnitIds(array $filters, User $user): ?array
     {
         $ids = $filters['plantation_unit_ids'] ?? null;
-        if (empty($ids) || !is_array($ids)) {
-            return null;
+        $requested = (! empty($ids) && is_array($ids))
+            ? array_values(array_filter($ids, fn ($id) => ! empty($id)))
+            : null;
+
+        $roleCode = $user->role?->code;
+        if (in_array($roleCode, ['KERANI', 'ASISTEN_KEBUN'], true)) {
+            $allowed = app()->bound('current_unit_ids') ? app('current_unit_ids') : array_filter([$user->plantation_unit_id]);
+
+            if ($requested) {
+                $requested = array_values(array_intersect($requested, $allowed));
+                return empty($requested) ? $allowed : $requested;
+            }
+
+            return $allowed ?: null;
         }
-        $filtered = array_filter($ids, fn ($id) => !empty($id));
-        return empty($filtered) ? null : array_values($filtered);
+
+        return $requested;
     }
 
     private function pendingPdoCount(User $user): int

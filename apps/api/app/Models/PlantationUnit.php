@@ -18,6 +18,7 @@ class PlantationUnit extends Model
 
     protected $fillable = [
         'company_id',
+        'linked_unit_id',
         'code',
         'name',
         'payroll_estate_external_id',
@@ -43,5 +44,14 @@ class PlantationUnit extends Model
     public function pdoHeaders(): HasMany
     {
         return $this->hasMany(PdoHeader::class);
+    }
+
+    /**
+     * Unit kedua yang otomatis accessible untuk KERANI/ASISTEN_KEBUN yang
+     * terikat ke unit ini — mis. "Sosa Replanting" di-link dari "Sosa".
+     */
+    public function linkedUnit(): BelongsTo
+    {
+        return $this->belongsTo(PlantationUnit::class, 'linked_unit_id');
     }
 }

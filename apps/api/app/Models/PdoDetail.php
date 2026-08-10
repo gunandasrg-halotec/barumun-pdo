@@ -79,9 +79,9 @@ class PdoDetail extends Model
     protected static function booted(): void
     {
         static::addGlobalScope('unit_access', function (Builder $builder) {
-            if (app()->bound('current_unit_id')) {
+            if (app()->bound('current_unit_ids')) {
                 $builder->whereHas('pdoHeader', fn ($q) =>
-                    $q->where('plantation_unit_id', app('current_unit_id'))
+                    $q->whereIn('plantation_unit_id', app('current_unit_ids'))
                 );
             }
         });

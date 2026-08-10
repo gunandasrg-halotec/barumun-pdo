@@ -33,6 +33,7 @@ export interface AuthUser {
   is_active: boolean
   role: Role
   plantation_unit: PlantationUnit | null
+  linked_plantation_unit: PlantationUnit | null
   company_id: string
 }
 

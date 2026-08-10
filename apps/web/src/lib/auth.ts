@@ -1,4 +1,4 @@
-import type { RoleCode } from '@/types'
+import type { AuthUser, RoleCode } from '@/types'
 
 // Role hierarchy helpers — digunakan untuk gate UI
 export const ROLES_APPROVER: RoleCode[] = [
@@ -25,6 +25,16 @@ export const canMarkTransferExecuted = (role: RoleCode) =>
   role === 'STAFF_PURCHASING' || role === 'MANAJER_KEUANGAN' || role === 'DIREKTUR_KEUANGAN'
 export const isPurchasing     = (role: RoleCode) => role === 'STAFF_PURCHASING'
 export const canEditMasterData = (role: RoleCode) => role === 'ADMIN' || role === 'STAFF_KEUANGAN'
+
+/**
+ * Unit yang boleh diakses user untuk role unit-bound (KERANI/ASISTEN_KEBUN) —
+ * unit sendiri + unit yang di-link (mis. "Sosa Replanting" dari "Sosa").
+ * null = role cross-unit, artinya semua unit boleh diakses (tidak difilter).
+ */
+export function getAccessibleUnitIds(user: AuthUser | null | undefined): string[] | null {
+  if (!user || isCrossUnit(user.role.code)) return null
+  return [user.plantation_unit?.id, user.linked_plantation_unit?.id].filter((id): id is string => !!id)
+}
 
 // Label role untuk tampilan
 export const ROLE_LABELS: Record<RoleCode, string> = {

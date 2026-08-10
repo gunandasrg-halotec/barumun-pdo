@@ -44,7 +44,7 @@ class AuthController extends Controller
             ], 429);
         }
 
-        $user = User::with(['role', 'plantationUnit'])
+        $user = User::with(['role', 'plantationUnit.linkedUnit'])
             ->where('email', $request->email)
             ->first();
 
@@ -177,7 +177,7 @@ class AuthController extends Controller
      */
     public function me(Request $request): JsonResponse
     {
-        $user = $request->user()->load(['role', 'plantationUnit']);
+        $user = $request->user()->load(['role', 'plantationUnit.linkedUnit']);
 
         return response()->json([
             'success' => true,
@@ -202,6 +202,11 @@ class AuthController extends Controller
                 'id'   => $user->plantationUnit->id,
                 'code' => $user->plantationUnit->code,
                 'name' => $user->plantationUnit->name,
+            ] : null,
+            'linked_plantation_unit' => $user->plantationUnit?->linkedUnit ? [
+                'id'   => $user->plantationUnit->linkedUnit->id,
+                'code' => $user->plantationUnit->linkedUnit->code,
+                'name' => $user->plantationUnit->linkedUnit->name,
             ] : null,
             'last_login_at'    => $user->last_login_at?->toIso8601String(),
         ];

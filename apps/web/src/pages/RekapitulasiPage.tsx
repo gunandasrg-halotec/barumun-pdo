@@ -19,6 +19,7 @@ import { useVehicles } from '@/hooks/useMasterData'
 import { DateRangePickerButton } from '@/components/ui/DateRangePickerButton'
 import type { RecapResponse } from '@/types/recap'
 import { INVENTORY_ITEM_CODES } from '@/lib/constants'
+import { getAccessibleUnitIds } from '@/lib/auth'
 
 const MONTHS = [
   'Januari', 'Februari', 'Maret', 'April', 'Mei', 'Juni',
@@ -136,17 +137,25 @@ export function RekapitulasiPage() {
 
   const PAGE_SIZE = 20
 
-  // ── Plantation units (cross-unit roles only) ─────────────────────────────
-  const { data: units } = useQuery({
+  // ── Plantation units — cross-unit roles pilih bebas; role unit-bound
+  // (KERANI/ASISTEN) hanya pilih kalau punya >1 unit accessible (unit sendiri
+  // + unit yang di-link, mis. "Sosa Replanting") — kalau cuma 1, tetap hardlock
+  // seperti sebelumnya.
+  const accessibleUnitIds        = getAccessibleUnitIds(user)
+  const hasMultipleAccessibleUnits = (accessibleUnitIds?.length ?? 0) > 1
+  const showUnitPicker           = isCrossUnit || hasMultipleAccessibleUnits
+
+  const { data: allUnits } = useQuery({
     queryKey: ['plantation-units'],
     queryFn: async () => {
       const res = await api.get<ApiResponse<PlantationUnit[]>>('/plantation-units')
       return res.data.data
     },
-    enabled: isCrossUnit,
+    enabled: showUnitPicker,
   })
+  const units = isCrossUnit ? allUnits : allUnits?.filter((u) => accessibleUnitIds?.includes(u.id))
 
-  const resolvedUnitId = isCrossUnit ? unitId : (user?.plantation_unit?.id ?? '')
+  const resolvedUnitId = showUnitPicker ? unitId : (user?.plantation_unit?.id ?? '')
 
   // Reset date filters when period changes
   useEffect(() => {
@@ -524,7 +533,7 @@ export function RekapitulasiPage() {
           </select>
         </div>
 
-        {isCrossUnit && (
+        {showUnitPicker && (
           <div>
             <label className="label">Unit Kebun</label>
             <select className="input-base" value={unitId} onChange={(e) => setUnitId(e.target.value)}>

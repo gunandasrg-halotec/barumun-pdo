@@ -297,6 +297,16 @@ class PdoService
     {
         $unit = PlantationUnit::findOrFail($data['plantation_unit_id']);
 
+        // Defense-in-depth: pastikan actor unit-bound (KERANI/ASISTEN) hanya bisa
+        // buat PDO untuk unit yang di-resolve EnsureUnitAccess (unit sendiri +
+        // unit yang di-link) — jangan cuma andalkan validasi di StorePdoRequest.
+        if (app()->bound('current_unit_ids') && ! in_array($data['plantation_unit_id'], app('current_unit_ids'), true)) {
+            abort(response()->json([
+                'success' => false,
+                'error'   => ['code' => 'FORBIDDEN', 'message' => 'Anda tidak memiliki akses untuk membuat PDO pada unit ini.'],
+            ], 403));
+        }
+
         // BR-PDO-001: duplikat (unit, bulan, tahun) → error
         $exists = PdoHeader::withoutGlobalScopes()
             ->where('plantation_unit_id', $data['plantation_unit_id'])

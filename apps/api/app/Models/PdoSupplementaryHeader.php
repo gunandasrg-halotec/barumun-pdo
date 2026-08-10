@@ -19,13 +19,13 @@ class PdoSupplementaryHeader extends Model
 
     /**
      * TAD 5.2: Row-level security untuk KERANI dan ASISTEN — sama seperti PdoHeader.
-     * Middleware EnsureUnitAccess bind 'current_unit_id' ke container.
+     * Middleware EnsureUnitAccess bind 'current_unit_ids' ke container.
      */
     protected static function booted(): void
     {
         static::addGlobalScope('unit_access', function (Builder $builder) {
-            if (app()->bound('current_unit_id')) {
-                $builder->where('plantation_unit_id', app('current_unit_id'));
+            if (app()->bound('current_unit_ids')) {
+                $builder->whereIn('plantation_unit_id', app('current_unit_ids'));
             }
         });
     }

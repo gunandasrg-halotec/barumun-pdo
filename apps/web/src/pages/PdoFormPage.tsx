@@ -13,6 +13,7 @@ import { AttachmentSection } from '@/components/pdo/DetailAttachmentPanel'
 import { useItems, useSubcategories, useCategories } from '@/hooks/useMasterData'
 import { useBulkPullExternalCost, usePdo, usePullExternalCost } from '@/hooks/usePdo'
 import { fmt } from '@/lib/format'
+import { getAccessibleUnitIds } from '@/lib/auth'
 import { ArrowLeft, Plus, Trash2, LayoutList, Paperclip, CloudDownload, Search } from 'lucide-react'
 import type { ApiResponse, PdoDetail, PdoHeader, PlantationUnit } from '@/types'
 
@@ -74,13 +75,18 @@ export function PdoFormPage() {
   const [filterAutoExternal, setFilterAutoExternal]   = useState(false)
   const [filterZeroAmount, setFilterZeroAmount]       = useState(false)
 
-  const { data: units } = useQuery({
+  const { data: allUnits } = useQuery({
     queryKey: ['plantation-units'],
     queryFn:  async () => {
       const res = await api.get<ApiResponse<PlantationUnit[]>>('/plantation-units')
       return res.data.data
     },
   })
+
+  // Role unit-bound (KERANI/ASISTEN) hanya boleh pilih unit sendiri + unit
+  // yang di-link (mis. "Sosa Replanting" untuk KERANI/ASISTEN Sosa).
+  const accessibleUnitIds = getAccessibleUnitIds(user)
+  const units = accessibleUnitIds ? allUnits?.filter((u) => accessibleUnitIds.includes(u.id)) : allUnits
 
   const { data: items }         = useItems({ is_active: true })
   const { data: subcategories } = useSubcategories({ is_active: true })

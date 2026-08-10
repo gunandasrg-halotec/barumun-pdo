@@ -86,25 +86,26 @@ class RealizationEntryServiceTest extends TestCase
     }
 
     // ─────────────────────────────────────────────────────
-    // BR-REAL-003: tidak boleh melebihi amount yang disetujui
+    // BR-REAL-002 saja yang berlaku: realokasi antar item dalam
+    // kantong yang sama diizinkan (BR-REAL-003 dihapus di 8eac4c3)
     // ─────────────────────────────────────────────────────
 
-    public function test_realization_exceeding_approved_budget_is_rejected(): void
+    public function test_realization_can_exceed_item_budget_when_kantong_has_sufficient_transfer(): void
     {
-        // Transfer lebih dari budget (edge case: transfer melebihi budget tidak mungkin di skenario normal,
-        // tapi kita tetap validasi di sisi realisasi)
+        // Item budget 500rb, tapi kantong sudah terima 800rb transfer.
+        // Realisasi 600rb melebihi budget item, tapi masih di bawah plafon kantong → harus lolos.
         $detail = $this->makeDetail(PdoHeader::STATUS_FINAL, budget: 500000, transferred: 800000);
 
-        $this->expectException(\Illuminate\Http\Exceptions\HttpResponseException::class);
-
-        $this->service->store([
+        $entry = $this->service->store([
             'pdo_detail_id'    => $detail->id,
             'transaction_date' => '2026-06-20',
-            'amount'           => 600000, // melebihi budget 500.000
+            'amount'           => 600000,
             'payment_method'   => RealizationEntry::PAYMENT_TUNAI,
-            'proof_number' => 'KW-001',
+            'proof_number'     => 'KW-001',
             'funding_source'   => RealizationEntry::FUNDING_KAS_KEBUN,
         ], $this->kerani);
+
+        $this->assertEquals(600000, $entry->amount);
     }
 
     public function test_valid_realization_is_stored(): void

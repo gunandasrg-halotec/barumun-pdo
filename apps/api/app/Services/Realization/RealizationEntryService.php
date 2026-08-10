@@ -26,6 +26,27 @@ class RealizationEntryService
     }
 
     /**
+     * BR-AUTH-001: true kalau PDO ini di luar unit yang boleh diakses actor
+     * (row-level security). Actor tanpa plantation_unit_id (role cross-unit)
+     * selalu lolos. Pakai app('current_unit_ids') yang di-resolve
+     * EnsureUnitAccess (unit sendiri + unit yang di-link, mis. Sosa
+     * Replanting) kalau tersedia; fallback ke unit actor sendiri untuk
+     * konteks non-HTTP (mis. test/tinker) yang tidak lewat middleware.
+     */
+    private function unitMismatch(PdoHeader $pdo, User $actor): bool
+    {
+        if (! $actor->plantation_unit_id) {
+            return false;
+        }
+
+        $allowedUnitIds = app()->bound('current_unit_ids')
+            ? app('current_unit_ids')
+            : [$actor->plantation_unit_id];
+
+        return ! in_array($pdo->plantation_unit_id, $allowedUnitIds, true);
+    }
+
+    /**
      * Daftar semua entri realisasi (dengan filter opsional).
      * Scoped by company_id; unit-bound roles also scoped by unit.
      */
@@ -312,7 +333,7 @@ class RealizationEntryService
         }
 
         // BR-AUTH-001: Verify PDO belongs to user's unit (row-level security)
-        if ($actor->plantation_unit_id && $pdo->plantation_unit_id !== $actor->plantation_unit_id) {
+        if ($this->unitMismatch($pdo, $actor)) {
             abort(response()->json([
                 'success' => false,
                 'error'   => ['code' => 'UNIT_MISMATCH', 'message' => 'Realisasi hanya bisa dicatat untuk PDO unit Anda sendiri.'],
@@ -486,7 +507,7 @@ class RealizationEntryService
                 'error'   => ['code' => 'COMPANY_MISMATCH', 'message' => 'Anda tidak memiliki akses ke realisasi ini.'],
             ], 403));
         }
-        if ($actor->plantation_unit_id && $pdo->plantation_unit_id !== $actor->plantation_unit_id) {
+        if ($this->unitMismatch($pdo, $actor)) {
             abort(response()->json([
                 'success' => false,
                 'error'   => ['code' => 'UNIT_MISMATCH', 'message' => 'Realisasi hanya bisa diubah untuk PDO unit Anda sendiri.'],
@@ -568,7 +589,7 @@ class RealizationEntryService
                 'error'   => ['code' => 'COMPANY_MISMATCH', 'message' => 'Anda tidak memiliki akses ke realisasi ini.'],
             ], 403));
         }
-        if ($actor->plantation_unit_id && $pdo->plantation_unit_id !== $actor->plantation_unit_id) {
+        if ($this->unitMismatch($pdo, $actor)) {
             abort(response()->json([
                 'success' => false,
                 'error'   => ['code' => 'UNIT_MISMATCH', 'message' => 'Realisasi hanya bisa dihapus untuk PDO unit Anda sendiri.'],

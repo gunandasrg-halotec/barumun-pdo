@@ -42,6 +42,18 @@ class PdoSupplementaryService
     {
         $parentPdo = PdoHeader::withoutGlobalScopes()->findOrFail($data['parent_pdo_header_id']);
 
+        // Defense-in-depth: pastikan actor unit-bound (KERANI/ASISTEN) hanya bisa
+        // buat PDOT untuk PDO induk pada unit yang di-resolve EnsureUnitAccess.
+        // withoutGlobalScopes() di atas sengaja melewati RLS untuk keperluan lookup
+        // (BR-SUPPL-001 butuh cek status apa pun unitnya), jadi guard kepemilikan
+        // unit harus eksplisit di sini.
+        if (app()->bound('current_unit_ids') && ! in_array($parentPdo->plantation_unit_id, app('current_unit_ids'), true)) {
+            abort(response()->json([
+                'success' => false,
+                'error'   => ['code' => 'FORBIDDEN', 'message' => 'Anda tidak memiliki akses ke PDO Bulanan induk ini.'],
+            ], 403));
+        }
+
         // BR-SUPPL-001
         if (! $parentPdo->isFinal()) {
             abort(response()->json([

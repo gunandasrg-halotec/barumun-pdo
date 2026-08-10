@@ -32,9 +32,14 @@ class EnsureUnitAccess
             return $next($request);
         }
 
-        // Kerani & Asisten: bind unit_id ke container untuk dipakai Global Scope
+        // Kerani & Asisten: bind daftar unit_id (unit sendiri + unit yang di-link,
+        // mis. "Sosa Replanting" di-link dari "Sosa") ke container untuk Global Scope.
         if ($user->plantation_unit_id) {
-            app()->instance('current_unit_id', $user->plantation_unit_id);
+            $unitIds = array_values(array_filter([
+                $user->plantation_unit_id,
+                $user->plantationUnit?->linked_unit_id,
+            ]));
+            app()->instance('current_unit_ids', $unitIds);
         }
 
         return $next($request);
