@@ -108,6 +108,88 @@ class RealizationEntryServiceTest extends TestCase
         $this->assertEquals(600000, $entry->amount);
     }
 
+    // ─────────────────────────────────────────────────────
+    // BR-REAL-006: khusus kantong pribadi_vendor, realisasi per ITEM
+    // tidak boleh melebihi transfer ke item itu sendiri — beda dari
+    // Kas Kebun yang boleh realokasi antar item dalam kantong yang sama.
+    // ─────────────────────────────────────────────────────
+
+    public function test_pribadi_vendor_realization_cannot_exceed_items_own_transfer_even_if_kantong_sufficient(): void
+    {
+        $staffRole = Role::factory()->create(['code' => Role::STAFF_PURCHASING]);
+        $staff     = User::factory()->create([
+            'company_id'         => $this->companyId,
+            'role_id'            => $staffRole->id,
+            'plantation_unit_id' => $this->unit->id,
+        ]);
+
+        $pdo = PdoHeader::factory()->create([
+            'company_id'         => $this->companyId,
+            'plantation_unit_id' => $this->unit->id,
+            'created_by'         => $this->kerani->id,
+            'status'             => PdoHeader::STATUS_FINAL,
+        ]);
+
+        // Item A: transfer split 2 tujuan — 1.180.000 ke rek_kebun (bukan kantong staff ini)
+        // + 8.446.000 ke vendor. Kantong pribadi/vendor PDO ini punya total 8.446.000+X dari
+        // item lain, tapi item A SENDIRI hanya menerima 8.446.000 ke pribadi/vendor.
+        $itemA = PdoDetail::factory()->create(['pdo_header_id' => $pdo->id, 'amount' => 9626000]);
+        TransferEntry::factory()->create(['pdo_detail_id' => $itemA->id, 'transfer_destination' => TransferEntry::DEST_REK_KEBUN, 'amount' => 1180000]);
+        TransferEntry::factory()->create(['pdo_detail_id' => $itemA->id, 'transfer_destination' => TransferEntry::DEST_VENDOR, 'amount' => 8446000]);
+
+        // Item B lain di kantong pribadi/vendor yang sama, supaya total kantong PDO
+        // (8.446.000 + 8.865.000 = 17.311.000) jauh lebih besar dari kebutuhan item A
+        // (9.626.000) — BR-REAL-002 (level kantong) akan LOLOS kalau dicek sendirian.
+        $itemB = PdoDetail::factory()->create(['pdo_header_id' => $pdo->id, 'amount' => 8865000]);
+        TransferEntry::factory()->create(['pdo_detail_id' => $itemB->id, 'transfer_destination' => TransferEntry::DEST_VENDOR, 'amount' => 8865000]);
+
+        $this->expectException(\Illuminate\Http\Exceptions\HttpResponseException::class);
+
+        // Realisasi 9.626.000 untuk item A — melebihi transfer pribadi/vendor item A sendiri
+        // (8.446.000), meski total kantong PDO (17.311.000) masih cukup. Harus DITOLAK.
+        $this->service->store([
+            'pdo_detail_id'    => $itemA->id,
+            'transaction_date' => '2026-08-05',
+            'amount'           => 9626000,
+            'payment_method'   => RealizationEntry::PAYMENT_TRANSFER,
+            'proof_number'     => 'PBB-PRR-001/1',
+            'funding_source'   => RealizationEntry::FUNDING_REKENING_UTAMA,
+        ], $staff);
+    }
+
+    public function test_pribadi_vendor_realization_within_items_own_transfer_is_accepted(): void
+    {
+        $staffRole = Role::factory()->create(['code' => Role::STAFF_PURCHASING]);
+        $staff     = User::factory()->create([
+            'company_id'         => $this->companyId,
+            'role_id'            => $staffRole->id,
+            'plantation_unit_id' => $this->unit->id,
+        ]);
+
+        $pdo = PdoHeader::factory()->create([
+            'company_id'         => $this->companyId,
+            'plantation_unit_id' => $this->unit->id,
+            'created_by'         => $this->kerani->id,
+            'status'             => PdoHeader::STATUS_FINAL,
+        ]);
+
+        $itemA = PdoDetail::factory()->create(['pdo_header_id' => $pdo->id, 'amount' => 9626000]);
+        TransferEntry::factory()->create(['pdo_detail_id' => $itemA->id, 'transfer_destination' => TransferEntry::DEST_REK_KEBUN, 'amount' => 1180000]);
+        TransferEntry::factory()->create(['pdo_detail_id' => $itemA->id, 'transfer_destination' => TransferEntry::DEST_VENDOR, 'amount' => 8446000]);
+
+        // Realisasi persis sebesar transfer pribadi/vendor item ini (8.446.000) — harus lolos.
+        $entry = $this->service->store([
+            'pdo_detail_id'    => $itemA->id,
+            'transaction_date' => '2026-08-05',
+            'amount'           => 8446000,
+            'payment_method'   => RealizationEntry::PAYMENT_TRANSFER,
+            'proof_number'     => 'PBB-PRR-001/1',
+            'funding_source'   => RealizationEntry::FUNDING_REKENING_UTAMA,
+        ], $staff);
+
+        $this->assertEquals(8446000, $entry->amount);
+    }
+
     public function test_valid_realization_is_stored(): void
     {
         $detail = $this->makeDetail(PdoHeader::STATUS_FINAL, budget: 1000000, transferred: 1000000);

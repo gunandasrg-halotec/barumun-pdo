@@ -314,9 +314,12 @@ class RealizationEntryService
      * Catat realisasi baru.
      * BR-REAL-001: hanya saat PDO berstatus final.
      * BR-REAL-002: total realisasi PER KANTONG (PDO-level) tidak boleh melebihi transfer ke
-     * kantong itu — ini satu-satunya hard ceiling. Anggaran per item (pdo_detail.amount)
-     * tidak lagi jadi batas keras: realisasi 1 item boleh melebihi anggarannya sendiri
-     * selama total kantong PDO masih cukup (realokasi antar item dalam 1 kantong diizinkan).
+     * kantong itu. Untuk kantong Kas Kebun ini satu-satunya hard ceiling — anggaran per item
+     * (pdo_detail.amount) bukan batas keras, realisasi 1 item boleh melebihi anggarannya
+     * sendiri selama total kantong PDO masih cukup (realokasi antar item diizinkan).
+     * BR-REAL-006: khusus kantong pribadi_vendor, ADA hard ceiling tambahan PER ITEM —
+     * realisasi 1 item tidak boleh melebihi transfer yang diterima item itu sendiri ke
+     * destinasi pribadi/vendor (tidak boleh realokasi antar item, beda dari Kas Kebun).
      * BR-REAL-005: KERANI hanya boleh realisasi kantong rek_kebun; STAFF_PURCHASING
      * & MANAJER_KEUANGAN hanya kantong pribadi+vendor. Item potongan tidak bisa direalisasi.
      */
@@ -448,6 +451,35 @@ class RealizationEntryService
                     ], 422));
                 }
             } else {
+                // BR-REAL-006: khusus kantong pribadi_vendor, realisasi PER ITEM tidak boleh
+                // melebihi transfer yang diterima item itu sendiri ke destinasi pribadi/vendor.
+                // Beda dengan kantong Kas Kebun (BR-REAL-002 saja, realokasi antar item dalam
+                // 1 kantong diizinkan) — kantong pribadi/vendor terikat ke pembelian/rekanan
+                // spesifik per item, jadi tidak boleh "meminjam" dana transfer item lain.
+                // Ditambahkan setelah insiden PBB-PRR-001 (PDO-2026-08-SS-001): 1 item yang
+                // transfer-nya di-split ke 2 kantong (rek_kebun + vendor) direalisasikan penuh
+                // ke kantong pribadi_vendor saja, menggerus jatah item pribadi/vendor lain.
+                if ($group === RealizationEntry::SETTLEMENT_PRIBADI_VENDOR) {
+                    $itemTransferred = (int) TransferEntry::where('pdo_detail_id', $detail->id)
+                        ->whereIn('transfer_destination', ['pribadi', 'vendor'])
+                        ->sum('amount');
+                    $itemRealized = (int) RealizationEntry::where('pdo_detail_id', $detail->id)
+                        ->where('settlement_group', RealizationEntry::SETTLEMENT_PRIBADI_VENDOR)
+                        ->sum('amount');
+                    $itemNewTotal = $itemRealized + $data['amount'];
+
+                    if ($itemNewTotal > $itemTransferred) {
+                        $sisaItem = $itemTransferred - $itemRealized;
+                        abort(response()->json([
+                            'success' => false,
+                            'error'   => [
+                                'code'    => 'REALIZATION_EXCEEDS_ITEM_TRANSFER',
+                                'message' => "Realisasi item ini (Rp " . number_format($itemNewTotal, 0, ',', '.') . ") melebihi transfer ke item ini di kantong pribadi/vendor (Rp " . number_format($itemTransferred, 0, ',', '.') . "). Sisa: Rp " . number_format($sisaItem, 0, ',', '.') . ".",
+                            ],
+                        ], 422));
+                    }
+                }
+
                 // BR-REAL-002: total realisasi kantong actor (PDO-level) tidak boleh melebihi
                 // total transfer ke kantong tersebut (saldo kas kebun / saldo pribadi-vendor).
                 $totalKantong       = $this->totalKantongForGroup($pdo, $group);
