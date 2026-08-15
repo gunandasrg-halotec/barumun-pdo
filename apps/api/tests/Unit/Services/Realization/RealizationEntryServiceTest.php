@@ -571,6 +571,115 @@ class RealizationEntryServiceTest extends TestCase
         $this->assertSame(3000000, $fundReturn['saldo']);
     }
 
+    /**
+     * Saldo item pengembalian harus berkurang setelah pengembaliannya dicatat —
+     * sebelumnya selalu menampilkan saldo awal penuh walau sudah direalisasikan.
+     */
+    public function test_fund_return_saldo_reduced_after_realization_recorded(): void
+    {
+        $this->seedFundReturnItem();
+        UnitOpeningBalance::create(['plantation_unit_id' => $this->unit->id, 'amount' => 3000000, 'as_of_date' => '2026-07-01']);
+
+        $pdo = PdoHeader::factory()->create([
+            'company_id'         => $this->companyId,
+            'plantation_unit_id' => $this->unit->id,
+            'created_by'         => $this->kerani->id,
+            'status'             => PdoHeader::STATUS_FINAL,
+        ]);
+
+        $this->service->store([
+            'pdo_detail_id'    => RealizationEntryService::FUND_RETURN_SENTINEL,
+            'pdo_header_id'    => $pdo->id,
+            'transaction_date' => '2026-08-05',
+            'amount'           => 1200000,
+            'payment_method'   => RealizationEntry::PAYMENT_TUNAI,
+            'proof_number'     => '',
+            'funding_source'   => RealizationEntry::FUNDING_KAS_KEBUN,
+        ], $this->kerani);
+
+        $result     = $this->service->availableItemsForActor($pdo, $this->kerani);
+        $fundReturn = collect($result['items'])->firstWhere('pdo_detail_id', RealizationEntryService::FUND_RETURN_SENTINEL);
+
+        $this->assertSame(1800000, $fundReturn['saldo']);          // 3.000.000 − 1.200.000
+        $this->assertSame(1200000, $fundReturn['realized_group']);
+    }
+
+    /** Setelah dikembalikan penuh, saldo jadi 0 (bukan tetap sebesar saldo awal). */
+    public function test_fund_return_saldo_zero_after_fully_returned(): void
+    {
+        $this->seedFundReturnItem();
+        UnitOpeningBalance::create(['plantation_unit_id' => $this->unit->id, 'amount' => 3000000, 'as_of_date' => '2026-07-01']);
+
+        $pdo = PdoHeader::factory()->create([
+            'company_id'         => $this->companyId,
+            'plantation_unit_id' => $this->unit->id,
+            'created_by'         => $this->kerani->id,
+            'status'             => PdoHeader::STATUS_FINAL,
+        ]);
+
+        $this->service->store([
+            'pdo_detail_id'    => RealizationEntryService::FUND_RETURN_SENTINEL,
+            'pdo_header_id'    => $pdo->id,
+            'transaction_date' => '2026-08-05',
+            'amount'           => 3000000,
+            'payment_method'   => RealizationEntry::PAYMENT_TUNAI,
+            'proof_number'     => '',
+            'funding_source'   => RealizationEntry::FUNDING_KAS_KEBUN,
+        ], $this->kerani);
+
+        $result     = $this->service->availableItemsForActor($pdo, $this->kerani);
+        $fundReturn = collect($result['items'])->firstWhere('pdo_detail_id', RealizationEntryService::FUND_RETURN_SENTINEL);
+
+        $this->assertSame(0, $fundReturn['saldo']);
+    }
+
+    /**
+     * Pengembalian kedua yang melebihi sisa harus ditolak, walau saldo kas kebun
+     * berjalan masih cukup (mis. karena ada transfer masuk bulan ini).
+     */
+    public function test_second_fund_return_exceeding_remaining_is_rejected(): void
+    {
+        $this->seedFundReturnItem();
+        UnitOpeningBalance::create(['plantation_unit_id' => $this->unit->id, 'amount' => 3000000, 'as_of_date' => '2026-07-01']);
+
+        $pdo = PdoHeader::factory()->create([
+            'company_id'         => $this->companyId,
+            'plantation_unit_id' => $this->unit->id,
+            'created_by'         => $this->kerani->id,
+            'status'             => PdoHeader::STATUS_FINAL,
+        ]);
+
+        // Transfer masuk besar bulan ini — saldo kas berjalan tetap tebal, jadi
+        // cek FUND_RETURN_EXCEEDS_BALANCE saja tidak akan menangkap kasus ini.
+        $funded = PdoDetail::factory()->create(['pdo_header_id' => $pdo->id, 'amount' => 50000000]);
+        TransferEntry::factory()->create([
+            'pdo_detail_id' => $funded->id, 'amount' => 50000000, 'transfer_destination' => 'rek_kebun',
+        ]);
+
+        $this->service->store([
+            'pdo_detail_id'    => RealizationEntryService::FUND_RETURN_SENTINEL,
+            'pdo_header_id'    => $pdo->id,
+            'transaction_date' => '2026-08-05',
+            'amount'           => 3000000,
+            'payment_method'   => RealizationEntry::PAYMENT_TUNAI,
+            'proof_number'     => 'PSD-1',
+            'funding_source'   => RealizationEntry::FUNDING_KAS_KEBUN,
+        ], $this->kerani);
+
+        $this->expectException(\Illuminate\Http\Exceptions\HttpResponseException::class);
+
+        // Sisa sudah 0 — pengembalian kedua harus ditolak.
+        $this->service->store([
+            'pdo_detail_id'    => RealizationEntryService::FUND_RETURN_SENTINEL,
+            'pdo_header_id'    => $pdo->id,
+            'transaction_date' => '2026-08-06',
+            'amount'           => 1000000,
+            'payment_method'   => RealizationEntry::PAYMENT_TUNAI,
+            'proof_number'     => 'PSD-2',
+            'funding_source'   => RealizationEntry::FUNDING_KAS_KEBUN,
+        ], $this->kerani);
+    }
+
     // ─────────────────────────────────────────────────────
     // PDO Tambahan "Gunakan Kas Kebun": funding_source dipaksa kas_kebun
     // ─────────────────────────────────────────────────────

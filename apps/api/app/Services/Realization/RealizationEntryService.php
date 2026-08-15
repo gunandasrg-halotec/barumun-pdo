@@ -193,11 +193,8 @@ class RealizationEntryService
                     ],
                     'description'    => $fundReturnItem->name,
                     'bucket'         => null,
-                    'realized_group' => null,
-                    // Sisa dana BULAN LALU yang dibawa masuk ke periode PDO ini —
-                    // saldo AWAL periode, bukan saldo berjalan hari ini (currentBalance
-                    // sudah mencakup transaksi bulan berjalan, jadi tidak tepat di sini).
-                    'saldo'          => $this->cashBook->openingBalanceForPeriod($pdo->plantation_unit_id, $pdo->period_year, $pdo->period_month),
+                    'realized_group' => $this->fundReturnRealized($pdo, $fundReturnItem),
+                    'saldo'          => $this->fundReturnRemaining($pdo, $fundReturnItem),
                     'is_fund_return' => true,
                 ];
             }
@@ -208,6 +205,36 @@ class RealizationEntryService
             'remaining_kantong' => $remainingKantong,
             'total_kantong'     => $totalKantong,
         ];
+    }
+
+    /**
+     * Total pengembalian sisa dana bulan lalu yang SUDAH tercatat di PDO ini.
+     */
+    public function fundReturnRealized(PdoHeader $pdo, ExpenseItem $fundReturnItem): int
+    {
+        return (int) RealizationEntry::whereHas('pdoDetail', fn ($q) => $q
+            ->where('pdo_header_id', $pdo->id)
+            ->where('expense_item_id', $fundReturnItem->id)
+        )->sum('amount');
+    }
+
+    /**
+     * Sisa dana bulan lalu yang MASIH bisa dikembalikan = saldo awal periode
+     * dikurangi pengembalian yang sudah tercatat, tidak pernah negatif.
+     *
+     * Saldo awal dipakai (bukan currentBalance) karena yang dikembalikan adalah
+     * sisa dana BULAN LALU, bukan saldo berjalan yang sudah tercampur transaksi
+     * bulan ini. Tanpa pengurangan ini, dropdown Input Realisasi tetap menampilkan
+     * saldo penuh walau pengembaliannya sudah dicatat — dan kerani bisa mencatat
+     * pengembalian berulang kali melebihi dana yang benar-benar dibawa dari bulan lalu.
+     */
+    public function fundReturnRemaining(PdoHeader $pdo, ExpenseItem $fundReturnItem): int
+    {
+        $openingBalance = $this->cashBook->openingBalanceForPeriod(
+            $pdo->plantation_unit_id, $pdo->period_year, $pdo->period_month
+        );
+
+        return max(0, $openingBalance - $this->fundReturnRealized($pdo, $fundReturnItem));
     }
 
     /**
@@ -439,7 +466,7 @@ class RealizationEntryService
 
             if ($isFundReturn) {
                 // Bukan BR-REAL-002 (plafon transfer) — dananya dari saldo bulan lalu.
-                // Batasnya adalah Saldo Kas Kebun yang benar-benar tersedia saat ini.
+                // Batas 1: Saldo Kas Kebun yang benar-benar tersedia saat ini.
                 $currentBalance = $this->cashBook->currentBalance($pdo->plantation_unit_id);
                 if ($data['amount'] > $currentBalance) {
                     abort(response()->json([
@@ -447,6 +474,21 @@ class RealizationEntryService
                         'error'   => [
                             'code'    => 'FUND_RETURN_EXCEEDS_BALANCE',
                             'message' => "Jumlah pengembalian (Rp " . number_format($data['amount'], 0, ',', '.') . ") melebihi Saldo Kas Kebun saat ini (Rp " . number_format($currentBalance, 0, ',', '.') . ").",
+                        ],
+                    ], 422));
+                }
+
+                // Batas 2: sisa dana bulan lalu yang belum dikembalikan. Tanpa ini,
+                // pengembalian bisa dicatat berulang kali melebihi dana yang benar-benar
+                // dibawa masuk dari bulan lalu (saldo awal periode) — selama saldo kas
+                // berjalan masih cukup, cek pertama saja tidak menangkapnya.
+                $remaining = $this->fundReturnRemaining($pdo, $detail->expenseItem);
+                if ($data['amount'] > $remaining) {
+                    abort(response()->json([
+                        'success' => false,
+                        'error'   => [
+                            'code'    => 'FUND_RETURN_EXCEEDS_REMAINING',
+                            'message' => "Jumlah pengembalian (Rp " . number_format($data['amount'], 0, ',', '.') . ") melebihi sisa dana bulan lalu yang belum dikembalikan (Rp " . number_format($remaining, 0, ',', '.') . ").",
                         ],
                     ], 422));
                 }
