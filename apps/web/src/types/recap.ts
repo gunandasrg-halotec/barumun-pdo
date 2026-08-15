@@ -5,6 +5,7 @@ export interface RecapItem {
   item_name: string
   account_number: string
   description: string
+  notes: string | null
   amount: number
   total_transfer: number
   total_realization: number

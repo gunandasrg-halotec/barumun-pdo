@@ -107,7 +107,12 @@ export function RecapTable({ data, onRealizationClick }: Props) {
                       {item.account_number}
                     </td>
                     <td className="px-3 py-1.5 border border-[#e5e7eb]">
-                      <span className="pl-8">{item.item_name}</span>
+                      <div className="pl-8">
+                        <div>{item.item_name}</div>
+                        {item.notes && (
+                          <div className="italic text-muted/70 text-xs mt-0.5">{item.notes}</div>
+                        )}
+                      </div>
                     </td>
                     <td className="px-3 py-1.5 text-right border border-[#e5e7eb]">{idr(item.amount)}</td>
                     <td className="px-3 py-1.5 text-right border border-[#e5e7eb]">{idr(item.total_transfer)}</td>

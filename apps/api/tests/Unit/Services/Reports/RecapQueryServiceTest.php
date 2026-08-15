@@ -57,6 +57,38 @@ class RecapQueryServiceTest extends TestCase
         $this->assertNotEmpty($sub['items']);
     }
 
+    /** Kolom notes item (untuk item PDOT, ini sudah berisi teks Justifikasi). */
+    public function test_item_row_includes_pdo_detail_notes(): void
+    {
+        $cat  = ExpenseCategory::factory()->create(['company_id' => $this->companyId, 'include_in_recap' => true]);
+        $sub  = ExpenseSubcategory::factory()->create(['category_id' => $cat->id]);
+        $item = ExpenseItem::factory()->create(['subcategory_id' => $sub->id]);
+        $pdo  = $this->makeFinalPdo();
+        $detail = PdoDetail::factory()->create([
+            'pdo_header_id'   => $pdo->id,
+            'expense_item_id' => $item->id,
+            'amount'          => 500_000,
+            'notes'           => 'Justifikasi: kebutuhan mendesak proyek replanting.',
+        ]);
+        TransferEntry::factory()->create(['pdo_detail_id' => $detail->id, 'amount' => 500_000]);
+        RealizationEntry::factory()->create(['pdo_detail_id' => $detail->id, 'amount' => 500_000]);
+
+        $result = $this->query();
+
+        $foundItem = $result['categories'][0]['subcategories'][0]['items'][0];
+        $this->assertEquals('Justifikasi: kebutuhan mendesak proyek replanting.', $foundItem['notes']);
+    }
+
+    public function test_item_row_notes_is_null_when_pdo_detail_has_no_notes(): void
+    {
+        $this->seedItem(amount: 500_000, transfer: 500_000, realized: 500_000);
+
+        $result = $this->query();
+
+        $foundItem = $result['categories'][0]['subcategories'][0]['items'][0];
+        $this->assertNull($foundItem['notes']);
+    }
+
     // ── 2: subtotal category = sum of subcategory subtotals ──────────────────
 
     public function test_subtotal_category_equals_sum_of_subcategory_subtotals(): void
