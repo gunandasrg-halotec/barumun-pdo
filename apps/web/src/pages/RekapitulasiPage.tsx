@@ -1,5 +1,5 @@
 import { useState, useMemo, useEffect } from 'react'
-import { useForm } from 'react-hook-form'
+import { useForm, Controller } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
@@ -7,6 +7,7 @@ import { api } from '@/lib/api'
 import { Button } from '@/components/ui/Button'
 import { Modal } from '@/components/ui/Modal'
 import { EmptyState } from '@/components/ui/EmptyState'
+import { SearchableSelect } from '@/components/ui/SearchableSelect'
 import { useRecapData } from '@/hooks/useRecapData'
 import { useCashBookData } from '@/hooks/useCashBookData'
 import { RecapTable } from '@/components/recap/RecapTable'
@@ -222,7 +223,7 @@ export function RekapitulasiPage() {
   const totalKantong       = availableData?.total_kantong ?? null
 
   // ── Input Realisasi form ─────────────────────────────────────────────────
-  const { register, handleSubmit, watch, reset, setValue, formState: { errors } } = useForm<RealizationForm>({
+  const { register, control, handleSubmit, watch, reset, setValue, formState: { errors } } = useForm<RealizationForm>({
     resolver: zodResolver(realizationSchema),
     defaultValues: {
       transaction_date: new Date().toISOString().split('T')[0],
@@ -753,7 +754,12 @@ export function RekapitulasiPage() {
                   <tr key={`${r.date}-${i}`} className="border-t border-line hover:bg-[#fbfdfb]">
                     <td className="px-3 py-2 whitespace-nowrap">{fmtDate(r.date)}</td>
                     <td className="px-3 py-2 font-mono text-xs whitespace-pre-line">{r.reference ?? '—'}</td>
-                    <td className="px-3 py-2 whitespace-pre-line">{r.description}</td>
+                    <td className="px-3 py-2 whitespace-pre-line">
+                      <div>{r.description}</div>
+                      {r.notes && (
+                        <div className="italic text-muted/70 text-xs mt-0.5">{r.notes}</div>
+                      )}
+                    </td>
                     <td className="px-3 py-2 text-right tabular-nums text-[#0F6E56] font-bold">
                       {r.type === 'penerimaan' ? fmt(r.amount) : ''}
                     </td>
@@ -809,14 +815,23 @@ export function RekapitulasiPage() {
                 />
               ) : (
                 <>
-                  <select {...register('pdo_detail_id')} className="input-base">
-                    <option value="">Pilih item...</option>
-                    {availableItems.map((d) => (
-                      <option key={d.pdo_detail_id} value={d.pdo_detail_id}>
-                        {[d.expense_item?.subcategory?.category?.name, d.expense_item?.subcategory?.name, d.expense_item?.name ?? d.description].filter(Boolean).join(' — ')} — Saldo: {fmt(d.saldo)}
-                      </option>
-                    ))}
-                  </select>
+                  <Controller
+                    name="pdo_detail_id"
+                    control={control}
+                    render={({ field }) => (
+                      <SearchableSelect
+                        value={field.value}
+                        onChange={field.onChange}
+                        placeholder="Cari & pilih item..."
+                        noOptionsMessage="Item tidak ditemukan"
+                        options={availableItems.map((d) => ({
+                          value: d.pdo_detail_id,
+                          label: [d.expense_item?.subcategory?.category?.name, d.expense_item?.subcategory?.name, d.expense_item?.name ?? d.description].filter(Boolean).join(' — '),
+                          sublabel: `Saldo: ${fmt(d.saldo)}`,
+                        }))}
+                      />
+                    )}
+                  />
                   {errors.pdo_detail_id && <p className="field-error">{errors.pdo_detail_id.message}</p>}
                   {availableItems.length === 0 && (
                     <p className="text-xs text-muted mt-1">Tidak ada item yang bisa Anda realisasi untuk PDO ini.</p>

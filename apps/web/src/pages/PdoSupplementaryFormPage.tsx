@@ -1,11 +1,12 @@
 import { useEffect, useRef } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
-import { useForm, useFieldArray } from 'react-hook-form'
+import { useForm, useFieldArray, Controller } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api, getApiErrorMessage } from '@/lib/api'
 import { Button } from '@/components/ui/Button'
+import { SearchableSelect } from '@/components/ui/SearchableSelect'
 import { useToastStore } from '@/store/toast.store'
 import { useItems } from '@/hooks/useMasterData'
 import { fmt } from '@/lib/format'
@@ -353,26 +354,37 @@ export function PdoSupplementaryFormPage() {
                   <div className="grid grid-cols-1 desk:grid-cols-2 gap-3 mb-3">
                     <div>
                       <label className="label">Item Biaya</label>
-                      <select
-                        {...register(`details.${idx}.expense_item_id`)}
-                        className="input-base"
-                        onChange={(e) => {
-                          register(`details.${idx}.expense_item_id`).onChange(e)
-                          handleItemChange(idx, e.target.value)
+                      <Controller
+                        name={`details.${idx}.expense_item_id`}
+                        control={control}
+                        render={({ field }) => {
+                          const options = (items ?? []).map((item) => ({
+                            value: item.id, label: `${item.code} — ${item.name}`,
+                          }))
+                          // Keep a currently-selected but now-inactive item visible so the dropdown doesn't render blank
+                          if (
+                            detailValues[idx]?.expense_item_id &&
+                            !items?.some((item) => item.id === detailValues[idx].expense_item_id)
+                          ) {
+                            options.push({
+                              value: detailValues[idx].expense_item_id,
+                              label: `${detailValues[idx].description} (nonaktif)`,
+                            })
+                          }
+                          return (
+                            <SearchableSelect
+                              value={field.value}
+                              onChange={(val) => {
+                                field.onChange(val)
+                                handleItemChange(idx, val)
+                              }}
+                              placeholder="Cari & pilih item..."
+                              noOptionsMessage="Item tidak ditemukan"
+                              options={options}
+                            />
+                          )
                         }}
-                      >
-                        <option value="">Pilih item...</option>
-                        {items?.map((item) => (
-                          <option key={item.id} value={item.id}>{item.code} — {item.name}</option>
-                        ))}
-                        {/* Keep a currently-selected but now-inactive item visible so the dropdown doesn't render blank */}
-                        {detailValues[idx]?.expense_item_id &&
-                          !items?.some((item) => item.id === detailValues[idx].expense_item_id) && (
-                            <option value={detailValues[idx].expense_item_id}>
-                              {detailValues[idx].description} (nonaktif)
-                            </option>
-                        )}
-                      </select>
+                      />
                     </div>
                     <div>
                       <label className="label">Deskripsi</label>

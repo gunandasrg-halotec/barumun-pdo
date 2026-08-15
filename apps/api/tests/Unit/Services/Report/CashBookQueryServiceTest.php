@@ -238,4 +238,92 @@ class CashBookQueryServiceTest extends TestCase
         $closing = $this->service->closingBalanceForPeriod($this->unit->id, 2026, 8);
         $this->assertEquals(-1_200_000, $closing);
     }
+
+    /**
+     * Baris pengeluaran Buku Kas Harian menyertakan pdo_details.notes secara
+     * terpisah dari description (untuk item asal PDOT, ini sudah berisi teks
+     * Justifikasi — lihat PdoSupplementaryApprovalService::mergeIntoParent()).
+     */
+    public function test_expense_row_includes_pdo_detail_notes(): void
+    {
+        $cat  = ExpenseCategory::factory()->create(['company_id' => $this->companyId]);
+        $sub  = ExpenseSubcategory::factory()->create(['category_id' => $cat->id]);
+        $pdo  = PdoHeader::factory()->create([
+            'company_id'         => $this->companyId,
+            'plantation_unit_id' => $this->unit->id,
+            'created_by'         => $this->kerani->id,
+            'status'             => PdoHeader::STATUS_FINAL,
+            'period_year'        => 2026,
+            'period_month'       => 8,
+        ]);
+
+        $item   = ExpenseItem::factory()->create(['subcategory_id' => $sub->id]);
+        $detail = PdoDetail::factory()->create([
+            'pdo_header_id'   => $pdo->id,
+            'expense_item_id' => $item->id,
+            'amount'          => 500_000,
+            'notes'           => 'Perlu dibeli mendesak untuk proyek replanting.',
+        ]);
+        TransferEntry::factory()->create([
+            'pdo_detail_id' => $detail->id, 'amount' => 500_000,
+            'transfer_destination' => 'rek_kebun', 'transfer_date' => '2026-08-01',
+        ]);
+        RealizationEntry::factory()->create([
+            'pdo_detail_id'    => $detail->id,
+            'amount'           => 500_000,
+            'funding_source'   => RealizationEntry::FUNDING_KAS_KEBUN,
+            'transaction_date' => '2026-08-05',
+        ]);
+
+        $cashBook = $this->service->getCashBookData([
+            'period_year' => 2026, 'period_month' => 8, 'unit_id' => $this->unit->id,
+        ]);
+
+        $expenseRow = collect($cashBook['rows'])->firstWhere('type', 'pengeluaran');
+
+        $this->assertNotNull($expenseRow);
+        $this->assertEquals('Perlu dibeli mendesak untuk proyek replanting.', $expenseRow['notes']);
+    }
+
+    /** Item tanpa notes harus menghasilkan null, bukan string kosong. */
+    public function test_expense_row_notes_is_null_when_pdo_detail_has_no_notes(): void
+    {
+        $cat  = ExpenseCategory::factory()->create(['company_id' => $this->companyId]);
+        $sub  = ExpenseSubcategory::factory()->create(['category_id' => $cat->id]);
+        $pdo  = PdoHeader::factory()->create([
+            'company_id'         => $this->companyId,
+            'plantation_unit_id' => $this->unit->id,
+            'created_by'         => $this->kerani->id,
+            'status'             => PdoHeader::STATUS_FINAL,
+            'period_year'        => 2026,
+            'period_month'       => 8,
+        ]);
+
+        $item   = ExpenseItem::factory()->create(['subcategory_id' => $sub->id]);
+        $detail = PdoDetail::factory()->create([
+            'pdo_header_id'   => $pdo->id,
+            'expense_item_id' => $item->id,
+            'amount'          => 300_000,
+            'notes'           => null,
+        ]);
+        TransferEntry::factory()->create([
+            'pdo_detail_id' => $detail->id, 'amount' => 300_000,
+            'transfer_destination' => 'rek_kebun', 'transfer_date' => '2026-08-01',
+        ]);
+        RealizationEntry::factory()->create([
+            'pdo_detail_id'    => $detail->id,
+            'amount'           => 300_000,
+            'funding_source'   => RealizationEntry::FUNDING_KAS_KEBUN,
+            'transaction_date' => '2026-08-05',
+        ]);
+
+        $cashBook = $this->service->getCashBookData([
+            'period_year' => 2026, 'period_month' => 8, 'unit_id' => $this->unit->id,
+        ]);
+
+        $expenseRow = collect($cashBook['rows'])->firstWhere('type', 'pengeluaran');
+
+        $this->assertNotNull($expenseRow);
+        $this->assertNull($expenseRow['notes']);
+    }
 }

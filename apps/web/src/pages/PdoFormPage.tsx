@@ -1,6 +1,6 @@
 import { useEffect, useCallback, useState } from 'react'
 import { useNavigate, useParams, useLocation } from 'react-router-dom'
-import { useForm, useFieldArray } from 'react-hook-form'
+import { useForm, useFieldArray, Controller } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
@@ -9,6 +9,7 @@ import { Button } from '@/components/ui/Button'
 import { useToastStore } from '@/store/toast.store'
 import { useAuthStore } from '@/store/auth.store'
 import { ExternalCostPullPanel } from '@/components/pdo/ExternalCostPullPanel'
+import { SearchableSelect } from '@/components/ui/SearchableSelect'
 import { AttachmentSection } from '@/components/pdo/DetailAttachmentPanel'
 import { useItems, useSubcategories, useCategories } from '@/hooks/useMasterData'
 import { useBulkPullExternalCost, usePdo, usePullExternalCost } from '@/hooks/usePdo'
@@ -645,22 +646,23 @@ export function PdoFormPage() {
           </div>
           <div>
             <label className="label">Item Biaya</label>
-            <select
-              {...register(`details.${idx}.expense_item_id`)}
-              className="input-base"
-              disabled={!sel.subcategoryId}
-              onChange={(e) => {
-                register(`details.${idx}.expense_item_id`).onChange(e)
-                handleItemChange(idx, e.target.value)
-              }}
-            >
-              <option value="">
-                {sel.subcategoryId ? 'Pilih item...' : '— Pilih sub-kategori dulu —'}
-              </option>
-              {filteredItems.map((fi) => (
-                <option key={fi.id} value={fi.id}>{fi.code} — {fi.name}</option>
-              ))}
-            </select>
+            <Controller
+              name={`details.${idx}.expense_item_id`}
+              control={control}
+              render={({ field }) => (
+                <SearchableSelect
+                  value={field.value}
+                  onChange={(val) => {
+                    field.onChange(val)
+                    handleItemChange(idx, val)
+                  }}
+                  isDisabled={!sel.subcategoryId}
+                  placeholder={sel.subcategoryId ? 'Cari & pilih item...' : '— Pilih sub-kategori dulu —'}
+                  noOptionsMessage="Item tidak ditemukan"
+                  options={filteredItems.map((fi) => ({ value: fi.id, label: `${fi.code} — ${fi.name}` }))}
+                />
+              )}
+            />
             {errors.details?.[idx]?.expense_item_id && (
               <p className="field-error">{errors.details[idx]?.expense_item_id?.message}</p>
             )}

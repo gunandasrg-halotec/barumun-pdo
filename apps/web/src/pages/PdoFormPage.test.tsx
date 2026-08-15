@@ -184,6 +184,8 @@ describe('PdoFormPage bulk external pull', () => {
     expect(await screen.findByRole('button', { name: 'Semua Data Sudah Fresh' })).toBeDisabled()
   })
 
+  // Timeout dilebihkan dari default 5000ms — interaksi ketik di SearchableSelect
+  // (react-select) untuk memilih Item Biaya lebih lambat dari native <select>.
   it('runs bulk pull, refetches details, shows summary toast, row error, unsaved warning', async () => {
     const user = userEvent.setup()
     let resolveBulk!: (value: unknown) => void
@@ -261,11 +263,16 @@ describe('PdoFormPage bulk external pull', () => {
 
     const rows = document.querySelectorAll('[data-detail-row]')
     const newRow = rows[0] as HTMLElement
-    const selects = within(newRow).getAllByRole('combobox')
+    // Query fresh setiap kali (bukan cache) — react-select me-remount input-nya saat
+    // menu buka/tutup, jadi referensi lama bisa jadi stale antara click() dan type().
+    const combobox = (i: number) => within(newRow).getAllByRole('combobox')[i]
 
-    await user.selectOptions(selects[0], 'cat-1')
-    await user.selectOptions(selects[1], 'sub-1')
-    await user.selectOptions(selects[2], 'item-new-auto')
+    await user.selectOptions(combobox(0), 'cat-1')
+    await user.selectOptions(combobox(1), 'sub-1')
+    // "Item Biaya" adalah SearchableSelect (react-select) — ketik untuk filter, lalu pilih opsi
+    await user.click(combobox(2))
+    await user.type(combobox(2), 'AUTO-NEW')
+    await user.click(await screen.findByText('AUTO-NEW — Auto New'))
 
     expect(screen.getByText('Ada item Auto External baru belum disimpan. Simpan draft dulu untuk ikut Ambil Semua Data.')).toBeInTheDocument()
 
@@ -291,5 +298,5 @@ describe('PdoFormPage bulk external pull', () => {
     await waitFor(() => expect(screen.getByTestId('detail-amount-1')).toHaveValue(1250000))
     expect(screen.getByText('Komponen Payroll tidak valid untuk item ini.')).toBeInTheDocument()
     expect(useToastStore.getState().toasts.some((toast) => toast.message === '1 berhasil, 1 gagal')).toBe(true)
-  })
+  }, 15000)
 })

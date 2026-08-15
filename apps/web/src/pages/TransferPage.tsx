@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { useForm } from 'react-hook-form'
+import { useForm, Controller } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
@@ -8,6 +8,7 @@ import { api } from '@/lib/api'
 import { Button } from '@/components/ui/Button'
 import { Modal } from '@/components/ui/Modal'
 import { EmptyState } from '@/components/ui/EmptyState'
+import { SearchableSelect } from '@/components/ui/SearchableSelect'
 import { TransferTransactionsSection } from '@/components/transfer/TransferTransactionsSection'
 import { useToastStore } from '@/store/toast.store'
 import { fmt, fmtDate } from '@/lib/format'
@@ -93,6 +94,7 @@ export function TransferPage() {
 
   const {
     register,
+    control,
     handleSubmit,
     watch,
     reset,
@@ -306,14 +308,23 @@ export function TransferPage() {
           {/* Item Biaya */}
           <div>
             <label className="label">Item Biaya</label>
-            <select {...register('pdo_detail_id')} className="input-base" disabled={!selectedPdoId}>
-              <option value="">Pilih item...</option>
-              {pdoDetails?.map((d) => (
-                <option key={d.id} value={d.id}>
-                  {d.expense_item?.name ?? d.description}
-                </option>
-              ))}
-            </select>
+            <Controller
+              name="pdo_detail_id"
+              control={control}
+              render={({ field }) => (
+                <SearchableSelect
+                  value={field.value}
+                  onChange={field.onChange}
+                  isDisabled={!selectedPdoId}
+                  placeholder={selectedPdoId ? 'Cari & pilih item...' : '— Pilih PDO dulu —'}
+                  noOptionsMessage="Item tidak ditemukan"
+                  options={(pdoDetails ?? []).map((d) => ({
+                    value: d.id,
+                    label: d.expense_item?.name ?? d.description,
+                  }))}
+                />
+              )}
+            />
             {errors.pdo_detail_id && <p className="field-error">{errors.pdo_detail_id.message}</p>}
           </div>
 

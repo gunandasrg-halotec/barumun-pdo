@@ -1,10 +1,11 @@
 import { useEffect } from 'react'
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
-import { useForm } from 'react-hook-form'
+import { useForm, Controller } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
 import { ArrowLeft } from 'lucide-react'
 import { Button } from '@/components/ui/Button'
+import { SearchableSelect } from '@/components/ui/SearchableSelect'
 import { useToastStore } from '@/store/toast.store'
 import { resolveMasterDataReturnTo } from '@/lib/masterDataState'
 import { useVehicle, useCreateVehicle, useUpdateVehicle, useItems } from '@/hooks/useMasterData'
@@ -38,6 +39,7 @@ export default function VehicleFormPage() {
 
   const {
     register,
+    control,
     handleSubmit,
     reset,
     formState: { errors, isSubmitting },
@@ -123,14 +125,23 @@ export default function VehicleFormPage() {
           <label className="block text-sm font-medium mb-1">
             Item Biaya Terkait <span className="text-gray-400 font-normal">(opsional)</span>
           </label>
-          <select {...register('expense_item_id')} className="input-base w-full">
-            <option value="">— Pilih item biaya —</option>
-            {inventoryItems.map((item) => (
-              <option key={item.id} value={item.id}>
-                {item.code} — {item.name}
-              </option>
-            ))}
-          </select>
+          <Controller
+            name="expense_item_id"
+            control={control}
+            render={({ field }) => (
+              <SearchableSelect
+                value={field.value}
+                onChange={(val) => field.onChange(val || null)}
+                isClearable
+                placeholder="Cari & pilih item biaya..."
+                noOptionsMessage="Item tidak ditemukan"
+                options={inventoryItems.map((item) => ({
+                  value: item.id,
+                  label: `${item.code} — ${item.name}`,
+                }))}
+              />
+            )}
+          />
           <p className="text-xs text-gray-500 mt-1">
             Hanya item biaya BBM/Sparepart kendaraan yang ditampilkan.
           </p>

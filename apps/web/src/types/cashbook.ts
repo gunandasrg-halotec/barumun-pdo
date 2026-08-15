@@ -3,6 +3,7 @@ export interface CashBookRow {
   type: 'penerimaan' | 'pengeluaran'
   reference: string | null
   description: string
+  notes: string | null
   amount: number
   balance: number
 }

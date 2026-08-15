@@ -96,6 +96,7 @@ class CashBookQueryService
                     'type'        => 'penerimaan',
                     'reference'   => null,
                     'description' => 'Terima transfer dari HO untuk : ' . $itemNames->implode(', '),
+                    'notes'       => null,
                     'amount'      => (int) $group->sum('amount'),
                     'created_at'  => $group->min('created_at'),
                 ];
@@ -234,6 +235,17 @@ class CashBookQueryService
                         return $label;
                     })->values();
 
+                    // Catatan item (pdo_details.notes) — untuk item asal PDO Tambahan ini
+                    // sudah berisi teks Justifikasi (disalin saat merge, lihat
+                    // PdoSupplementaryApprovalService::mergeIntoParent()). Dikumpulkan
+                    // terpisah dari $lines (bukan digabung ke description) supaya
+                    // frontend bisa menampilkannya dengan gaya berbeda (italic/muted).
+                    $notesLines = $group
+                        ->map(fn (RealizationEntry $r) => $r->pdoDetail?->notes)
+                        ->filter()
+                        ->unique()
+                        ->values();
+
                     $references = $group
                         ->map(fn (RealizationEntry $r) => $r->proof_number)
                         ->filter()
@@ -259,6 +271,7 @@ class CashBookQueryService
                         'type'        => 'pengeluaran',
                         'reference'   => $references->isNotEmpty() ? $references->implode("\n") : null,
                         'description' => $lines->implode("\n"),
+                        'notes'       => $notesLines->isNotEmpty() ? $notesLines->implode("\n") : null,
                         'amount'      => $amount,
                         'created_at'  => $group->min('created_at'),
                     ];

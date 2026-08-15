@@ -352,7 +352,12 @@ export function PdoDetailPage() {
                                           )}
                                         </div>
                                       </td>
-                                      <td className="px-3 py-2.5 text-sm text-muted">{d.description}</td>
+                                      <td className="px-3 py-2.5 text-sm text-muted">
+                                        <div>{d.description}</div>
+                                        {d.notes && (
+                                          <div className="italic text-muted/70 text-xs mt-0.5">{d.notes}</div>
+                                        )}
+                                      </td>
                                       <td className="px-3 py-2.5 text-sm">{d.quantity ?? '—'}</td>
                                       <td className="px-3 py-2.5 text-sm">{d.unit ?? '—'}</td>
                                       <td className="px-3 py-2.5 text-sm">{d.rate ? fmt(d.rate) : '—'}</td>
@@ -449,7 +454,12 @@ export function PdoDetailPage() {
                                     </div>
                                   )}
                                 </td>
-                                <td className="px-3 py-2.5 text-sm text-muted">{d.description}</td>
+                                <td className="px-3 py-2.5 text-sm text-muted">
+                                  <div>{d.description}</div>
+                                  {d.notes && (
+                                    <div className="italic text-muted/70 text-xs mt-0.5">{d.notes}</div>
+                                  )}
+                                </td>
                                 <td className="px-3 py-2.5 text-sm">{d.quantity ?? '—'}</td>
                                 <td className="px-3 py-2.5 text-sm">{d.unit ?? '—'}</td>
                                 <td className="px-3 py-2.5 text-sm">{d.rate ? fmt(d.rate) : '—'}</td>
