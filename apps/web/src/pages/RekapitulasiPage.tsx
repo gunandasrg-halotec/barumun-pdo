@@ -3,7 +3,7 @@ import { useForm, Controller } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { api } from '@/lib/api'
+import { api, getApiErrorMessage } from '@/lib/api'
 import { Button } from '@/components/ui/Button'
 import { Modal } from '@/components/ui/Modal'
 import { EmptyState } from '@/components/ui/EmptyState'
@@ -11,10 +11,14 @@ import { SearchableSelect } from '@/components/ui/SearchableSelect'
 import { useRecapData } from '@/hooks/useRecapData'
 import { useCashBookData } from '@/hooks/useCashBookData'
 import { RecapTable } from '@/components/recap/RecapTable'
+import { VoucherListPanel } from '@/components/pettycash/VoucherListPanel'
+import { VoucherFormModal } from '@/components/pettycash/VoucherFormModal'
+import { VoucherScanUploadModal } from '@/components/pettycash/VoucherScanUploadModal'
 import { useAuthStore } from '@/store/auth.store'
 import { useToastStore } from '@/store/toast.store'
 import { fmt, fmtDate } from '@/lib/format'
 import type { ApiResponse, PlantationUnit, PdoHeader, RealizationEntry, AuthUser } from '@/types'
+import type { PettyCashVoucher } from '@/types/pettycash'
 import { Download, Search, Plus, Upload } from 'lucide-react'
 import { useVehicles } from '@/hooks/useMasterData'
 import { DateRangePickerButton } from '@/components/ui/DateRangePickerButton'
@@ -58,7 +62,7 @@ const realizationSchema = z.object({
 })
 type RealizationForm = z.infer<typeof realizationSchema>
 
-interface RealizationAvailableItem {
+export interface RealizationAvailableItem {
   pdo_detail_id:  string
   expense_item:   {
     id: string; code: string; name: string
@@ -101,8 +105,12 @@ export function RekapitulasiPage() {
       : 'all'
   const kantongLocked = kebunRoles.includes(role) || purchasingRoles.includes(role)
 
-  // ── Tab: Rekap Buku Kas (per-item, mengikuti PDO) vs Buku Kas Harian (kronologis) ──
-  const [activeTab, setActiveTab] = useState<'rekap' | 'harian'>('rekap')
+  // KERANI = satu-satunya role yang mengelola Petty Cash Voucher (kantong kebun tunai).
+  const isKerani = role === 'KERANI'
+
+  // ── Tab: Rekap Buku Kas (per-item, mengikuti PDO) vs Buku Kas Harian (kronologis)
+  // vs Petty Cash Voucher (khusus KERANI) ──
+  const [activeTab, setActiveTab] = useState<'rekap' | 'harian' | 'voucher'>('rekap')
 
   // ── Period / unit filter state ───────────────────────────────────────────
   const [year,              setYear]              = useState(currentYear)
@@ -135,6 +143,10 @@ export function RekapitulasiPage() {
   // realisasi aggregate drill-down modal (klik cell "Realisasi" di KPI header)
   const [aggregateGroup, setAggregateGroup] = useState<'kebun' | 'pribadi' | null>(null)
   const [aggregatePage, setAggregatePage] = useState(1)
+  // Petty Cash Voucher
+  const [voucherFormId, setVoucherFormId] = useState<string | 'new' | null>(null)
+  const [voucherScanTarget, setVoucherScanTarget] = useState<PettyCashVoucher | null>(null)
+  const [printingId, setPrintingId] = useState<string | null>(null)
 
   const PAGE_SIZE = 20
 
@@ -216,19 +228,107 @@ export function RekapitulasiPage() {
       )
       return res.data.data
     },
-    enabled: !!activePdo?.id && inputOpen,
+    enabled: !!activePdo?.id && (inputOpen || !!voucherFormId),
   })
   const availableItems     = availableData?.items ?? []
   const remainingKantong   = availableData?.remaining_kantong ?? null
   const totalKantong       = availableData?.total_kantong ?? null
+
+  // ── Petty Cash Voucher: daftar voucher untuk PDO aktif ───────────────────
+  const vouchersQuery = useQuery({
+    queryKey: ['petty-cash-vouchers', activePdo?.id],
+    queryFn: async () => {
+      const res = await api.get<ApiResponse<PettyCashVoucher[]>>(`/pdo/${activePdo!.id}/petty-cash-vouchers`)
+      return res.data.data
+    },
+    enabled: !!activePdo?.id && isKerani && (activeTab === 'voucher' || !!voucherFormId),
+  })
+  const draftVoucherCount = vouchersQuery.data?.filter((v) => v.status === 'draft').length ?? 0
+
+  // Kendaraan untuk baris voucher — dibutuhkan lintas baris (tidak per-item
+  // tunggal seperti form Realisasi Transfer), jadi selalu diambil penuh saat
+  // form voucher terbuka.
+  const { data: eligibleVehiclesForVoucher } = useVehicles(voucherFormId ? { is_active: true } : undefined)
+
+  const editingVoucher = voucherFormId && voucherFormId !== 'new'
+    ? vouchersQuery.data?.find((v) => v.id === voucherFormId) ?? null
+    : null
+
+  const invalidateVoucherQueries = () => {
+    qc.invalidateQueries({ queryKey: ['petty-cash-vouchers'] })
+    qc.invalidateQueries({ queryKey: ['realizations-available'] })
+    qc.invalidateQueries({ queryKey: ['recap'] })
+    qc.invalidateQueries({ queryKey: ['realizations'] })
+    qc.invalidateQueries({ queryKey: ['realisasi-detail'] })
+    qc.invalidateQueries({ queryKey: ['realisasi-aggregate'] })
+    qc.invalidateQueries({ queryKey: ['realizations-for-pdo-sequence'] })
+    qc.invalidateQueries({ queryKey: ['cashbook'] })
+  }
+
+  const deleteVoucher = useMutation({
+    mutationFn: (v: PettyCashVoucher) => api.delete(`/petty-cash-vouchers/${v.id}`),
+    onSuccess: () => {
+      toast('Voucher berhasil dihapus')
+      invalidateVoucherQueries()
+    },
+    onError: (error) => toast(getApiErrorMessage(error), 'error'),
+  })
+
+  const handlePrintVoucher = async (voucher: PettyCashVoucher) => {
+    setPrintingId(voucher.id)
+    try {
+      const res = await api.get(`/petty-cash-vouchers/${voucher.id}/print`, { responseType: 'blob' })
+      const url = URL.createObjectURL(new Blob([res.data], { type: 'application/pdf' }))
+      const a   = document.createElement('a')
+      a.href    = url
+      a.download = `PCV-${voucher.voucher_number.replace(/\//g, '-')}.pdf`
+      a.click()
+      URL.revokeObjectURL(url)
+    } catch (error) {
+      // responseType 'blob' berarti body error JSON juga sampai sebagai Blob —
+      // getApiErrorMessage tidak bisa membacanya langsung, jadi di-parse manual.
+      let message = 'Gagal mencetak voucher.'
+      const blob = (error as { response?: { data?: Blob } })?.response?.data
+      if (blob instanceof Blob) {
+        try {
+          const parsed = JSON.parse(await blob.text())
+          message = parsed?.error?.message ?? message
+        } catch { /* biarkan pesan default */ }
+      }
+      toast(message, 'error')
+    } finally {
+      setPrintingId(null)
+    }
+  }
+
+  const handleViewVoucherScan = async (voucherId: string) => {
+    // Buka tab kosong DULU, secara sinkron di dalam click handler — window.open()
+    // yang dipanggil SETELAH await fetch selesai kehilangan "user activation" dan
+    // sering di-blokir popup blocker (terutama Safari). Set location-nya belakangan
+    // begitu blob URL siap. Dipakai baik dari daftar voucher maupun chip keterlacakan
+    // di modal Detail Realisasi dan baris Buku Kas Harian (§3g).
+    const win = window.open('', '_blank')
+    try {
+      const res = await api.get(`/petty-cash-vouchers/${voucherId}/scan`, { responseType: 'blob' })
+      const url = URL.createObjectURL(res.data)
+      if (win) win.location.href = url
+      else window.open(url, '_blank') // fallback kalau tab kosong tetap diblokir
+      setTimeout(() => URL.revokeObjectURL(url), 60_000)
+    } catch {
+      win?.close()
+      toast('Gagal membuka scan.', 'error')
+    }
+  }
 
   // ── Input Realisasi form ─────────────────────────────────────────────────
   const { register, control, handleSubmit, watch, reset, setValue, formState: { errors } } = useForm<RealizationForm>({
     resolver: zodResolver(realizationSchema),
     defaultValues: {
       transaction_date: new Date().toISOString().split('T')[0],
-      payment_method:   isPribadiVendorRole(user ?? undefined) ? 'transfer' : 'tunai',
-      funding_source:   isPribadiVendorRole(user ?? undefined) ? 'rekening_utama' : 'kas_kebun',
+      // Realisasi tunai kas kebun sekarang wajib lewat Petty Cash Voucher (BR-PCV-001) —
+      // form langsung ini defaultnya transfer untuk semua role.
+      payment_method:   'transfer',
+      funding_source:   isPribadiVendorRole(user ?? undefined) ? 'rekening_utama' : 'rekening_kebun',
     },
   })
 
@@ -296,8 +396,8 @@ export function RekapitulasiPage() {
     setApiError(null)
     reset({
       transaction_date: new Date().toISOString().split('T')[0],
-      payment_method:   isPribadiVendorRole(user ?? undefined) ? 'transfer' : 'tunai',
-      funding_source:   isPribadiVendorRole(user ?? undefined) ? 'rekening_utama' : 'kas_kebun',
+      payment_method:   'transfer',
+      funding_source:   isPribadiVendorRole(user ?? undefined) ? 'rekening_utama' : 'rekening_kebun',
     })
   }
 
@@ -323,7 +423,12 @@ export function RekapitulasiPage() {
     setValue('funding_source', selectedPaymentMethod === 'transfer' ? 'rekening_kebun' : 'kas_kebun')
   }, [user, selectedPaymentMethod, setValue, isFundReturnSelected])
 
-  const availablePaymentMethods = isPribadiVendorRole(user ?? undefined) ? ['transfer'] : ['tunai', 'transfer']
+  // BR-PCV-001: realisasi tunai kas kebun wajib lewat Petty Cash Voucher — form
+  // langsung ini hanya menawarkan Transfer, KECUALI item pengembalian sisa dana
+  // bulan lalu yang dikecualikan dari voucher (keputusan #8) dan tetap boleh tunai.
+  const availablePaymentMethods = isPribadiVendorRole(user ?? undefined)
+    ? ['transfer']
+    : (isFundReturnSelected ? ['tunai', 'transfer'] : ['transfer'])
 
   const saveRealization = useMutation({
     mutationFn: (data: RealizationForm) => {
@@ -482,9 +587,20 @@ export function RekapitulasiPage() {
         </div>
         <div className="flex gap-2">
           {activePdo?.status === 'final' && (
-            <Button onClick={() => setInputOpen(true)}>
-              <Plus className="w-4 h-4" /> Input Realisasi
-            </Button>
+            isKerani ? (
+              <>
+                <Button onClick={() => setVoucherFormId('new')}>
+                  <Plus className="w-4 h-4" /> Voucher Kas Kecil
+                </Button>
+                <Button variant="secondary" onClick={() => setInputOpen(true)}>
+                  <Plus className="w-4 h-4" /> Realisasi Transfer
+                </Button>
+              </>
+            ) : (
+              <Button onClick={() => setInputOpen(true)}>
+                <Plus className="w-4 h-4" /> Input Realisasi
+              </Button>
+            )
           )}
           {resolvedUnitId && (
             <Button variant="secondary" size="sm" loading={excelLoading} onClick={downloadExcel}>
@@ -499,18 +615,24 @@ export function RekapitulasiPage() {
         {([
           { key: 'rekap',  label: 'Rekap Buku Kas' },
           { key: 'harian', label: 'Buku Kas Harian' },
-        ] as const).map((t) => (
+          ...(isKerani ? [{ key: 'voucher', label: 'Petty Cash Voucher' }] : []),
+        ] as Array<{ key: 'rekap' | 'harian' | 'voucher'; label: string }>).map((t) => (
           <button
             key={t.key}
             type="button"
             onClick={() => setActiveTab(t.key)}
-            className={`px-4 py-2 text-sm font-bold border-b-2 transition-colors ${
+            className={`px-4 py-2 text-sm font-bold border-b-2 transition-colors inline-flex items-center gap-1.5 ${
               activeTab === t.key
                 ? 'border-[#1D9E75] text-[#0F6E56]'
                 : 'border-transparent text-muted hover:text-ink'
             }`}
           >
             {t.label}
+            {t.key === 'voucher' && draftVoucherCount > 0 && (
+              <span className="inline-flex items-center justify-center min-w-[18px] h-[18px] px-1 rounded-full bg-amber-100 text-amber-700 text-[10px] font-bold">
+                {draftVoucherCount}
+              </span>
+            )}
           </button>
         ))}
       </div>
@@ -759,6 +881,21 @@ export function RekapitulasiPage() {
                       {r.notes && (
                         <div className="italic text-muted/70 text-xs mt-0.5">{r.notes}</div>
                       )}
+                      {r.vouchers && r.vouchers.length > 0 && (
+                        <div className="flex flex-wrap gap-1 mt-1">
+                          {r.vouchers.map((v) => (
+                            <button
+                              key={v.id}
+                              type="button"
+                              onClick={() => handleViewVoucherScan(v.id)}
+                              className="text-[10px] font-mono px-1.5 py-0.5 bg-[#f7faf7] border border-line rounded hover:bg-mint hover:border-green transition-colors"
+                              title="Lihat scan voucher"
+                            >
+                              {v.voucher_number}
+                            </button>
+                          ))}
+                        </div>
+                      )}
                     </td>
                     <td className="px-3 py-2 text-right tabular-nums text-[#0F6E56] font-bold">
                       {r.type === 'penerimaan' ? fmt(r.amount) : ''}
@@ -774,6 +911,44 @@ export function RekapitulasiPage() {
           </div>
         </div>
       ))}
+
+      {/* Content — Tab: Petty Cash Voucher */}
+      {activeTab === 'voucher' && (
+        <VoucherListPanel
+          vouchers={vouchersQuery.data}
+          isLoading={vouchersQuery.isFetching}
+          canManage={isKerani}
+          printingId={printingId}
+          onEdit={(v) => setVoucherFormId(v.id)}
+          onDelete={(v) => {
+            if (window.confirm(`Hapus voucher ${v.voucher_number}? Tindakan ini tidak bisa dibatalkan.`)) {
+              deleteVoucher.mutate(v)
+            }
+          }}
+          onUploadScan={(v) => setVoucherScanTarget(v)}
+          onPrint={handlePrintVoucher}
+          onViewScan={handleViewVoucherScan}
+        />
+      )}
+
+      {/* ── Modal Buat/Edit Petty Cash Voucher ─────────────────────────────── */}
+      <VoucherFormModal
+        open={!!voucherFormId}
+        onClose={() => setVoucherFormId(null)}
+        pdo={activePdo ? { id: activePdo.id, pdo_number: activePdo.pdo_number } : undefined}
+        voucher={editingVoucher}
+        availableItems={availableItems}
+        remainingKantong={remainingKantong}
+        eligibleVehicles={eligibleVehiclesForVoucher}
+        onSaved={invalidateVoucherQueries}
+      />
+
+      {/* ── Modal Upload Scan Voucher ───────────────────────────────────────── */}
+      <VoucherScanUploadModal
+        voucher={voucherScanTarget}
+        onClose={() => setVoucherScanTarget(null)}
+        onUploaded={invalidateVoucherQueries}
+      />
 
       {/* ── Modal Input/Edit Realisasi ───────────────────────────────────────── */}
       <Modal open={inputOpen} onClose={closeInputModal} title={editingEntry ? 'Edit Realisasi Biaya' : 'Input Realisasi Biaya'}>
@@ -857,6 +1032,19 @@ export function RekapitulasiPage() {
                 {errors.amount && <p className="field-error">{errors.amount.message}</p>}
               </div>
             </div>
+
+            {isKerani && !isFundReturnSelected && !editingEntry && (
+              <div className="p-2.5 bg-[#f7faf7] border border-line rounded text-xs text-muted">
+                Realisasi tunai dicatat lewat Petty Cash Voucher.{' '}
+                <button
+                  type="button"
+                  className="font-bold text-[#0F6E56] hover:underline"
+                  onClick={() => { closeInputModal(); setActiveTab('voucher'); setVoucherFormId('new') }}
+                >
+                  Buat voucher →
+                </button>
+              </div>
+            )}
 
             <div className="grid grid-cols-1 desk:grid-cols-2 gap-3">
               <div>
@@ -976,7 +1164,19 @@ export function RekapitulasiPage() {
                 <tbody>
                   {detailEntries.slice((detailPage - 1) * PAGE_SIZE, detailPage * PAGE_SIZE).map((r) => (
                     <tr key={r.id} className="border-t border-line hover:bg-[#fbfdfb]">
-                      <td className="px-3 py-2 font-bold">{r.proof_number}</td>
+                      <td className="px-3 py-2 font-bold">
+                        {r.proof_number}
+                        {r.petty_cash_voucher && (
+                          <button
+                            type="button"
+                            onClick={() => handleViewVoucherScan(r.petty_cash_voucher!.id)}
+                            className="block mt-0.5 text-[10px] font-mono font-normal px-1.5 py-0.5 bg-[#f7faf7] border border-line rounded hover:bg-mint hover:border-green transition-colors"
+                            title="Lihat scan voucher"
+                          >
+                            {r.petty_cash_voucher.voucher_number}
+                          </button>
+                        )}
+                      </td>
                       <td className="px-3 py-2">{fmtDate(r.transaction_date)}</td>
                       <td className="px-3 py-2 font-bold text-right">{fmt(r.amount)}</td>
                       <td className="px-3 py-2">{PAYMENT_LABEL[r.payment_method]}</td>
@@ -1048,7 +1248,19 @@ export function RekapitulasiPage() {
                 <tbody>
                   {aggregateEntries.slice((aggregatePage - 1) * PAGE_SIZE, aggregatePage * PAGE_SIZE).map((r) => (
                     <tr key={r.id} className="border-t border-line hover:bg-[#fbfdfb]">
-                      <td className="px-3 py-2 font-bold">{r.proof_number}</td>
+                      <td className="px-3 py-2 font-bold">
+                        {r.proof_number}
+                        {r.petty_cash_voucher && (
+                          <button
+                            type="button"
+                            onClick={() => handleViewVoucherScan(r.petty_cash_voucher!.id)}
+                            className="block mt-0.5 text-[10px] font-mono font-normal px-1.5 py-0.5 bg-[#f7faf7] border border-line rounded hover:bg-mint hover:border-green transition-colors"
+                            title="Lihat scan voucher"
+                          >
+                            {r.petty_cash_voucher.voucher_number}
+                          </button>
+                        )}
+                      </td>
                       <td className="px-3 py-2">{fmtDate(r.transaction_date)}</td>
                       <td className="px-3 py-2">{r.pdo_detail?.expense_item?.name ?? '—'}</td>
                       <td className="px-3 py-2 font-bold text-right">{fmt(r.amount)}</td>

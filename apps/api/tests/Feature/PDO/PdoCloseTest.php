@@ -3,6 +3,7 @@
 namespace Tests\Feature\PDO;
 
 use App\Models\PdoHeader;
+use App\Models\PettyCashVoucher;
 use App\Models\Role;
 use App\Models\User;
 use Carbon\Carbon;
@@ -76,6 +77,61 @@ class PdoCloseTest extends TestCase
 
         $response->assertStatus(422)
             ->assertJsonPath('error.code', 'PDO_NOT_FINAL');
+    }
+
+    // ── Petty Cash Voucher draft: peringatan sebelum tutup PDO ────────────────
+
+    public function test_close_with_draft_voucher_requires_acknowledgement(): void
+    {
+        PettyCashVoucher::factory()->create([
+            'pdo_header_id' => $this->finalPdo->id,
+            'voucher_number' => "PCV/{$this->finalPdo->pdo_number}/1",
+            'paid_to'       => 'Budi Santoso',
+            'total_amount'  => 250000,
+            'created_by'    => $this->kerani->id,
+        ]);
+
+        Sanctum::actingAs($this->manajer);
+
+        $response = $this->postJson("/api/v1/pdo/{$this->finalPdo->id}/close", [
+            'closed_date' => Carbon::today()->toDateString(),
+        ]);
+
+        $response->assertStatus(422)
+            ->assertJsonPath('error.code', 'PDO_HAS_DRAFT_VOUCHERS')
+            ->assertJsonCount(1, 'error.vouchers')
+            ->assertJsonPath('error.vouchers.0.paid_to', 'Budi Santoso')
+            ->assertJsonPath('error.vouchers.0.total', 250000);
+
+        $this->assertDatabaseHas('pdo_headers', ['id' => $this->finalPdo->id, 'status' => PdoHeader::STATUS_FINAL]);
+    }
+
+    public function test_close_with_draft_voucher_succeeds_after_acknowledgement(): void
+    {
+        PettyCashVoucher::factory()->create([
+            'pdo_header_id' => $this->finalPdo->id,
+            'created_by'    => $this->kerani->id,
+        ]);
+
+        Sanctum::actingAs($this->manajer);
+
+        $response = $this->postJson("/api/v1/pdo/{$this->finalPdo->id}/close", [
+            'closed_date'                => Carbon::today()->toDateString(),
+            'acknowledge_draft_vouchers' => true,
+        ]);
+
+        $response->assertStatus(200)->assertJsonPath('data.status', 'closed');
+    }
+
+    public function test_close_without_draft_voucher_does_not_require_acknowledgement(): void
+    {
+        Sanctum::actingAs($this->manajer);
+
+        $response = $this->postJson("/api/v1/pdo/{$this->finalPdo->id}/close", [
+            'closed_date' => Carbon::today()->toDateString(),
+        ]);
+
+        $response->assertStatus(200)->assertJsonPath('data.status', 'closed');
     }
 
     // ── BR-CLOSE-003: Guard write pada PDO closed ─────────────────────────────

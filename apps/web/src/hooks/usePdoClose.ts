@@ -4,8 +4,9 @@ import { useToastStore } from '@/store/toast.store'
 import type { ApiResponse } from '@/types'
 
 interface ClosePayload {
-  closed_date:    string
-  closure_notes?: string
+  closed_date:               string
+  closure_notes?:            string
+  acknowledge_draft_vouchers?: boolean
 }
 
 interface CloseResult {
@@ -32,6 +33,11 @@ export function usePdoClose(pdoId: string, options?: { onSuccess?: () => void })
       options?.onSuccess?.()
     },
     onError: (err) => {
+      // PDO_HAS_DRAFT_VOUCHERS bukan error biasa — ClosePdoModal menangkapnya sendiri
+      // (via onError per-panggilan di mutate()) untuk menampilkan dialog konfirmasi
+      // berisi daftar voucher draft, bukan toast generik.
+      const code = (err as { response?: { data?: { error?: { code?: string } } } })?.response?.data?.error?.code
+      if (code === 'PDO_HAS_DRAFT_VOUCHERS') return
       toast(getApiErrorMessage(err), 'error')
     },
   })

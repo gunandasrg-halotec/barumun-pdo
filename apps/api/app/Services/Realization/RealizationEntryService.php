@@ -11,6 +11,7 @@ use App\Models\RealizationEntry;
 use App\Models\TransferEntry;
 use App\Models\User;
 use App\Services\Report\CashBookQueryService;
+use App\Services\Report\DeductionNetting;
 use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Support\Facades\DB;
 
@@ -52,7 +53,7 @@ class RealizationEntryService
      */
     public function list(User $actor, array $filters = []): Collection
     {
-        return RealizationEntry::with(['pdoDetail.pdoHeader', 'pdoDetail.expenseItem.subcategory.category', 'recorder', 'attachments', 'vehicle'])
+        return RealizationEntry::with(['pdoDetail.pdoHeader', 'pdoDetail.expenseItem.subcategory.category', 'recorder', 'attachments', 'vehicle', 'pettyCashVoucherLine.pettyCashVoucher'])
             ->whereHas('pdoDetail.pdoHeader', fn ($q) => $q->where('company_id', $actor->company_id))
             ->when($actor->plantation_unit_id, fn ($q) => $q->whereHas('pdoDetail.pdoHeader', fn ($qq) => $qq->where('plantation_unit_id', $actor->plantation_unit_id)))
             ->when(!empty($filters['unit_ids']), fn ($q) => $q->whereHas('pdoDetail.pdoHeader', fn ($qq) => $qq->whereIn('plantation_unit_id', $filters['unit_ids'])))
@@ -308,33 +309,59 @@ class RealizationEntryService
      * RealizationEntry), sehingga tidak pernah ikut ter-sum di query
      * RealizationEntry di atas — perlu ditambahkan manual di sini.
      *
-     * ⚠️ SENGAJA TIDAK DI-CLAMP, beda dengan halaman pelaporan (Rekap, Buku Kas,
-     * Dashboard, Daftar PDO) yang memakai DeductionNetting::effectiveRealization().
-     * Ini PLAFON INPUT ("Sisa Dana" di Form Realisasi), bukan posisi kas: kerani
-     * harus bisa mencatat realisasi PENUH sesuai anggaran, termasuk bagian yang
-     * dananya berasal dari panjar periode lalu. Contoh PDO Agustus Sosa — transfer
-     * bersih 4.394.864 (sudah dipotong panjar 4.500.000) tapi belanja riilnya
-     * 8.894.864; kalau plafon ikut di-clamp, kerani terblokir di 4.394.864.
-     * Karena itu angka "Sisa Dana" memang berbeda dari "Saldo" di Rekap, dan itu
-     * BUKAN bug — begitu realisasi penuh tercatat, Saldo di Rekap otomatis jadi 0.
-     * Sudah dikonfirmasi pemilik produk; jangan "disamakan" tanpa membahas ulang.
+     * Netting dilakukan PER SUB-KATEGORI dan di-clamp 0, skop yang sama persis
+     * dengan RecapQueryService dan CashBookQueryService::buildExpenseRows() — supaya
+     * "Sisa Dana" di form Realisasi/Voucher, "Saldo" di Rekap, dan saldo akhir di
+     * Buku Kas Harian selalu menghasilkan angka yang sama.
+     *
+     * Panjar hanya boleh dinetkan terhadap realisasi sub-kategorinya sendiri: secara
+     * logika total biaya satu sub-kategori pasti akhirnya >= panjarnya sendiri, jadi
+     * kredit yang belum terpakai hanya tertahan sampai kerani melengkapi realisasi
+     * sub-kategori itu — bukan ditambal surplus sub-kategori lain (yang akan
+     * mengecilkan realisasi item yang tidak punya uang muka sama sekali).
+     *
+     * Clamp di level sub-kategori TIDAK memblokir kerani mencatat realisasi penuh:
+     * begitu realisasi sub-kategori yang punya panjar mulai masuk, kreditnya ikut
+     * terlepas sebesar realisasi itu, sehingga plafon otomatis melebar mengikuti
+     * kebutuhan. Tanpa clamp per sub-kategori, hasilnya bisa negatif dan membuat
+     * "Sisa Dana" tampil lebih besar dari total dana yang benar-benar ditransfer.
      */
     public function totalRealizedForGroup(PdoHeader $pdo, string $group): int
     {
-        $trueRealized = (int) RealizationEntry::whereHas('pdoDetail', fn ($q) => $q->where('pdo_header_id', $pdo->id))
-            ->where('settlement_group', $group)
-            ->sum('amount');
-
         $destinations = $group === RealizationEntry::SETTLEMENT_KEBUN
             ? ['rek_kebun']
             : ['pribadi', 'vendor'];
 
-        $deductionAdjustment = (int) TransferEntry::whereIn('transfer_destination', $destinations)
-            ->whereHas('pdoDetail', fn ($q) => $q->where('pdo_header_id', $pdo->id))
-            ->whereHas('pdoDetail.expenseItem', fn ($q) => $q->where('is_deduction', true))
-            ->sum('amount'); // negatif
+        // Realisasi per sub-kategori (lewat pdo_detail → expense_item → subcategory).
+        $realizedBySub = RealizationEntry::query()
+            ->join('pdo_details', 'pdo_details.id', '=', 'realization_entries.pdo_detail_id')
+            ->join('expense_items', 'expense_items.id', '=', 'pdo_details.expense_item_id')
+            ->where('pdo_details.pdo_header_id', $pdo->id)
+            ->where('realization_entries.settlement_group', $group)
+            ->groupBy('expense_items.subcategory_id')
+            ->selectRaw('expense_items.subcategory_id AS sub_id, SUM(realization_entries.amount) AS total')
+            ->pluck('total', 'sub_id');
 
-        return $trueRealized + $deductionAdjustment;
+        // Potongan per sub-kategori — TransferEntry negatif, bukan RealizationEntry.
+        $deductionBySub = TransferEntry::query()
+            ->join('pdo_details', 'pdo_details.id', '=', 'transfer_entries.pdo_detail_id')
+            ->join('expense_items', 'expense_items.id', '=', 'pdo_details.expense_item_id')
+            ->where('pdo_details.pdo_header_id', $pdo->id)
+            ->whereIn('transfer_entries.transfer_destination', $destinations)
+            ->where('expense_items.is_deduction', true)
+            ->groupBy('expense_items.subcategory_id')
+            ->selectRaw('expense_items.subcategory_id AS sub_id, SUM(transfer_entries.amount) AS total')
+            ->pluck('total', 'sub_id'); // negatif
+
+        $total = 0;
+        foreach ($realizedBySub->keys()->merge($deductionBySub->keys())->unique() as $subId) {
+            $total += DeductionNetting::effectiveRealization(
+                (int) ($realizedBySub[$subId] ?? 0),
+                (int) ($deductionBySub[$subId] ?? 0),
+            );
+        }
+
+        return $total;
     }
 
     /**
@@ -381,7 +408,10 @@ class RealizationEntryService
         // PDO Tambahan "Gunakan Kas Kebun": item ini tidak punya dana transfer dari HO,
         // jadi funding_source dipaksa kas_kebun terlepas dari pilihan di request — dicek
         // sebelum BR-REAL-004 supaya larangan role tetap berlaku untuk nilai efektifnya.
-        if ($detail && $detail->funding_option === PdoSupplementaryHeader::FUNDING_KAS_KEBUN) {
+        // Dipakai lagi di bawah untuk mengecualikan item ini dari plafon BR-REAL-002.
+        $isKasKebunFunded = $detail && $detail->funding_option === PdoSupplementaryHeader::FUNDING_KAS_KEBUN;
+
+        if ($isKasKebunFunded) {
             $data['funding_source'] = RealizationEntry::FUNDING_KAS_KEBUN;
         }
 
@@ -400,6 +430,26 @@ class RealizationEntryService
                 'success' => false,
                 'error'   => ['code' => 'REALIZATION_ROLE_FORBIDDEN', 'message' => 'Role Anda tidak berhak mencatat realisasi.'],
             ], 403));
+        }
+
+        // BR-PCV-001: realisasi kantong kebun dengan sumber dana kas_kebun (tunai) WAJIB
+        // lewat Petty Cash Voucher. Pengembalian sisa dana bulan lalu dikecualikan
+        // (voucher tidak menampung item ini — lihat FUND_RETURN_NOT_IN_VOUCHER di
+        // PettyCashVoucherService). Flag _from_petty_cash_voucher tidak bisa dipalsukan
+        // dari HTTP: controller memanggil store($request->validated()) dan validated()
+        // hanya mengembalikan key yang dideklarasikan di StoreRealizationEntryRequest::rules()
+        // — key ini sengaja tidak ditambahkan ke sana.
+        if ($group === RealizationEntry::SETTLEMENT_KEBUN
+            && ($data['funding_source'] ?? '') === RealizationEntry::FUNDING_KAS_KEBUN
+            && ! $isFundReturn
+            && empty($data['_from_petty_cash_voucher'])) {
+            abort(response()->json([
+                'success' => false,
+                'error'   => [
+                    'code'    => 'REALIZATION_REQUIRES_VOUCHER',
+                    'message' => 'Realisasi tunai dari Kas Kebun harus dicatat lewat Petty Cash Voucher. Buat voucher, cetak, minta tanda tangan, lalu unggah scan-nya.',
+                ],
+            ], 422));
         }
 
         // Item potongan tidak bisa direalisasi
@@ -427,7 +477,7 @@ class RealizationEntryService
             }
         }
 
-        return DB::transaction(function () use ($detail, $data, $actor, $group, $pdo, $isFundReturn) {
+        return DB::transaction(function () use ($detail, $data, $actor, $group, $pdo, $isFundReturn, $isKasKebunFunded) {
             // Lock PDO header row untuk menyerialkan pembuatan/validasi proof_number
             // dalam PDO ini — mencegah dua request bersamaan menghasilkan nomor yang
             // sama (baik lewat auto-generate maupun input manual yang kebetulan bentrok).
@@ -524,19 +574,38 @@ class RealizationEntryService
 
                 // BR-REAL-002: total realisasi kantong actor (PDO-level) tidak boleh melebihi
                 // total transfer ke kantong tersebut (saldo kas kebun / saldo pribadi-vendor).
-                $totalKantong       = $this->totalKantongForGroup($pdo, $group);
-                $totalRealizedGroup = $this->totalRealizedForGroup($pdo, $group);
-                $newGroupTotal = $totalRealizedGroup + $data['amount'];
+                //
+                // DIKECUALIKAN untuk item PDO Tambahan "Gunakan Kas Kebun": dananya berasal
+                // dari saldo kas kebun yang SUDAH ada, bukan dari transfer PDO ini, dan
+                // TransferEntry penandanya bernominal 0 (lihat
+                // PdoSupplementaryApprovalService::mergeIntoParent()). Tanpa pengecualian ini
+                // item tsb mustahil direalisasikan di PDO yang tidak punya transfer lain —
+                // plafonnya 0.
+                //
+                // Kecukupan dananya sudah divalidasi DI DEPAN saat PDOT dibuat: sistem
+                // menolak pengajuan yang melebihi saldo kas kebun, dan kerani diberi tahu
+                // hanya boleh memakai jalur ini bila yakin saldo tsb memang sisa — bukan
+                // dana yang sudah terikat untuk item PDO existing yang belum direalisasi
+                // (jumlah terikat itu tidak bisa dihitung sistem, karena realisasinya
+                // memang belum ada).
+                //
+                // Realisasinya TETAP dihitung di totalRealizedForGroup() — uangnya keluar
+                // dari pot kas yang sama, jadi memang benar mengurangi sisa dana item lain.
+                if (! $isKasKebunFunded) {
+                    $totalKantong       = $this->totalKantongForGroup($pdo, $group);
+                    $totalRealizedGroup = $this->totalRealizedForGroup($pdo, $group);
+                    $newGroupTotal = $totalRealizedGroup + $data['amount'];
 
-                if ($newGroupTotal > $totalKantong) {
-                    $sisa = $totalKantong - $totalRealizedGroup;
-                    abort(response()->json([
-                        'success' => false,
-                        'error'   => [
-                            'code'    => 'REALIZATION_EXCEEDS_KANTONG',
-                            'message' => "Total realisasi kantong ini (Rp " . number_format($newGroupTotal, 0, ',', '.') . ") melebihi saldo kantong (Rp " . number_format($totalKantong, 0, ',', '.') . "). Sisa: Rp " . number_format($sisa, 0, ',', '.') . ".",
-                        ],
-                    ], 422));
+                    if ($newGroupTotal > $totalKantong) {
+                        $sisa = $totalKantong - $totalRealizedGroup;
+                        abort(response()->json([
+                            'success' => false,
+                            'error'   => [
+                                'code'    => 'REALIZATION_EXCEEDS_KANTONG',
+                                'message' => "Total realisasi kantong ini (Rp " . number_format($newGroupTotal, 0, ',', '.') . ") melebihi saldo kantong (Rp " . number_format($totalKantong, 0, ',', '.') . "). Sisa: Rp " . number_format($sisa, 0, ',', '.') . ".",
+                            ],
+                        ], 422));
+                    }
                 }
             }
 
@@ -617,6 +686,21 @@ class RealizationEntryService
             ], 403));
         }
 
+        // Realisasi hasil Petty Cash Voucher yang sudah posted: jumlah terkunci (sudah
+        // tercetak di kertas bertanda tangan), tapi penjelasan/tanggal masih boleh
+        // diperbaiki (keputusan produk #11).
+        if ($entry->pettyCashVoucherLine?->pettyCashVoucher?->isPosted()
+            && array_key_exists('amount', $data)
+            && (int) $data['amount'] !== (int) $entry->amount) {
+            abort(response()->json([
+                'success' => false,
+                'error'   => [
+                    'code'    => 'REALIZATION_AMOUNT_LOCKED_BY_VOUCHER',
+                    'message' => 'Jumlah tidak bisa diubah karena sudah tercetak di voucher bertanda tangan. Penjelasan dan tanggal masih bisa diperbaiki.',
+                ],
+            ], 422));
+        }
+
         return DB::transaction(function () use ($entry, $data, $actor, $pdo) {
             if (isset($data['proof_number'])) {
                 $newProofNumber = trim((string) $data['proof_number']);
@@ -688,6 +772,19 @@ class RealizationEntryService
                 'success' => false,
                 'error'   => ['code' => 'REALIZATION_ROLE_FORBIDDEN', 'message' => 'Role Anda tidak berhak menghapus realisasi kantong ini.'],
             ], 403));
+        }
+
+        // Realisasi hasil Petty Cash Voucher yang sudah posted (scan ter-upload) terkunci
+        // — sudah tercetak di kertas bertanda tangan, koreksi harus lewat voucher pengganti.
+        if ($entry->pettyCashVoucherLine?->pettyCashVoucher?->isPosted()) {
+            $voucherNumber = $entry->pettyCashVoucherLine->pettyCashVoucher->voucher_number;
+            abort(response()->json([
+                'success' => false,
+                'error'   => [
+                    'code'    => 'REALIZATION_LOCKED_BY_VOUCHER',
+                    'message' => "Realisasi ini berasal dari voucher {$voucherNumber} yang sudah ditandatangani. Voucher terkunci — koreksi harus lewat voucher pengganti.",
+                ],
+            ], 422));
         }
 
         $old = $entry->toArray();

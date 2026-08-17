@@ -20,8 +20,9 @@ class PdoCloseController extends Controller
     public function close(Request $request, string $id): JsonResponse
     {
         $validated = $request->validate([
-            'closed_date'   => ['required', 'date', 'after_or_equal:today'],
-            'closure_notes' => ['nullable', 'string', 'max:1000'],
+            'closed_date'                => ['required', 'date', 'after_or_equal:today'],
+            'closure_notes'              => ['nullable', 'string', 'max:1000'],
+            'acknowledge_draft_vouchers' => ['sometimes', 'boolean'],
         ]);
 
         try {

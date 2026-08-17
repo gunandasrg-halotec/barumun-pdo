@@ -82,6 +82,7 @@ class RealizationEntryServiceTest extends TestCase
             'payment_method'   => RealizationEntry::PAYMENT_TUNAI,
             'proof_number' => 'KW-001',
             'funding_source'   => RealizationEntry::FUNDING_KAS_KEBUN,
+            '_from_petty_cash_voucher' => 'test-voucher-id',
         ], $this->kerani);
     }
 
@@ -103,6 +104,7 @@ class RealizationEntryServiceTest extends TestCase
             'payment_method'   => RealizationEntry::PAYMENT_TUNAI,
             'proof_number'     => 'KW-001',
             'funding_source'   => RealizationEntry::FUNDING_KAS_KEBUN,
+            '_from_petty_cash_voucher' => 'test-voucher-id',
         ], $this->kerani);
 
         $this->assertEquals(600000, $entry->amount);
@@ -128,6 +130,13 @@ class RealizationEntryServiceTest extends TestCase
             'plantation_unit_id' => $this->unit->id,
             'created_by'         => $this->kerani->id,
             'status'             => PdoHeader::STATUS_FINAL,
+            // Periode WAJIB dipatok: saldo awal di-seed 2026-07-01 dan transaksi
+            // di test ini bertanggal 2026-08-xx. Kalau periode dibiarkan acak dari
+            // factory (2024-2026), sesekali periodenya jatuh SETELAH Agustus 2026
+            // sehingga realisasi ikut terhitung di saldo awal (cumulativeBalanceBefore)
+            // dan terpotong dua kali — bikin test flaky.
+            'period_year'        => 2026,
+            'period_month'       => 8,
         ]);
 
         // Item A: transfer split 2 tujuan — 1.180.000 ke rek_kebun (bukan kantong staff ini)
@@ -171,6 +180,13 @@ class RealizationEntryServiceTest extends TestCase
             'plantation_unit_id' => $this->unit->id,
             'created_by'         => $this->kerani->id,
             'status'             => PdoHeader::STATUS_FINAL,
+            // Periode WAJIB dipatok: saldo awal di-seed 2026-07-01 dan transaksi
+            // di test ini bertanggal 2026-08-xx. Kalau periode dibiarkan acak dari
+            // factory (2024-2026), sesekali periodenya jatuh SETELAH Agustus 2026
+            // sehingga realisasi ikut terhitung di saldo awal (cumulativeBalanceBefore)
+            // dan terpotong dua kali — bikin test flaky.
+            'period_year'        => 2026,
+            'period_month'       => 8,
         ]);
 
         $itemA = PdoDetail::factory()->create(['pdo_header_id' => $pdo->id, 'amount' => 9626000]);
@@ -224,6 +240,7 @@ class RealizationEntryServiceTest extends TestCase
             'payment_method'   => RealizationEntry::PAYMENT_TUNAI,
             'proof_number'     => '',
             'funding_source'   => RealizationEntry::FUNDING_KAS_KEBUN,
+            '_from_petty_cash_voucher' => 'test-voucher-id',
         ], $this->kerani);
 
         $this->assertEquals("{$detail->pdoHeader->pdo_number}/{$item->code}/1", $entry->proof_number);
@@ -250,6 +267,7 @@ class RealizationEntryServiceTest extends TestCase
             'payment_method'   => RealizationEntry::PAYMENT_TUNAI,
             'proof_number'     => '',
             'funding_source'   => RealizationEntry::FUNDING_KAS_KEBUN,
+            '_from_petty_cash_voucher' => 'test-voucher-id',
         ], $this->kerani);
         $this->assertEquals("{$pdo->pdo_number}/{$item->code}/1", $entry1->proof_number);
 
@@ -260,6 +278,7 @@ class RealizationEntryServiceTest extends TestCase
             'payment_method'   => RealizationEntry::PAYMENT_TUNAI,
             'proof_number'     => '',
             'funding_source'   => RealizationEntry::FUNDING_KAS_KEBUN,
+            '_from_petty_cash_voucher' => 'test-voucher-id',
         ], $this->kerani);
         $this->assertEquals("{$pdo->pdo_number}/{$item->code}/2", $entry2->proof_number);
     }
@@ -275,6 +294,7 @@ class RealizationEntryServiceTest extends TestCase
             'payment_method'   => RealizationEntry::PAYMENT_TUNAI,
             'proof_number'     => 'KWT-CUSTOM-001',
             'funding_source'   => RealizationEntry::FUNDING_KAS_KEBUN,
+            '_from_petty_cash_voucher' => 'test-voucher-id',
         ], $this->kerani);
 
         $this->expectException(\Illuminate\Http\Exceptions\HttpResponseException::class);
@@ -286,6 +306,7 @@ class RealizationEntryServiceTest extends TestCase
             'payment_method'   => RealizationEntry::PAYMENT_TUNAI,
             'proof_number'     => 'KWT-CUSTOM-001',
             'funding_source'   => RealizationEntry::FUNDING_KAS_KEBUN,
+            '_from_petty_cash_voucher' => 'test-voucher-id',
         ], $this->kerani);
     }
 
@@ -300,6 +321,7 @@ class RealizationEntryServiceTest extends TestCase
             'payment_method'   => RealizationEntry::PAYMENT_TUNAI,
             'proof_number'     => 'KWT-UNIK-001',
             'funding_source'   => RealizationEntry::FUNDING_KAS_KEBUN,
+            '_from_petty_cash_voucher' => 'test-voucher-id',
         ], $this->kerani);
 
         $this->assertEquals('KWT-UNIK-001', $entry->proof_number);
@@ -316,6 +338,7 @@ class RealizationEntryServiceTest extends TestCase
             'payment_method'   => RealizationEntry::PAYMENT_TUNAI,
             'proof_number'     => 'KWT-A',
             'funding_source'   => RealizationEntry::FUNDING_KAS_KEBUN,
+            '_from_petty_cash_voucher' => 'test-voucher-id',
         ], $this->kerani);
 
         $entryB = $this->service->store([
@@ -325,6 +348,7 @@ class RealizationEntryServiceTest extends TestCase
             'payment_method'   => RealizationEntry::PAYMENT_TUNAI,
             'proof_number'     => 'KWT-B',
             'funding_source'   => RealizationEntry::FUNDING_KAS_KEBUN,
+            '_from_petty_cash_voucher' => 'test-voucher-id',
         ], $this->kerani);
 
         $this->expectException(\Illuminate\Http\Exceptions\HttpResponseException::class);
@@ -343,6 +367,7 @@ class RealizationEntryServiceTest extends TestCase
             'payment_method'   => RealizationEntry::PAYMENT_TUNAI,
             'proof_number'     => 'KWT-A',
             'funding_source'   => RealizationEntry::FUNDING_KAS_KEBUN,
+            '_from_petty_cash_voucher' => 'test-voucher-id',
         ], $this->kerani);
 
         $updated = $this->service->update($entry, ['proof_number' => 'KWT-A', 'amount' => 150000], $this->kerani);
@@ -454,6 +479,7 @@ class RealizationEntryServiceTest extends TestCase
             'payment_method'   => RealizationEntry::PAYMENT_TUNAI,
             'proof_number' => 'KW-999',
             'funding_source'   => RealizationEntry::FUNDING_KAS_KEBUN,
+            '_from_petty_cash_voucher' => 'test-voucher-id',
         ], $this->kerani);
 
         $this->assertDatabaseHas('audit_logs', [
@@ -504,6 +530,13 @@ class RealizationEntryServiceTest extends TestCase
             'plantation_unit_id' => $this->unit->id,
             'created_by'         => $this->kerani->id,
             'status'             => PdoHeader::STATUS_FINAL,
+            // Periode WAJIB dipatok: saldo awal di-seed 2026-07-01 dan transaksi
+            // di test ini bertanggal 2026-08-xx. Kalau periode dibiarkan acak dari
+            // factory (2024-2026), sesekali periodenya jatuh SETELAH Agustus 2026
+            // sehingga realisasi ikut terhitung di saldo awal (cumulativeBalanceBefore)
+            // dan terpotong dua kali — bikin test flaky.
+            'period_year'        => 2026,
+            'period_month'       => 8,
         ]);
         // Kantong kebun PDO ini 0 — tidak ada transfer sama sekali.
         PdoDetail::factory()->create(['pdo_header_id' => $pdo->id, 'amount' => 1000000]);
@@ -537,6 +570,13 @@ class RealizationEntryServiceTest extends TestCase
             'plantation_unit_id' => $this->unit->id,
             'created_by'         => $this->kerani->id,
             'status'             => PdoHeader::STATUS_FINAL,
+            // Periode WAJIB dipatok: saldo awal di-seed 2026-07-01 dan transaksi
+            // di test ini bertanggal 2026-08-xx. Kalau periode dibiarkan acak dari
+            // factory (2024-2026), sesekali periodenya jatuh SETELAH Agustus 2026
+            // sehingga realisasi ikut terhitung di saldo awal (cumulativeBalanceBefore)
+            // dan terpotong dua kali — bikin test flaky.
+            'period_year'        => 2026,
+            'period_month'       => 8,
         ]);
 
         $this->expectException(\Illuminate\Http\Exceptions\HttpResponseException::class);
@@ -562,6 +602,13 @@ class RealizationEntryServiceTest extends TestCase
             'plantation_unit_id' => $this->unit->id,
             'created_by'         => $this->kerani->id,
             'status'             => PdoHeader::STATUS_FINAL,
+            // Periode WAJIB dipatok: saldo awal di-seed 2026-07-01 dan transaksi
+            // di test ini bertanggal 2026-08-xx. Kalau periode dibiarkan acak dari
+            // factory (2024-2026), sesekali periodenya jatuh SETELAH Agustus 2026
+            // sehingga realisasi ikut terhitung di saldo awal (cumulativeBalanceBefore)
+            // dan terpotong dua kali — bikin test flaky.
+            'period_year'        => 2026,
+            'period_month'       => 8,
         ]);
 
         $result = $this->service->availableItemsForActor($pdo, $this->kerani);
@@ -585,6 +632,13 @@ class RealizationEntryServiceTest extends TestCase
             'plantation_unit_id' => $this->unit->id,
             'created_by'         => $this->kerani->id,
             'status'             => PdoHeader::STATUS_FINAL,
+            // Periode WAJIB dipatok: saldo awal di-seed 2026-07-01 dan transaksi
+            // di test ini bertanggal 2026-08-xx. Kalau periode dibiarkan acak dari
+            // factory (2024-2026), sesekali periodenya jatuh SETELAH Agustus 2026
+            // sehingga realisasi ikut terhitung di saldo awal (cumulativeBalanceBefore)
+            // dan terpotong dua kali — bikin test flaky.
+            'period_year'        => 2026,
+            'period_month'       => 8,
         ]);
 
         $this->service->store([
@@ -615,6 +669,13 @@ class RealizationEntryServiceTest extends TestCase
             'plantation_unit_id' => $this->unit->id,
             'created_by'         => $this->kerani->id,
             'status'             => PdoHeader::STATUS_FINAL,
+            // Periode WAJIB dipatok: saldo awal di-seed 2026-07-01 dan transaksi
+            // di test ini bertanggal 2026-08-xx. Kalau periode dibiarkan acak dari
+            // factory (2024-2026), sesekali periodenya jatuh SETELAH Agustus 2026
+            // sehingga realisasi ikut terhitung di saldo awal (cumulativeBalanceBefore)
+            // dan terpotong dua kali — bikin test flaky.
+            'period_year'        => 2026,
+            'period_month'       => 8,
         ]);
 
         $this->service->store([
@@ -647,6 +708,13 @@ class RealizationEntryServiceTest extends TestCase
             'plantation_unit_id' => $this->unit->id,
             'created_by'         => $this->kerani->id,
             'status'             => PdoHeader::STATUS_FINAL,
+            // Periode WAJIB dipatok: saldo awal di-seed 2026-07-01 dan transaksi
+            // di test ini bertanggal 2026-08-xx. Kalau periode dibiarkan acak dari
+            // factory (2024-2026), sesekali periodenya jatuh SETELAH Agustus 2026
+            // sehingga realisasi ikut terhitung di saldo awal (cumulativeBalanceBefore)
+            // dan terpotong dua kali — bikin test flaky.
+            'period_year'        => 2026,
+            'period_month'       => 8,
         ]);
 
         // Transfer masuk besar bulan ini — saldo kas berjalan tetap tebal, jadi
@@ -691,6 +759,13 @@ class RealizationEntryServiceTest extends TestCase
             'plantation_unit_id' => $this->unit->id,
             'created_by'         => $this->kerani->id,
             'status'             => PdoHeader::STATUS_FINAL,
+            // Periode WAJIB dipatok: saldo awal di-seed 2026-07-01 dan transaksi
+            // di test ini bertanggal 2026-08-xx. Kalau periode dibiarkan acak dari
+            // factory (2024-2026), sesekali periodenya jatuh SETELAH Agustus 2026
+            // sehingga realisasi ikut terhitung di saldo awal (cumulativeBalanceBefore)
+            // dan terpotong dua kali — bikin test flaky.
+            'period_year'        => 2026,
+            'period_month'       => 8,
         ]);
 
         // Item lain di PDO yang sama, dengan transfer, supaya BR-REAL-002 (plafon kantong)
@@ -711,9 +786,251 @@ class RealizationEntryServiceTest extends TestCase
             'payment_method'   => RealizationEntry::PAYMENT_TUNAI,
             'proof_number'     => 'KW-KK-001',
             'funding_source'   => RealizationEntry::FUNDING_REKENING_UTAMA, // dikirim salah, harus diabaikan
+            '_from_petty_cash_voucher' => 'test-voucher-id',
         ], $this->kerani);
 
         $this->assertEquals(RealizationEntry::FUNDING_KAS_KEBUN, $entry->funding_source);
+    }
+
+    /**
+     * Item PDOT "Gunakan Kas Kebun" HARUS bisa direalisasikan walau kantong PDO tidak
+     * punya transfer sama sekali — dananya dari saldo kas kebun yang sudah ada, dan
+     * TransferEntry penandanya bernominal 0. Tanpa pengecualian BR-REAL-002, plafonnya
+     * 0 dan kerani terblokir merealisasikan item yang dia buat sendiri.
+     *
+     * Kecukupan dana divalidasi DI DEPAN saat PDOT dibuat (pengajuan < saldo kas kebun,
+     * plus penilaian kerani atas dana yang sudah terikat), bukan lewat plafon transfer.
+     */
+    public function test_kas_kebun_item_realizable_even_when_kantong_has_no_transfer(): void
+    {
+        $pdo = PdoHeader::factory()->create([
+            'company_id'         => $this->companyId,
+            'plantation_unit_id' => $this->unit->id,
+            'created_by'         => $this->kerani->id,
+            'status'             => PdoHeader::STATUS_FINAL,
+        ]);
+
+        // Kantong kebun PDO ini KOSONG: satu-satunya entri transfer adalah penanda
+        // kas kebun bernominal 0 — persis kondisi setelah mergeIntoParent().
+        $kasKebunDetail = PdoDetail::factory()->create([
+            'pdo_header_id'   => $pdo->id,
+            'amount'          => 500000,
+            'funding_option'  => 'kas_kebun',
+        ]);
+        TransferEntry::factory()->create([
+            'pdo_detail_id'        => $kasKebunDetail->id,
+            'amount'               => 0,
+            'transfer_destination' => 'rek_kebun',
+            'entry_source'         => 'system',
+            'is_auto_generated'    => true,
+        ]);
+
+        $entry = $this->service->store([
+            'pdo_detail_id'    => $kasKebunDetail->id,
+            'transaction_date' => '2026-08-05',
+            'amount'           => 500000,
+            'payment_method'   => RealizationEntry::PAYMENT_TUNAI,
+            'proof_number'     => '',
+            'funding_source'   => RealizationEntry::FUNDING_KAS_KEBUN,
+            '_from_petty_cash_voucher' => 'test-voucher-id',
+        ], $this->kerani);
+
+        $this->assertEquals(500000, $entry->amount);
+        $this->assertEquals(RealizationEntry::FUNDING_KAS_KEBUN, $entry->funding_source);
+    }
+
+    /**
+     * Pengecualian BR-REAL-002 HANYA untuk item kas_kebun — item biasa di PDO yang sama
+     * tetap dipagari plafon kantong seperti biasa.
+     */
+    public function test_br_real_002_still_enforced_for_normal_item_alongside_kas_kebun_item(): void
+    {
+        $pdo = PdoHeader::factory()->create([
+            'company_id'         => $this->companyId,
+            'plantation_unit_id' => $this->unit->id,
+            'created_by'         => $this->kerani->id,
+            'status'             => PdoHeader::STATUS_FINAL,
+        ]);
+
+        $kasKebunDetail = PdoDetail::factory()->create([
+            'pdo_header_id'  => $pdo->id,
+            'amount'         => 500000,
+            'funding_option' => 'kas_kebun',
+        ]);
+        TransferEntry::factory()->create([
+            'pdo_detail_id'        => $kasKebunDetail->id,
+            'amount'               => 0,
+            'transfer_destination' => 'rek_kebun',
+            'entry_source'         => 'system',
+            'is_auto_generated'    => true,
+        ]);
+
+        // Item biasa dengan transfer 300rb — plafon kantong hanya 300rb.
+        $normalDetail = PdoDetail::factory()->create(['pdo_header_id' => $pdo->id, 'amount' => 1000000]);
+        TransferEntry::factory()->create([
+            'pdo_detail_id'        => $normalDetail->id,
+            'amount'               => 300000,
+            'transfer_destination' => 'rek_kebun',
+        ]);
+
+        $this->expectException(\Illuminate\Http\Exceptions\HttpResponseException::class);
+
+        $this->service->store([
+            'pdo_detail_id'    => $normalDetail->id,
+            'transaction_date' => '2026-08-05',
+            'amount'           => 400000, // > plafon 300rb → tetap harus DITOLAK
+            'payment_method'   => RealizationEntry::PAYMENT_TUNAI,
+            'proof_number'     => '',
+            'funding_source'   => RealizationEntry::FUNDING_KAS_KEBUN,
+            '_from_petty_cash_voucher' => 'test-voucher-id',
+        ], $this->kerani);
+    }
+
+    // ─────────────────────────────────────────────────────
+    // BR-PCV-001: realisasi tunai kas kebun wajib lewat Petty Cash Voucher
+    // ─────────────────────────────────────────────────────
+
+    public function test_kas_kebun_without_voucher_flag_is_rejected(): void
+    {
+        $detail = $this->makeDetail(PdoHeader::STATUS_FINAL, budget: 1000000, transferred: 1000000);
+
+        try {
+            $this->service->store([
+                'pdo_detail_id'    => $detail->id,
+                'transaction_date' => '2026-08-05',
+                'amount'           => 100000,
+                'payment_method'   => RealizationEntry::PAYMENT_TUNAI,
+                'proof_number'     => 'KW-DIRECT-001',
+                'funding_source'   => RealizationEntry::FUNDING_KAS_KEBUN,
+            ], $this->kerani);
+            $this->fail('Expected HttpResponseException (REALIZATION_REQUIRES_VOUCHER)');
+        } catch (\Illuminate\Http\Exceptions\HttpResponseException $e) {
+            $this->assertEquals(422, $e->getResponse()->getStatusCode());
+            $this->assertEquals('REALIZATION_REQUIRES_VOUCHER', json_decode($e->getResponse()->getContent(), true)['error']['code']);
+        }
+    }
+
+    public function test_kas_kebun_with_voucher_flag_is_accepted(): void
+    {
+        $detail = $this->makeDetail(PdoHeader::STATUS_FINAL, budget: 1000000, transferred: 1000000);
+
+        $entry = $this->service->store([
+            'pdo_detail_id'    => $detail->id,
+            'transaction_date' => '2026-08-05',
+            'amount'           => 100000,
+            'payment_method'   => RealizationEntry::PAYMENT_TUNAI,
+            'proof_number'     => 'KW-VOUCHER-001',
+            'funding_source'   => RealizationEntry::FUNDING_KAS_KEBUN,
+            '_from_petty_cash_voucher' => 'some-voucher-id',
+        ], $this->kerani);
+
+        $this->assertEquals(100000, $entry->amount);
+    }
+
+    public function test_pribadi_vendor_kas_kebun_not_affected_by_br_pcv_001(): void
+    {
+        // BR-REAL-004 sudah melarang STAFF_PURCHASING pakai kas_kebun; pakai
+        // MANAJER_KEUANGAN (juga kantong pribadi_vendor, tapi tidak kena BR-REAL-004)
+        // untuk membuktikan BR-PCV-001 (khusus kantong KEBUN) tidak ikut memblokirnya.
+        $managerRole = Role::factory()->create(['code' => Role::MANAJER_KEUANGAN]);
+        $manager     = User::factory()->create([
+            'company_id'         => $this->companyId,
+            'role_id'            => $managerRole->id,
+            'plantation_unit_id' => null,
+        ]);
+
+        $pdo = PdoHeader::factory()->create([
+            'company_id'         => $this->companyId,
+            'plantation_unit_id' => $this->unit->id,
+            'created_by'         => $this->kerani->id,
+            'status'             => PdoHeader::STATUS_FINAL,
+            // Periode WAJIB dipatok: saldo awal di-seed 2026-07-01 dan transaksi
+            // di test ini bertanggal 2026-08-xx. Kalau periode dibiarkan acak dari
+            // factory (2024-2026), sesekali periodenya jatuh SETELAH Agustus 2026
+            // sehingga realisasi ikut terhitung di saldo awal (cumulativeBalanceBefore)
+            // dan terpotong dua kali — bikin test flaky.
+            'period_year'        => 2026,
+            'period_month'       => 8,
+        ]);
+        $detail = PdoDetail::factory()->create(['pdo_header_id' => $pdo->id, 'amount' => 1000000]);
+        TransferEntry::factory()->create([
+            'pdo_detail_id' => $detail->id, 'transfer_destination' => TransferEntry::DEST_VENDOR, 'amount' => 1000000,
+        ]);
+
+        $entry = $this->service->store([
+            'pdo_detail_id'    => $detail->id,
+            'transaction_date' => '2026-08-05',
+            'amount'           => 500000,
+            'payment_method'   => RealizationEntry::PAYMENT_TUNAI,
+            'proof_number'     => 'MGR-KK-001',
+            'funding_source'   => RealizationEntry::FUNDING_KAS_KEBUN,
+        ], $manager);
+
+        $this->assertEquals(500000, $entry->amount);
+    }
+
+    private function createPostedVoucherLinkedEntry(): RealizationEntry
+    {
+        $detail = $this->makeDetail(PdoHeader::STATUS_FINAL, budget: 1000000, transferred: 1000000);
+
+        $entry = $this->service->store([
+            'pdo_detail_id'    => $detail->id,
+            'transaction_date' => '2026-08-05',
+            'amount'           => 200000,
+            'payment_method'   => RealizationEntry::PAYMENT_TUNAI,
+            'proof_number'     => 'KW-PCV-LOCKED-001',
+            'funding_source'   => RealizationEntry::FUNDING_KAS_KEBUN,
+            '_from_petty_cash_voucher' => 'placeholder',
+        ], $this->kerani);
+
+        $voucher = \App\Models\PettyCashVoucher::factory()->posted()->create([
+            'pdo_header_id' => $detail->pdo_header_id,
+            'created_by'    => $this->kerani->id,
+        ]);
+        \App\Models\PettyCashVoucherLine::factory()->create([
+            'petty_cash_voucher_id' => $voucher->id,
+            'pdo_detail_id'         => $detail->id,
+            'realization_entry_id'  => $entry->id,
+            'amount'                => $entry->amount,
+        ]);
+
+        return $entry->fresh();
+    }
+
+    public function test_destroy_rejects_entry_linked_to_posted_voucher(): void
+    {
+        $entry = $this->createPostedVoucherLinkedEntry();
+
+        try {
+            $this->service->destroy($entry, $this->kerani);
+            $this->fail('Expected HttpResponseException (REALIZATION_LOCKED_BY_VOUCHER)');
+        } catch (\Illuminate\Http\Exceptions\HttpResponseException $e) {
+            $this->assertEquals(422, $e->getResponse()->getStatusCode());
+            $this->assertEquals('REALIZATION_LOCKED_BY_VOUCHER', json_decode($e->getResponse()->getContent(), true)['error']['code']);
+        }
+        $this->assertDatabaseHas('realization_entries', ['id' => $entry->id]);
+    }
+
+    public function test_update_rejects_amount_change_on_entry_linked_to_posted_voucher(): void
+    {
+        $entry = $this->createPostedVoucherLinkedEntry();
+
+        try {
+            $this->service->update($entry, ['amount' => 999999], $this->kerani);
+            $this->fail('Expected HttpResponseException (REALIZATION_AMOUNT_LOCKED_BY_VOUCHER)');
+        } catch (\Illuminate\Http\Exceptions\HttpResponseException $e) {
+            $this->assertEquals(422, $e->getResponse()->getStatusCode());
+            $this->assertEquals('REALIZATION_AMOUNT_LOCKED_BY_VOUCHER', json_decode($e->getResponse()->getContent(), true)['error']['code']);
+        }
+    }
+
+    public function test_update_allows_explanation_change_on_entry_linked_to_posted_voucher(): void
+    {
+        $entry = $this->createPostedVoucherLinkedEntry();
+
+        $updated = $this->service->update($entry, ['explanation' => 'Koreksi penjelasan'], $this->kerani);
+
+        $this->assertEquals('Koreksi penjelasan', $updated->explanation);
     }
 
     private function makeDetail(string $status, int $budget, int $transferred, ?int $periodYear = null, ?int $periodMonth = null): PdoDetail

@@ -38,16 +38,27 @@ class RecapQueryService
 
         $transferKebun    = 0;
         $transferPribadi  = 0;
-        $rawRealisasiKebun   = 0;
-        $rawRealisasiPribadi = 0;
-        $deductionKebun      = 0; // negatif
-        $deductionPribadi    = 0; // negatif
+
+        // Akumulasi realisasi & potongan DIPISAH PER SUB-KATEGORI, bukan PDO-wide.
+        // Potongan Panjar = uang muka yang sudah dibayar periode lalu untuk pekerjaan
+        // di sub-kategori itu sendiri, jadi hanya boleh dinetkan terhadap realisasi
+        // sub-kategori yang sama. Sub-kategori yang tidak punya potongan TIDAK boleh
+        // ikut terpotong hanya karena sub-kategori lain punya panjar — itu akan
+        // mengecilkan realisasi item yang tidak ada uang mukanya sama sekali.
+        // Skop ini sengaja sama persis dengan CashBookQueryService::buildExpenseRows()
+        // supaya Rekap Buku Kas dan Buku Kas Harian selalu menghasilkan angka yang sama.
+        $rawBySub       = []; // [subId => ['kebun' => int, 'pribadi' => int]]
+        $deductionBySub = []; // [subId => ['kebun' => int, 'pribadi' => int]] — negatif
 
         foreach ($kpiRows as $row) {
             $isDeduction      = (bool) $row->is_deduction;
             $isKasKebunFunded = ($row->funding_option ?? null) === 'kas_kebun';
             $tKebun           = (int) $row->total_transfer_kebun;
             $tPribadi         = (int) $row->total_transfer_pribadi;
+            $subId            = $row->subcategory_id;
+
+            $rawBySub[$subId]       ??= ['kebun' => 0, 'pribadi' => 0];
+            $deductionBySub[$subId] ??= ['kebun' => 0, 'pribadi' => 0];
 
             // Item PDOT funding_option=kas_kebun: TransferEntry auto-generated di
             // sini (lihat PdoSupplementaryApprovalService::mergeIntoParent()) BUKAN
@@ -66,26 +77,38 @@ class RecapQueryService
                 // Item potongan tidak pernah punya realization_entries — nilainya
                 // hidup sebagai transfer negatif.
                 if (! $isKasKebunFunded) {
-                    $deductionKebun   += $tKebun;
-                    $deductionPribadi += $tPribadi;
+                    $deductionBySub[$subId]['kebun']   += $tKebun;
+                    $deductionBySub[$subId]['pribadi'] += $tPribadi;
                 }
                 continue;
             }
 
-            $rawRealisasiKebun   += (int) $row->total_realization;
-            $rawRealisasiPribadi += (int) $row->total_realization_pribadi;
+            $rawBySub[$subId]['kebun']   += (int) $row->total_realization;
+            $rawBySub[$subId]['pribadi'] += (int) $row->total_realization_pribadi;
         }
 
-        // Netting potongan di-clamp per (PDO, kantong): kredit tidak boleh melebihi
-        // realisasi yang benar-benar sudah tercatat. Lihat DeductionNetting untuk
-        // alasan lengkap & riwayat kedua bug yang aturan ini selesaikan sekaligus.
-        $realisasiKebun   = DeductionNetting::effectiveRealization($rawRealisasiKebun, $deductionKebun);
-        $realisasiPribadi = DeductionNetting::effectiveRealization($rawRealisasiPribadi, $deductionPribadi);
+        // Netting potongan di-clamp per (sub-kategori, kantong): kredit tidak boleh
+        // melebihi realisasi yang benar-benar sudah tercatat DI SUB-KATEGORI ITU.
+        // Kalau kerani belum selesai mencatat realisasi sub-kategori tsb, kreditnya
+        // tertahan (realisasi efektif 0, tidak pernah negatif) sampai realisasinya
+        // masuk — bukan ditutup memakai surplus sub-kategori lain.
+        $realisasiKebun   = 0;
+        $realisasiPribadi = 0;
+        $creditBySub      = []; // [subId => ['kebun' => int, 'pribadi' => int]] — negatif
 
-        // Kredit yang benar-benar terpakai — dibagikan ke baris potongan di
-        // buildHierarchy() supaya penjumlahan baris tetap sama dengan KPI ini.
-        $creditKebun   = DeductionNetting::usableCredit($rawRealisasiKebun, $deductionKebun);
-        $creditPribadi = DeductionNetting::usableCredit($rawRealisasiPribadi, $deductionPribadi);
+        foreach ($rawBySub as $subId => $raw) {
+            $ded = $deductionBySub[$subId];
+
+            $realisasiKebun   += DeductionNetting::effectiveRealization($raw['kebun'], $ded['kebun']);
+            $realisasiPribadi += DeductionNetting::effectiveRealization($raw['pribadi'], $ded['pribadi']);
+
+            // Kredit yang benar-benar terpakai — dibagikan ke baris potongan di
+            // buildHierarchy() supaya penjumlahan baris tetap sama dengan KPI ini.
+            $creditBySub[$subId] = [
+                'kebun'   => DeductionNetting::usableCredit($raw['kebun'], $ded['kebun']),
+                'pribadi' => DeductionNetting::usableCredit($raw['pribadi'], $ded['pribadi']),
+            ];
+        }
 
         // Saldo awal kas kebun di AWAL periode PDO ini — KPI tetap, tidak
         // terpengaruh $startDate/$endDate (yang hanya memfilter baris tabel).
@@ -93,7 +116,7 @@ class RecapQueryService
 
         return $this->buildHierarchy(
             $rows, $transferKebun, $transferPribadi, $realisasiKebun, $realisasiPribadi,
-            $kantong, $saldoAwal, $creditKebun, $creditPribadi,
+            $kantong, $saldoAwal, $creditBySub,
         );
     }
 
@@ -220,7 +243,7 @@ class RecapQueryService
         ]);
     }
 
-    private function buildHierarchy(array $rows, int $transferKebun, int $transferPribadi, int $realisasiKebun, int $realisasiPribadi, string $kantong = 'all', int $saldoAwal = 0, int $creditKebun = 0, int $creditPribadi = 0): array
+    private function buildHierarchy(array $rows, int $transferKebun, int $transferPribadi, int $realisasiKebun, int $realisasiPribadi, string $kantong = 'all', int $saldoAwal = 0, array $creditBySub = []): array
     {
         $categories  = [];
         $catIndex    = [];
@@ -231,13 +254,13 @@ class RecapQueryService
         $grandTotalTransfer    = 0;
         $grandTotalRealization = 0;
 
-        // Sisa kredit potongan (positif) yang boleh dibagikan ke baris-baris item
-        // potongan. Dibatasi di getRecapData() sebesar realisasi yang benar-benar
-        // ada, lalu dikonsumsi berurutan di sini supaya penjumlahan baris selalu
-        // sama dengan KPI. Saat realisasi berlimpah, tiap baris potongan dapat
-        // kredit penuh dan saldonya 0 — persis perilaku sebelumnya.
-        $poolKebun   = abs($creditKebun);
-        $poolPribadi = abs($creditPribadi);
+        // Sisa kredit potongan (positif) PER SUB-KATEGORI, dibatasi di getRecapData()
+        // sebesar realisasi yang benar-benar ada di sub-kategori itu, lalu dikonsumsi
+        // berurutan di sini supaya penjumlahan baris selalu sama dengan KPI.
+        $pool = [];
+        foreach ($creditBySub as $subId => $credit) {
+            $pool[$subId] = ['kebun' => abs($credit['kebun']), 'pribadi' => abs($credit['pribadi'])];
+        }
 
         foreach ($rows as $row) {
             $pengajuan           = (int) $row->pengajuan;
@@ -245,12 +268,35 @@ class RecapQueryService
             $transferKebunItem   = (int) $row->total_transfer_kebun;
             $transferPribadiItem = (int) $row->total_transfer_pribadi;
             $isDeduction         = (bool) $row->is_deduction;
+            $rowSubId            = $row->subcategory_id;
+            $isKasKebunFunded    = ($row->funding_option ?? null) === 'kas_kebun';
+
+            // Item PDO Tambahan "Gunakan Kas Kebun": TransferEntry auto-generated-nya
+            // (lihat PdoSupplementaryApprovalService::mergeIntoParent()) hanya artefak
+            // teknis supaya KERANI bisa merealisasikannya — BUKAN dana baru masuk.
+            // Sudah dikecualikan dari KPI transfer_kebun di getRecapData(); baris tabel
+            // WAJIB ikut dinolkan, kalau tidak jumlah baris tidak akan pernah sama
+            // dengan KPI-nya sendiri (kasus KP Agustus: tabel 215.400.891 vs KPI
+            // 215.275.891, selisih persis 125.000 dari satu item PDOT kas kebun).
+            //
+            // Saldo dibiarkan memakai rumus normal (Transfer − Realisasi) sehingga bisa
+            // MINUS begitu item ini direalisasi — itu memang disengaja: angka minus
+            // adalah sinyal bahwa realisasi item ini didanai dari luar transfer item itu
+            // sendiri, sama seperti item lain yang direalisasi memakai dana transfer
+            // item lain dalam kantong yang sama.
+            if ($isKasKebunFunded) {
+                $transferAll         = 0;
+                $transferKebunItem   = 0;
+                $transferPribadiItem = 0;
+            }
 
             if ($isDeduction) {
-                $takenKebun   = min(abs($transferKebunItem), $poolKebun);
-                $takenPribadi = min(abs($transferPribadiItem), $poolPribadi);
-                $poolKebun   -= $takenKebun;
-                $poolPribadi -= $takenPribadi;
+                $pool[$rowSubId] ??= ['kebun' => 0, 'pribadi' => 0];
+
+                $takenKebun   = min(abs($transferKebunItem), $pool[$rowSubId]['kebun']);
+                $takenPribadi = min(abs($transferPribadiItem), $pool[$rowSubId]['pribadi']);
+                $pool[$rowSubId]['kebun']   -= $takenKebun;
+                $pool[$rowSubId]['pribadi'] -= $takenPribadi;
 
                 $realKebunItem   = -$takenKebun;
                 $realPribadiItem = -$takenPribadi;
@@ -264,15 +310,21 @@ class RecapQueryService
             // 'all' menjumlahkan transfer & realisasi dari KEDUA kantong supaya
             // saldo tetap konsisten dengan tampilan per-kantong (item yang saldo
             // 0 di kantong pribadi harus tetap 0 saat filter kantong = semua).
+            // Item kas kebun sengaja dikecualikan dari filter "sembunyikan baris kosong":
+            // transfer-nya memang 0 by design, jadi tanpa pengecualian ini item tsb
+            // hilang dari tabel selama belum direalisasi — padahal ia bagian dari PDO
+            // dan punya nilai pengajuan.
             if ($kantong === 'kebun') {
                 $transfer = $transferKebunItem;
                 $real     = $realKebunItem;
-                if ($transfer === 0 && $real === 0) {
+                if ($transfer === 0 && $real === 0 && ! $isKasKebunFunded) {
                     continue;
                 }
             } elseif ($kantong === 'pribadi') {
                 $transfer = $transferPribadiItem;
                 $real     = $realPribadiItem;
+                // Tanpa pengecualian di sini: item kas kebun milik kantong kebun,
+                // jadi tetap disembunyikan saat filter kantong = Pribadi/Vendor.
                 if ($transfer === 0 && $real === 0) {
                     continue;
                 }

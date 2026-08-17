@@ -203,16 +203,23 @@ class PdoSupplementaryServiceTest extends TestCase
             'funding_option'               => 'kas_kebun',
         ]);
 
-        // Dana kas_kebun harus otomatis terekam sebagai TransferEntry committed
-        // ke rek_kebun, supaya item ini muncul di Buku Kas Kebun dan KERANI bisa
-        // mencatat realisasinya (BR-REAL-005 / availableItemsForActor()).
+        // TransferEntry committed ke rek_kebun tetap dibuat sebagai PENANDA kantong,
+        // supaya item ini muncul di dropdown realisasi KERANI
+        // (availableItemsForActor() mensyaratkan ada transfer ke kantong actor).
+        //
+        // NOMINALNYA 0: dana kas_kebun diambil dari saldo kas yang sudah ada, tidak
+        // ada uang yang benar-benar ditransfer. Mengisi sebesar pengajuan (perilaku
+        // lama) menggelembungkan KPI Transfer di Rekap dan kolom "Sudah Ditransfer"
+        // di halaman Detail Transfer. Kecukupan dananya divalidasi di depan saat
+        // PDOT dibuat, dan item ini dikecualikan dari plafon BR-REAL-002 sehingga
+        // nominal 0 di sini tidak memblokir realisasinya.
         $detail = PdoDetail::where('source_pdo_supplementary_id', $supp->id)->firstOrFail();
         $this->assertDatabaseHas('transfer_entries', [
             'pdo_detail_id'        => $detail->id,
             'status'               => 'committed',
             'transfer_destination' => 'rek_kebun',
             'is_auto_generated'    => true,
-            'amount'               => 500000,
+            'amount'               => 0,
         ]);
 
         // Tidak melalui tahap approval Asisten/Manajer/Direktur sama sekali.

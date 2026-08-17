@@ -5,6 +5,7 @@ namespace App\Services\PDO;
 use App\Exceptions\PdoNotFinalException;
 use App\Models\AuditLog;
 use App\Models\PdoHeader;
+use App\Models\PettyCashVoucher;
 use App\Models\Role;
 use App\Models\User;
 use Carbon\Carbon;
@@ -31,6 +32,31 @@ class PdoCloseService
         // BR-CLOSE-001: PDO harus berstatus final
         if (! $pdo->isFinal()) {
             throw new PdoNotFinalException($pdo->status);
+        }
+
+        // Petty Cash Voucher draft yang belum di-scan: menutup PDO tetap DIIZINKAN
+        // (keputusan produk #12), tapi wajib konfirmasi eksplisit dulu — supaya
+        // MANAJER_KEUANGAN sadar ada voucher yang sudah dicetak/ditandatangani tapi
+        // belum sempat di-posting, dan realisasinya belum masuk. Backend TIDAK
+        // meng-auto-hapus/auto-post voucher draft; keputusan lanjutannya di tangan user.
+        $draftVouchers = PettyCashVoucher::withoutGlobalScopes()
+            ->where('pdo_header_id', $pdo->id)
+            ->where('status', PettyCashVoucher::STATUS_DRAFT)
+            ->get(['id', 'voucher_number', 'paid_to', 'total_amount']);
+
+        if ($draftVouchers->isNotEmpty() && ($data['acknowledge_draft_vouchers'] ?? false) !== true) {
+            abort(response()->json([
+                'success' => false,
+                'error'   => [
+                    'code'     => 'PDO_HAS_DRAFT_VOUCHERS',
+                    'message'  => "PDO ini masih punya {$draftVouchers->count()} Petty Cash Voucher berstatus draft (belum di-scan). Konfirmasi untuk tetap menutup PDO.",
+                    'vouchers' => $draftVouchers->map(fn ($v) => [
+                        'voucher_number' => $v->voucher_number,
+                        'paid_to'        => $v->paid_to,
+                        'total'          => $v->total_amount,
+                    ])->values(),
+                ],
+            ], 422));
         }
 
         // BR-CLOSE-002: tanggal penutupan tidak boleh mundur ke belakang.

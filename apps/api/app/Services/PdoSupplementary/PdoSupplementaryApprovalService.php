@@ -315,8 +315,23 @@ class PdoSupplementaryApprovalService
             $detailsAdded++;
 
             // Item kas_kebun: dana sudah "ada" di kas kebun (tidak lewat transfer
-            // HO), jadi buat entri transfer committed otomatis ke rek_kebun supaya
-            // muncul di Buku Kas Kebun dan KERANI bisa mencatat realisasinya.
+            // HO). Entri transfer committed otomatis ke rek_kebun tetap dibuat
+            // sebagai PENANDA bahwa item ini milik kantong rek_kebun — tanpa entri
+            // ini, RealizationEntryService::availableItemsForActor() tidak akan
+            // memunculkannya di dropdown realisasi (syaratnya: ada TransferEntry ke
+            // kantong actor).
+            //
+            // NOMINALNYA 0, bukan sebesar pengajuan: memang tidak ada uang yang
+            // ditransfer. Mengisi sebesar pengajuan (perilaku lama) menggelembungkan
+            // "dana ditransfer" di KPI Rekap & kolom "Sudah Ditransfer" di halaman
+            // Detail Transfer, sehingga tiap halaman pelaporan harus menambal dengan
+            // logika pengecualian sendiri. Dengan 0, semuanya sinkron apa adanya.
+            //
+            // Plafon realisasi item ini TIDAK bergantung pada nominal di sini —
+            // item kas_kebun dikecualikan dari BR-REAL-002 (lihat
+            // RealizationEntryService::store()), karena kecukupan dananya sudah
+            // divalidasi di depan saat PDOT dibuat.
+            //
             // Sama persis dengan pola di PdoSupplementaryMergeService::merge() —
             // path itu dipakai untuk merge manual PDOT ho_transfer, TIDAK PERNAH
             // dieksekusi untuk kas_kebun (yang selalu lewat method ini).
@@ -330,7 +345,7 @@ class PdoSupplementaryApprovalService
                     'committed_at'         => $now,
                     'committed_by'         => $actor->id,
                     'transfer_date'        => $now->toDateString(),
-                    'amount'               => $detail->amount,
+                    'amount'               => 0,
                     'reference_number'     => null,
                     'notes'                => "Dibuat otomatis — dana diambil dari Kas Kebun (PDOT {$supp->pdo_number})",
                     'transfer_destination' => TransferEntry::DEST_REK_KEBUN,

@@ -310,6 +310,8 @@ export interface RealizationEntry {
   created_at: string
   attachments?: RealizationAttachment[]
   exported_to_journal_at?: string | null
+  /** Ringkasan Petty Cash Voucher kalau entri ini hasil upload scan voucher (§3g). */
+  petty_cash_voucher?: { id: string; voucher_number: string } | null
 }
 
 export interface RealizationAttachment {

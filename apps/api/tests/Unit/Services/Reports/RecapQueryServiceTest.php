@@ -323,12 +323,23 @@ class RecapQueryServiceTest extends TestCase
     }
 
     /**
-     * Kasus Binanga: dalam SATU kantong (pribadi/vendor) ada dua sub-kategori —
-     * yang satu realisasinya lebih kecil dari potongannya, yang satu surplus.
-     * Clamp harus di level KANTONG, bukan per sub-kategori; kalau per sub-kategori
-     * saldo jadi −145.000 alih-alih 0.
+     * Kasus Binanga — netting potongan DIBATASI PER SUB-KATEGORI, bukan per kantong.
+     *
+     * Potongan Panjar = uang muka yang sudah dibayar periode lalu UNTUK PEKERJAAN DI
+     * SUB-KATEGORI ITU SENDIRI. Karena itu kreditnya hanya boleh dinetkan terhadap
+     * realisasi sub-kategori yang sama: secara logika total biaya satu sub-kategori
+     * pasti akhirnya >= panjarnya sendiri. Kalau saat ini masih lebih kecil, itu
+     * berarti kerani BELUM selesai mencatat realisasi sub-kategori tsb — bukan alasan
+     * untuk menambal kekurangannya dengan surplus sub-kategori lain, karena itu akan
+     * mengecilkan realisasi item yang sama sekali tidak punya uang muka.
+     *
+     * Sub-kategori yang kreditnya belum terpakai penuh hanya tertahan (realisasi
+     * efektif di-clamp 0, tidak pernah negatif) sampai realisasinya masuk.
+     *
+     * Skop ini sengaja identik dengan CashBookQueryService::buildExpenseRows() supaya
+     * Rekap Buku Kas dan Buku Kas Harian selalu menampilkan angka yang sama.
      */
-    public function test_deduction_clamped_per_pocket_not_per_subcategory(): void
+    public function test_deduction_clamped_per_subcategory_not_across_pocket(): void
     {
         $pdo = $this->makeFinalPdo();
         $cat = ExpenseCategory::factory()->create(['company_id' => $this->companyId, 'include_in_recap' => true]);
@@ -360,20 +371,71 @@ class RecapQueryServiceTest extends TestCase
         $result = $this->query();
 
         // transfer  = 455.000 + 3.000.000 − 1.200.000 = 2.255.000
-        // realisasi = 4.055.000 − 1.200.000 (kredit penuh, pool cukup) = 2.855.000
+        //
+        // realisasi per sub-kategori (masing-masing di-clamp di 0):
+        //   sub A: 455.000 − 600.000  → 0         (kredit 145.000 tertahan sampai
+        //                                          realisasi sub A dilengkapi kerani)
+        //   sub B: 3.600.000 − 600.000 → 3.000.000
+        //   total                       = 3.000.000
+        //
+        // Kredit sub A SENGAJA tidak ditambal surplus sub B — kalau ditambal,
+        // realisasi jadi 2.855.000 dan item sub B ikut terpotong padahal panjarnya
+        // sudah dinetkan sendiri.
         $this->assertEquals(2_255_000, $result['transfer_pribadi']);
-        $this->assertEquals(2_855_000, $result['realisasi_pribadi']);
-        $this->assertEquals(-600_000, $result['saldo_pribadi']);
+        $this->assertEquals(3_000_000, $result['realisasi_pribadi']);
+        $this->assertEquals(-745_000, $result['saldo_pribadi']);
     }
 
     /**
-     * TransferEntry auto-generated untuk PDOT funding_option=kas_kebun BUKAN
-     * uang baru masuk — tidak boleh menaikkan KPI transfer_kebun/saldo_kebun.
-     * Baris tabel per-item TETAP menampilkan nilai aslinya (tidak di-nol-kan).
-     * Setelah item ini direalisasikan KERANI, KPI saldo tetap harus turun
-     * sesuai realisasi (rawRealisasiKebun tidak ikut di-skip).
+     * Sub-kategori TANPA item potongan sama sekali tidak boleh ikut terpotong hanya
+     * karena sub-kategori lain punya Potongan Panjar. Ini kasus KP Agustus 2026:
+     * seluruh realisasi kas kebun (3.292.000) ada di sub-kategori yang tidak punya
+     * panjar, sementara panjar 11.800.000 ada di sub-kategori lain yang belum
+     * direalisasi — Rekap sempat menampilkan Realisasi Rp 0 karena netting dilakukan
+     * PDO-wide.
      */
-    public function test_kpi_transfer_kebun_excludes_kas_kebun_auto_entry_but_row_and_realization_unaffected(): void
+    public function test_subcategory_without_deduction_is_not_reduced_by_other_subcategory_deduction(): void
+    {
+        $pdo = $this->makeFinalPdo();
+        $cat = ExpenseCategory::factory()->create(['company_id' => $this->companyId, 'include_in_recap' => true]);
+
+        // Sub-kategori A: PUNYA panjar 1.000.000, tapi belum ada realisasi sama sekali.
+        $subA = ExpenseSubcategory::factory()->create(['category_id' => $cat->id]);
+        $this->seedDeduction($pdo, $subA, 1_000_000, 'rek_kebun');
+
+        // Sub-kategori B: TIDAK punya panjar, realisasi 300.000 — harus tetap utuh.
+        $subB  = ExpenseSubcategory::factory()->create(['category_id' => $cat->id]);
+        $itemB = ExpenseItem::factory()->create(['subcategory_id' => $subB->id]);
+        $detB  = PdoDetail::factory()->create(['pdo_header_id' => $pdo->id, 'expense_item_id' => $itemB->id, 'amount' => 500_000]);
+        TransferEntry::factory()->create(['pdo_detail_id' => $detB->id, 'amount' => 500_000, 'transfer_destination' => 'rek_kebun']);
+        RealizationEntry::factory()->create([
+            'pdo_detail_id'  => $detB->id,
+            'amount'         => 300_000,
+            'funding_source' => RealizationEntry::FUNDING_KAS_KEBUN,
+        ]);
+
+        $result = $this->query();
+
+        // transfer  = 500.000 − 1.000.000 = −500.000
+        // realisasi = 0 (sub A, kredit tertahan) + 300.000 (sub B, utuh) = 300.000
+        $this->assertEquals(-500_000, $result['transfer_kebun']);
+        $this->assertEquals(300_000, $result['realisasi_kebun']);
+    }
+
+    /**
+     * TransferEntry auto-generated untuk PDOT funding_option=kas_kebun BUKAN uang baru
+     * masuk — dikecualikan dari KPI transfer_kebun DAN dari kolom Transfer baris tabel.
+     *
+     * Baris WAJIB ikut dinolkan (dulu menampilkan nilai aslinya "sebagai informasi"):
+     * kalau tidak, jumlah baris tabel tidak akan pernah sama dengan KPI-nya sendiri.
+     * Kasus nyata KP Agustus 2026: tabel 215.400.891 vs KPI 215.275.891, selisih persis
+     * 125.000 dari satu item PDOT kas kebun.
+     *
+     * Saldo memakai rumus normal (Transfer − Realisasi) sehingga MINUS setelah item
+     * direalisasi — disengaja, angka minus itu sinyal bahwa realisasinya didanai dari
+     * luar transfer item itu sendiri.
+     */
+    public function test_kas_kebun_auto_entry_excluded_from_both_kpi_and_row_transfer(): void
     {
         $pdo = $this->makeFinalPdo();
         $cat = ExpenseCategory::factory()->create(['company_id' => $this->companyId, 'include_in_recap' => true]);
@@ -399,9 +461,11 @@ class RecapQueryServiceTest extends TestCase
         // KPI level PDO tidak boleh naik akibat entri kas_kebun.
         $this->assertEquals(0, $result['transfer_kebun']);
 
-        // Baris tabel per-item tetap menampilkan nilai aslinya (informatif).
+        // Baris tabel per-item IKUT dinolkan supaya bisa dijumlahkan sampai ketemu KPI.
         $row = $result['categories'][0]['subcategories'][0]['items'][0];
-        $this->assertEquals(1_200_000, $row['total_transfer']);
+        $this->assertEquals(0, $row['total_transfer']);
+        $this->assertEquals(1_200_000, $row['amount']); // pengajuan tetap tampil apa adanya
+        $this->assertEquals(0, $result['grand_total_transfer']);
 
         // Setelah direalisasikan KERANI, KPI saldo tetap turun sesuai realisasi.
         RealizationEntry::factory()->create([
@@ -414,6 +478,53 @@ class RecapQueryServiceTest extends TestCase
         $this->assertEquals(0, $result['transfer_kebun']);
         $this->assertEquals(1_200_000, $result['realisasi_kebun']);
         $this->assertEquals(-1_200_000, $result['saldo_kebun']);
+
+        // Saldo baris ikut minus — sinyal bahwa realisasi item ini didanai dari luar
+        // transfer item itu sendiri, bukan bug.
+        $row = $result['categories'][0]['subcategories'][0]['items'][0];
+        $this->assertEquals(0, $row['total_transfer']);
+        $this->assertEquals(1_200_000, $row['total_realization']);
+        $this->assertEquals(-1_200_000, $row['saldo']);
+    }
+
+    /**
+     * Item PDOT kas kebun yang BELUM direalisasi tetap harus muncul di tabel walau
+     * Transfer & Realisasi sama-sama 0 — filter "sembunyikan baris kosong" pada mode
+     * kantong tidak boleh menelannya, karena transfer 0 memang by design.
+     */
+    public function test_kas_kebun_row_still_listed_when_not_yet_realized_in_kebun_filter(): void
+    {
+        $pdo = $this->makeFinalPdo();
+        $cat = ExpenseCategory::factory()->create(['company_id' => $this->companyId, 'include_in_recap' => true]);
+        $sub = ExpenseSubcategory::factory()->create(['category_id' => $cat->id]);
+
+        $item   = ExpenseItem::factory()->create(['subcategory_id' => $sub->id]);
+        $detail = PdoDetail::factory()->create([
+            'pdo_header_id'   => $pdo->id,
+            'expense_item_id' => $item->id,
+            'amount'          => 125_000,
+            'funding_option'  => 'kas_kebun',
+        ]);
+        TransferEntry::factory()->create([
+            'pdo_detail_id'         => $detail->id,
+            'amount'                => 125_000,
+            'transfer_destination'  => 'rek_kebun',
+            'entry_source'          => 'system',
+            'is_auto_generated'     => true,
+        ]);
+
+        $result = $this->service->getRecapData([
+            'period_year'  => $this->year,
+            'period_month' => $this->month,
+            'unit_id'      => $this->unit->id,
+            'category_id'  => null,
+            'kantong'      => 'kebun',
+        ]);
+
+        $rows = $result['categories'][0]['subcategories'][0]['items'];
+        $this->assertCount(1, $rows);
+        $this->assertEquals(125_000, $rows[0]['amount']);
+        $this->assertEquals(0, $rows[0]['total_transfer']);
     }
 
     // ── 8: kerani unit is enforced by controller (tested via feature) ─────────

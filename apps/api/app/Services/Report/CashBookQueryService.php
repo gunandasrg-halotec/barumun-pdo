@@ -97,6 +97,7 @@ class CashBookQueryService
                     'reference'   => null,
                     'description' => 'Terima transfer dari HO untuk : ' . $itemNames->implode(', '),
                     'notes'       => null,
+                    'vouchers'    => null,
                     'amount'      => (int) $group->sum('amount'),
                     'created_at'  => $group->min('created_at'),
                 ];
@@ -193,7 +194,7 @@ class CashBookQueryService
                 ->where('period_year', $year)
                 ->where('period_month', $month))
             ->whereBetween('transaction_date', [$effectiveStart->toDateString(), $effectiveEnd->toDateString()])
-            ->with('pdoDetail.expenseItem.subcategory.category')
+            ->with(['pdoDetail.expenseItem.subcategory.category', 'pettyCashVoucherLine.pettyCashVoucher'])
             ->get();
 
         $deductionBySubcategory = TransferEntry::query()
@@ -252,6 +253,16 @@ class CashBookQueryService
                         ->unique()
                         ->values();
 
+                    // Voucher Petty Cash yang menghasilkan entri-entri di grup ini (§3g
+                    // keterlacakan) — pola identik $notesLines, field array terstruktur
+                    // terpisah supaya frontend bisa render tiap voucher sebagai chip.
+                    $vouchers = $group
+                        ->map(fn (RealizationEntry $r) => $r->pettyCashVoucherLine?->pettyCashVoucher)
+                        ->filter()
+                        ->unique('id')
+                        ->map(fn ($v) => ['id' => $v->id, 'voucher_number' => $v->voucher_number])
+                        ->values();
+
                     $amount = (int) $group->sum('amount');
 
                     // Netkan potongan mulai dari grup tanggal paling awal dalam
@@ -272,6 +283,7 @@ class CashBookQueryService
                         'reference'   => $references->isNotEmpty() ? $references->implode("\n") : null,
                         'description' => $lines->implode("\n"),
                         'notes'       => $notesLines->isNotEmpty() ? $notesLines->implode("\n") : null,
+                        'vouchers'    => $vouchers->isNotEmpty() ? $vouchers->all() : null,
                         'amount'      => $amount,
                         'created_at'  => $group->min('created_at'),
                     ];

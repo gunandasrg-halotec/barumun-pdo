@@ -638,6 +638,14 @@ export function TransferBulkPage() {
       (s, d) => s + (d.expense_item?.is_deduction ? d.amount_approved : 0),
       0,
     )
+    // Pengajuan item PDOT "Gunakan Kas Kebun" — dananya sudah ada di kas kebun, tidak
+    // pernah perlu ditransfer. Dikeluarkan dari basis "Sisa Dana" (tapi TETAP dihitung
+    // di Total Pengajuan, karena ia memang bagian dari pengajuan PDO ini); kalau ikut,
+    // Sisa Dana tampak masih menyisakan dana yang sebenarnya tidak perlu ditransfer.
+    const totalPengajuanKasKebun = details.reduce(
+      (s, d) => s + (d.funding_option === 'kas_kebun' ? d.amount_approved : 0),
+      0,
+    )
     const dest: DestBreakdown = { rek_kebun: 0, pribadi: 0, vendor: 0 }
 
     for (const d of details) {
@@ -649,7 +657,12 @@ export function TransferBulkPage() {
       dest.vendor    += d.final_by_dest.vendor    + d.draft_by_dest.vendor
     }
     const totalTransfer = dest.rek_kebun + dest.pribadi + dest.vendor
-    return { totalPengajuan, totalPotongan, dest, sisa: totalPengajuan - totalTransfer }
+    return {
+      totalPengajuan,
+      totalPotongan,
+      dest,
+      sisa: totalPengajuan - totalPengajuanKasKebun - totalTransfer,
+    }
   }, [details])
 
   const hasDrafts = useMemo(() => details.some((d) => d.draft_entries.length > 0), [details])

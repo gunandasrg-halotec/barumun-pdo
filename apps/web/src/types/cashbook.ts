@@ -4,6 +4,8 @@ export interface CashBookRow {
   reference: string | null
   description: string
   notes: string | null
+  /** Voucher Petty Cash yang menghasilkan baris ini (§3g), null kalau bukan dari voucher. */
+  vouchers: { id: string; voucher_number: string }[] | null
   amount: number
   balance: number
 }

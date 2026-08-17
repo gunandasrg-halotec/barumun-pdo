@@ -326,4 +326,112 @@ class CashBookQueryServiceTest extends TestCase
         $this->assertNotNull($expenseRow);
         $this->assertNull($expenseRow['notes']);
     }
+
+    /**
+     * §3g keterlacakan: baris pengeluaran yang menggabungkan 2 entri realisasi dari
+     * DUA voucher berbeda (subkategori & tanggal sama, jadi masuk 1 baris yang sama)
+     * menghasilkan field 'vouchers' berisi 2 entri unik {id, voucher_number}.
+     */
+    public function test_expense_row_includes_unique_vouchers_from_multiple_petty_cash_vouchers(): void
+    {
+        $cat  = ExpenseCategory::factory()->create(['company_id' => $this->companyId]);
+        $sub  = ExpenseSubcategory::factory()->create(['category_id' => $cat->id]);
+        $pdo  = PdoHeader::factory()->create([
+            'company_id'         => $this->companyId,
+            'plantation_unit_id' => $this->unit->id,
+            'created_by'         => $this->kerani->id,
+            'status'             => PdoHeader::STATUS_FINAL,
+            'period_year'        => 2026,
+            'period_month'       => 8,
+        ]);
+
+        $item   = ExpenseItem::factory()->create(['subcategory_id' => $sub->id]);
+        $detail = PdoDetail::factory()->create(['pdo_header_id' => $pdo->id, 'expense_item_id' => $item->id, 'amount' => 1_000_000]);
+        TransferEntry::factory()->create([
+            'pdo_detail_id' => $detail->id, 'amount' => 1_000_000,
+            'transfer_destination' => 'rek_kebun', 'transfer_date' => '2026-08-01',
+        ]);
+
+        $entry1 = RealizationEntry::factory()->create([
+            'pdo_detail_id'    => $detail->id,
+            'amount'           => 200_000,
+            'funding_source'   => RealizationEntry::FUNDING_KAS_KEBUN,
+            'transaction_date' => '2026-08-05',
+        ]);
+        $entry2 = RealizationEntry::factory()->create([
+            'pdo_detail_id'    => $detail->id,
+            'amount'           => 300_000,
+            'funding_source'   => RealizationEntry::FUNDING_KAS_KEBUN,
+            'transaction_date' => '2026-08-05',
+        ]);
+
+        $voucher1 = \App\Models\PettyCashVoucher::factory()->posted()->create([
+            'pdo_header_id' => $pdo->id, 'voucher_number' => 'PCV/TEST/1',
+        ]);
+        \App\Models\PettyCashVoucherLine::factory()->create([
+            'petty_cash_voucher_id' => $voucher1->id,
+            'pdo_detail_id'         => $detail->id,
+            'realization_entry_id'  => $entry1->id,
+        ]);
+
+        $voucher2 = \App\Models\PettyCashVoucher::factory()->posted()->create([
+            'pdo_header_id' => $pdo->id, 'voucher_number' => 'PCV/TEST/2',
+        ]);
+        \App\Models\PettyCashVoucherLine::factory()->create([
+            'petty_cash_voucher_id' => $voucher2->id,
+            'pdo_detail_id'         => $detail->id,
+            'realization_entry_id'  => $entry2->id,
+        ]);
+
+        $cashBook = $this->service->getCashBookData([
+            'period_year' => 2026, 'period_month' => 8, 'unit_id' => $this->unit->id,
+        ]);
+
+        $expenseRow = collect($cashBook['rows'])->firstWhere('type', 'pengeluaran');
+
+        $this->assertNotNull($expenseRow);
+        $this->assertNotNull($expenseRow['vouchers']);
+        $this->assertCount(2, $expenseRow['vouchers']);
+        $this->assertEqualsCanonicalizing(
+            ['PCV/TEST/1', 'PCV/TEST/2'],
+            array_column($expenseRow['vouchers'], 'voucher_number')
+        );
+    }
+
+    /** Baris tanpa entri dari voucher manapun harus menghasilkan vouchers: null. */
+    public function test_expense_row_vouchers_is_null_when_no_petty_cash_voucher(): void
+    {
+        $cat  = ExpenseCategory::factory()->create(['company_id' => $this->companyId]);
+        $sub  = ExpenseSubcategory::factory()->create(['category_id' => $cat->id]);
+        $pdo  = PdoHeader::factory()->create([
+            'company_id'         => $this->companyId,
+            'plantation_unit_id' => $this->unit->id,
+            'created_by'         => $this->kerani->id,
+            'status'             => PdoHeader::STATUS_FINAL,
+            'period_year'        => 2026,
+            'period_month'       => 8,
+        ]);
+
+        $item   = ExpenseItem::factory()->create(['subcategory_id' => $sub->id]);
+        $detail = PdoDetail::factory()->create(['pdo_header_id' => $pdo->id, 'expense_item_id' => $item->id, 'amount' => 400_000]);
+        TransferEntry::factory()->create([
+            'pdo_detail_id' => $detail->id, 'amount' => 400_000,
+            'transfer_destination' => 'rek_kebun', 'transfer_date' => '2026-08-01',
+        ]);
+        RealizationEntry::factory()->create([
+            'pdo_detail_id'    => $detail->id,
+            'amount'           => 400_000,
+            'funding_source'   => RealizationEntry::FUNDING_REKENING_KEBUN,
+            'transaction_date' => '2026-08-05',
+        ]);
+
+        $cashBook = $this->service->getCashBookData([
+            'period_year' => 2026, 'period_month' => 8, 'unit_id' => $this->unit->id,
+        ]);
+
+        $expenseRow = collect($cashBook['rows'])->firstWhere('type', 'pengeluaran');
+
+        $this->assertNotNull($expenseRow);
+        $this->assertNull($expenseRow['vouchers']);
+    }
 }

@@ -3,6 +3,7 @@
 namespace App\Http\Middleware;
 
 use App\Models\PdoHeader;
+use App\Models\PettyCashVoucher;
 use App\Models\RealizationEntry;
 use App\Models\TransferEntry;
 use Closure;
@@ -25,13 +26,17 @@ class CheckPdoStatus
         // Cari PDO dari route parameter (bisa 'pdo' atau 'id')
         $pdoId = $request->route('pdo') ?? $request->route('id');
 
-        // Jika tidak ada, coba resolve dari entry route bindings
+        // Jika tidak ada, coba resolve dari entry / voucher route bindings
         if (! $pdoId) {
             if ($entry = $request->route('entry')) {
                 if ($entry instanceof RealizationEntry) {
                     $pdoId = $entry->pdoDetail?->pdoHeader?->id;
                 } elseif ($entry instanceof TransferEntry) {
                     $pdoId = $entry->pdoDetail?->pdoHeader?->id;
+                }
+            } elseif ($voucher = $request->route('voucher')) {
+                if ($voucher instanceof PettyCashVoucher) {
+                    $pdoId = $voucher->pdo_header_id;
                 }
             }
         }

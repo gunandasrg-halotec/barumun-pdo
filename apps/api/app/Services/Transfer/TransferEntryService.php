@@ -5,6 +5,7 @@ namespace App\Services\Transfer;
 use App\Models\AuditLog;
 use App\Models\PdoDetail;
 use App\Models\PdoHeader;
+use App\Models\PdoSupplementaryHeader;
 use App\Models\TransferEntry;
 use App\Models\User;
 use App\Services\Notification\WhatsAppNotificationService;
@@ -271,7 +272,13 @@ class TransferEntryService
                 'draft_by_dest'    => $this->breakdownByDest($drafts),
                 // Gabungan final + draft
                 'combined_total'   => $finalTotal + $draftTotal,
-                'remaining'        => $detail->amount - $finalTotal - $draftTotal,
+                // Item PDOT "Gunakan Kas Kebun" tidak pernah perlu ditransfer — dananya
+                // sudah ada di kas kebun. Sisa dana dipaksa 0 supaya tidak terbaca
+                // sebagai "masih ada yang harus ditransfer" (baris ini memang tidak
+                // punya field input transfer sama sekali).
+                'remaining'        => $detail->funding_option === PdoSupplementaryHeader::FUNDING_KAS_KEBUN
+                    ? 0
+                    : $detail->amount - $finalTotal - $draftTotal,
                 'entries'          => $committed->values(),
                 'draft_entries'    => $drafts->values(),
             ];

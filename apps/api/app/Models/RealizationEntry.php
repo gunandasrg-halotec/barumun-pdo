@@ -7,6 +7,7 @@ use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Database\Eloquent\Relations\HasOne;
 
 class RealizationEntry extends Model
 {
@@ -26,6 +27,15 @@ class RealizationEntry extends Model
 
     const SETTLEMENT_KEBUN          = 'kebun';
     const SETTLEMENT_PRIBADI_VENDOR = 'pribadi_vendor';
+
+    /**
+     * petty_cash_voucher di-append secara global (pola sama dengan PdoDetail).
+     * Pemanggil yang menampilkan banyak entri sekaligus (list()) WAJIB eager-load
+     * pettyCashVoucherLine.voucher, kalau tidak accessor ini jatuh ke lazy load per-baris.
+     */
+    protected $appends = [
+        'petty_cash_voucher',
+    ];
 
     protected $fillable = [
         'pdo_detail_id',
@@ -76,5 +86,25 @@ class RealizationEntry extends Model
     public function vehicle(): BelongsTo
     {
         return $this->belongsTo(Vehicle::class, 'vehicle_id');
+    }
+
+    public function pettyCashVoucherLine(): HasOne
+    {
+        return $this->hasOne(PettyCashVoucherLine::class, 'realization_entry_id');
+    }
+
+    /** Ringkasan voucher (id + nomor) untuk keterlacakan, atau null jika bukan hasil voucher. */
+    public function getPettyCashVoucherAttribute(): ?array
+    {
+        $voucher = $this->pettyCashVoucherLine?->pettyCashVoucher;
+
+        if (! $voucher) {
+            return null;
+        }
+
+        return [
+            'id'             => $voucher->id,
+            'voucher_number' => $voucher->voucher_number,
+        ];
     }
 }

@@ -16,6 +16,9 @@ use App\Http\Controllers\PDO\PdoDetailController;
 use App\Http\Controllers\PDO\PdoHeaderController;
 use App\Http\Controllers\PdoSupplementary\PdoSupplementaryController;
 use App\Http\Controllers\PdoSupplementary\PdoSupplementaryMergeController;
+use App\Http\Controllers\PettyCash\PettyCashVoucherController;
+use App\Http\Controllers\PettyCash\PettyCashVoucherPrintController;
+use App\Http\Controllers\PettyCash\PettyCashVoucherScanController;
 use App\Http\Controllers\Realization\RealizationAttachmentController;
 use App\Http\Controllers\Realization\RealizationEntryController;
 use App\Http\Controllers\Reports\CashBookController;
@@ -104,6 +107,10 @@ Route::prefix('v1')->middleware(['auth:sanctum', 'ensure.unit.access'])->group(f
         Route::get('realizations/available', [RealizationEntryController::class, 'availableByPdo']);
         // BR-CLOSE-003: write realisasi diblokir untuk PDO closed
         Route::post('realizations', [RealizationEntryController::class, 'store'])->middleware('check.pdo.status');
+
+        // Petty Cash Voucher — realisasi tunai kas kebun lewat voucher bertanda tangan
+        Route::get('petty-cash-vouchers', [PettyCashVoucherController::class, 'index']);
+        Route::post('petty-cash-vouchers', [PettyCashVoucherController::class, 'store'])->middleware('check.pdo.status');
     });
 
     // ── Transfer Entries (per pdo_detail) ─────────────
@@ -133,6 +140,14 @@ Route::prefix('v1')->middleware(['auth:sanctum', 'ensure.unit.access'])->group(f
     // Attachments (bukti transaksi)
     Route::post('realization-entries/{entry}/attachments', [RealizationAttachmentController::class, 'store']);
     Route::delete('realization-entries/{entry}/attachments/{attachment}', [RealizationAttachmentController::class, 'destroy']);
+
+    // ── Petty Cash Voucher ────────────────────────────
+    Route::get   ('petty-cash-vouchers/{voucher}',       [PettyCashVoucherController::class, 'show']);
+    Route::put   ('petty-cash-vouchers/{voucher}',       [PettyCashVoucherController::class, 'update'])->middleware('check.pdo.status');
+    Route::delete('petty-cash-vouchers/{voucher}',       [PettyCashVoucherController::class, 'destroy'])->middleware('check.pdo.status');
+    Route::get   ('petty-cash-vouchers/{voucher}/print', [PettyCashVoucherPrintController::class, 'print']);
+    Route::post  ('petty-cash-vouchers/{voucher}/scan',  [PettyCashVoucherScanController::class, 'store'])->middleware('check.pdo.status');
+    Route::get   ('petty-cash-vouchers/{voucher}/scan',  [PettyCashVoucherScanController::class, 'download']);
 
     // ── PDO Tambahan ──────────────────────────────────
     Route::get('pdo-supplementary/kas-kebun-balance', [PdoSupplementaryController::class, 'kasKebunBalance']);
