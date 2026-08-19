@@ -309,22 +309,28 @@ class RealizationEntryService
      * RealizationEntry), sehingga tidak pernah ikut ter-sum di query
      * RealizationEntry di atas — perlu ditambahkan manual di sini.
      *
-     * Netting dilakukan PER SUB-KATEGORI dan di-clamp 0, skop yang sama persis
-     * dengan RecapQueryService dan CashBookQueryService::buildExpenseRows() — supaya
+     * Netting dilakukan PER KATEGORI dan di-clamp 0, skop yang sama persis dengan
+     * RecapQueryService dan CashBookQueryService::buildExpenseRows() — supaya
      * "Sisa Dana" di form Realisasi/Voucher, "Saldo" di Rekap, dan saldo akhir di
      * Buku Kas Harian selalu menghasilkan angka yang sama.
      *
-     * Panjar hanya boleh dinetkan terhadap realisasi sub-kategorinya sendiri: secara
-     * logika total biaya satu sub-kategori pasti akhirnya >= panjarnya sendiri, jadi
-     * kredit yang belum terpakai hanya tertahan sampai kerani melengkapi realisasi
-     * sub-kategori itu — bukan ditambal surplus sub-kategori lain (yang akan
-     * mengecilkan realisasi item yang tidak punya uang muka sama sekali).
+     * Panjar hanya boleh dinetkan terhadap realisasi kategorinya sendiri: kredit
+     * yang belum terpakai tertahan sampai kerani melengkapi realisasi kategori itu
+     * — bukan ditambal surplus kategori lain (yang akan mengecilkan realisasi item
+     * yang tidak punya uang muka sama sekali).
      *
-     * Clamp di level sub-kategori TIDAK memblokir kerani mencatat realisasi penuh:
-     * begitu realisasi sub-kategori yang punya panjar mulai masuk, kreditnya ikut
+     * Skopnya KATEGORI, bukan sub-kategori, karena kerani memperkirakan beban
+     * pekerjaan di muka dan perkiraan itu bisa meleset sehingga panjar satu
+     * sub-kategori melebihi biaya riilnya (kasus Binanga Juli 2026). Pekerja yang
+     * sama umumnya juga mengerjakan sub-kategori lain di kategori yang sama, jadi
+     * kelebihan panjar wajar diserap sub-kategori tetangga daripada tertahan dan
+     * membuat saldo kantong tampil minus padahal tidak ada kas yang negatif.
+     *
+     * Clamp di level kategori TIDAK memblokir kerani mencatat realisasi penuh:
+     * begitu realisasi kategori yang punya panjar mulai masuk, kreditnya ikut
      * terlepas sebesar realisasi itu, sehingga plafon otomatis melebar mengikuti
-     * kebutuhan. Tanpa clamp per sub-kategori, hasilnya bisa negatif dan membuat
-     * "Sisa Dana" tampil lebih besar dari total dana yang benar-benar ditransfer.
+     * kebutuhan. Tanpa clamp, hasilnya bisa negatif dan membuat "Sisa Dana" tampil
+     * lebih besar dari total dana yang benar-benar ditransfer.
      */
     public function totalRealizedForGroup(PdoHeader $pdo, string $group): int
     {
@@ -332,32 +338,34 @@ class RealizationEntryService
             ? ['rek_kebun']
             : ['pribadi', 'vendor'];
 
-        // Realisasi per sub-kategori (lewat pdo_detail → expense_item → subcategory).
-        $realizedBySub = RealizationEntry::query()
+        // Realisasi per kategori (pdo_detail → expense_item → subcategory → category).
+        $realizedByCat = RealizationEntry::query()
             ->join('pdo_details', 'pdo_details.id', '=', 'realization_entries.pdo_detail_id')
             ->join('expense_items', 'expense_items.id', '=', 'pdo_details.expense_item_id')
+            ->join('expense_subcategories', 'expense_subcategories.id', '=', 'expense_items.subcategory_id')
             ->where('pdo_details.pdo_header_id', $pdo->id)
             ->where('realization_entries.settlement_group', $group)
-            ->groupBy('expense_items.subcategory_id')
-            ->selectRaw('expense_items.subcategory_id AS sub_id, SUM(realization_entries.amount) AS total')
-            ->pluck('total', 'sub_id');
+            ->groupBy('expense_subcategories.category_id')
+            ->selectRaw('expense_subcategories.category_id AS cat_id, SUM(realization_entries.amount) AS total')
+            ->pluck('total', 'cat_id');
 
-        // Potongan per sub-kategori — TransferEntry negatif, bukan RealizationEntry.
-        $deductionBySub = TransferEntry::query()
+        // Potongan per kategori — TransferEntry negatif, bukan RealizationEntry.
+        $deductionByCat = TransferEntry::query()
             ->join('pdo_details', 'pdo_details.id', '=', 'transfer_entries.pdo_detail_id')
             ->join('expense_items', 'expense_items.id', '=', 'pdo_details.expense_item_id')
+            ->join('expense_subcategories', 'expense_subcategories.id', '=', 'expense_items.subcategory_id')
             ->where('pdo_details.pdo_header_id', $pdo->id)
             ->whereIn('transfer_entries.transfer_destination', $destinations)
             ->where('expense_items.is_deduction', true)
-            ->groupBy('expense_items.subcategory_id')
-            ->selectRaw('expense_items.subcategory_id AS sub_id, SUM(transfer_entries.amount) AS total')
-            ->pluck('total', 'sub_id'); // negatif
+            ->groupBy('expense_subcategories.category_id')
+            ->selectRaw('expense_subcategories.category_id AS cat_id, SUM(transfer_entries.amount) AS total')
+            ->pluck('total', 'cat_id'); // negatif
 
         $total = 0;
-        foreach ($realizedBySub->keys()->merge($deductionBySub->keys())->unique() as $subId) {
+        foreach ($realizedByCat->keys()->merge($deductionByCat->keys())->unique() as $catId) {
             $total += DeductionNetting::effectiveRealization(
-                (int) ($realizedBySub[$subId] ?? 0),
-                (int) ($deductionBySub[$subId] ?? 0),
+                (int) ($realizedByCat[$catId] ?? 0),
+                (int) ($deductionByCat[$catId] ?? 0),
             );
         }
 

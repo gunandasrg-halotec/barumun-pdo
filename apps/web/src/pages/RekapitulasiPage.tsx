@@ -202,6 +202,7 @@ export function RekapitulasiPage() {
       unit_id:      resolvedUnitId || undefined,
       start_date:   validStartDate,
       end_date:     validEndDate,
+      kantong:      kantongFilter,
     },
     activeTab === 'harian' && !!resolvedUnitId,
   )
@@ -555,10 +556,17 @@ export function RekapitulasiPage() {
     try {
       const isHarian = activeTab === 'harian'
       const params: Record<string, string | number> = { period_year: year, period_month: month, unit_id: resolvedUnitId }
-      if (!isHarian && categoryId)         params.category_id = categoryId
-      if (!isHarian && kantongFilter !== 'all') params.kantong = kantongFilter
-      if (validStartDate)                  params.start_date  = validStartDate
-      if (validEndDate)                    params.end_date    = validEndDate
+      if (!isHarian && categoryId) params.category_id = categoryId
+      // Backend default kantong berbeda per endpoint kalau param tidak dikirim
+      // (Rekap → 'all', Harian → 'kebun' demi kompatibilitas mundur) — Harian
+      // WAJIB selalu mengirim kantong eksplisit, termasuk saat 'all'.
+      if (isHarian) {
+        params.kantong = kantongFilter
+      } else if (kantongFilter !== 'all') {
+        params.kantong = kantongFilter
+      }
+      if (validStartDate) params.start_date = validStartDate
+      if (validEndDate)   params.end_date   = validEndDate
       const res = await api.get(isHarian ? '/reports/cashbook/export' : '/reports/recap/export', { params, responseType: 'blob' })
       const url = URL.createObjectURL(res.data)
       const a   = document.createElement('a')
@@ -679,7 +687,7 @@ export function RekapitulasiPage() {
           </div>
         )}
 
-        {activeTab === 'rekap' && (
+        {(activeTab === 'rekap' || activeTab === 'harian') && (
           <div>
             <label className="label">Kantong</label>
             <select className="input-base" value={kantongFilter} disabled={kantongLocked} onChange={(e) => setKantongFilter(e.target.value as 'all' | 'kebun' | 'pribadi')}>
@@ -839,7 +847,7 @@ export function RekapitulasiPage() {
       ) : cashBookError ? (
         <div className="card text-sm text-red-600">Gagal memuat data. Coba lagi.</div>
       ) : !cashBook || cashBook.rows.length === 0 ? (
-        <EmptyState message="Tidak ada transaksi kas kebun untuk periode dan unit ini." />
+        <EmptyState message="Tidak ada transaksi untuk periode, unit, dan kantong ini." />
       ) : (
         <div className="card p-0 overflow-hidden">
           {/* Summary */}

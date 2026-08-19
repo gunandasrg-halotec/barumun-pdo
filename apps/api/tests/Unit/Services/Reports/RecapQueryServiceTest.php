@@ -323,28 +323,28 @@ class RecapQueryServiceTest extends TestCase
     }
 
     /**
-     * Kasus Binanga — netting potongan DIBATASI PER SUB-KATEGORI, bukan per kantong.
+     * Kasus Binanga Juli 2026 — kredit potongan boleh diserap SUB-KATEGORI TETANGGA
+     * dalam KATEGORI yang sama.
      *
-     * Potongan Panjar = uang muka yang sudah dibayar periode lalu UNTUK PEKERJAAN DI
-     * SUB-KATEGORI ITU SENDIRI. Karena itu kreditnya hanya boleh dinetkan terhadap
-     * realisasi sub-kategori yang sama: secara logika total biaya satu sub-kategori
-     * pasti akhirnya >= panjarnya sendiri. Kalau saat ini masih lebih kecil, itu
-     * berarti kerani BELUM selesai mencatat realisasi sub-kategori tsb — bukan alasan
-     * untuk menambal kekurangannya dengan surplus sub-kategori lain, karena itu akan
-     * mengecilkan realisasi item yang sama sekali tidak punya uang muka.
+     * Kerani memperkirakan beban pekerjaan di muka dan perkiraan itu bisa meleset,
+     * sehingga panjar satu sub-kategori melebihi biaya riilnya (Binanga: panjar
+     * TANAMAN MENGHASILKAN 600.000 tapi upah babat gawangan cuma 455.000). Kalau
+     * kreditnya ditahan di sub-kategori itu saja, sisa 145.000 tidak pernah terpakai
+     * dan saldo kantong tampil MINUS padahal tidak ada kas yang benar-benar negatif.
      *
-     * Sub-kategori yang kreditnya belum terpakai penuh hanya tertahan (realisasi
-     * efektif di-clamp 0, tidak pernah negatif) sampai realisasinya masuk.
+     * Pekerja yang sama umumnya juga mengerjakan sub-kategori lain di kategori yang
+     * sama, jadi kelebihan panjar wajar diserap sub-kategori tetangga.
      *
-     * Skop ini sengaja identik dengan CashBookQueryService::buildExpenseRows() supaya
-     * Rekap Buku Kas dan Buku Kas Harian selalu menampilkan angka yang sama.
+     * Skop ini sengaja identik dengan CashBookQueryService::buildExpenseRows() dan
+     * RealizationEntryService::totalRealizedForGroup() supaya Rekap Buku Kas, Buku Kas
+     * Harian, dan "Sisa Dana" selalu menampilkan angka yang sama.
      */
-    public function test_deduction_clamped_per_subcategory_not_across_pocket(): void
+    public function test_deduction_credit_spills_into_sibling_subcategory_of_same_category(): void
     {
         $pdo = $this->makeFinalPdo();
         $cat = ExpenseCategory::factory()->create(['company_id' => $this->companyId, 'include_in_recap' => true]);
 
-        // Sub-kategori A: potongan 600.000 tapi realisasi hanya 455.000 (kurang).
+        // Sub-kategori A: potongan 600.000 tapi realisasi hanya 455.000 (kurang 145.000).
         $subA  = ExpenseSubcategory::factory()->create(['category_id' => $cat->id]);
         $itemA = ExpenseItem::factory()->create(['subcategory_id' => $subA->id]);
         $detA  = PdoDetail::factory()->create(['pdo_header_id' => $pdo->id, 'expense_item_id' => $itemA->id, 'amount' => 1_000_000]);
@@ -356,7 +356,7 @@ class RecapQueryServiceTest extends TestCase
         ]);
         $this->seedDeduction($pdo, $subA, 600_000, 'pribadi');
 
-        // Sub-kategori B: surplus realisasi, cukup menutup sisa kredit sub-kategori A.
+        // Sub-kategori B (KATEGORI SAMA): surplus realisasi, menyerap sisa kredit sub A.
         $subB  = ExpenseSubcategory::factory()->create(['category_id' => $cat->id]);
         $itemB = ExpenseItem::factory()->create(['subcategory_id' => $subB->id]);
         $detB  = PdoDetail::factory()->create(['pdo_header_id' => $pdo->id, 'expense_item_id' => $itemB->id, 'amount' => 5_000_000]);
@@ -372,29 +372,66 @@ class RecapQueryServiceTest extends TestCase
 
         // transfer  = 455.000 + 3.000.000 − 1.200.000 = 2.255.000
         //
-        // realisasi per sub-kategori (masing-masing di-clamp di 0):
-        //   sub A: 455.000 − 600.000  → 0         (kredit 145.000 tertahan sampai
-        //                                          realisasi sub A dilengkapi kerani)
-        //   sub B: 3.600.000 − 600.000 → 3.000.000
-        //   total                       = 3.000.000
+        // realisasi di-clamp PER KATEGORI (bukan per sub-kategori):
+        //   realisasi kategori = 455.000 + 3.600.000 = 4.055.000
+        //   potongan kategori  = 1.200.000
+        //   efektif            = 4.055.000 − 1.200.000 = 2.855.000
         //
-        // Kredit sub A SENGAJA tidak ditambal surplus sub B — kalau ditambal,
-        // realisasi jadi 2.855.000 dan item sub B ikut terpotong padahal panjarnya
-        // sudah dinetkan sendiri.
+        // Kredit sub A yang kelebihan (145.000) diserap surplus sub B — itulah yang
+        // membuat saldo tidak lagi menggantung minus karena kredit tertahan.
         $this->assertEquals(2_255_000, $result['transfer_pribadi']);
-        $this->assertEquals(3_000_000, $result['realisasi_pribadi']);
-        $this->assertEquals(-745_000, $result['saldo_pribadi']);
+        $this->assertEquals(2_855_000, $result['realisasi_pribadi']);
+        $this->assertEquals(-600_000, $result['saldo_pribadi']);
     }
 
     /**
-     * Sub-kategori TANPA item potongan sama sekali tidak boleh ikut terpotong hanya
-     * karena sub-kategori lain punya Potongan Panjar. Ini kasus KP Agustus 2026:
-     * seluruh realisasi kas kebun (3.292.000) ada di sub-kategori yang tidak punya
-     * panjar, sementara panjar 11.800.000 ada di sub-kategori lain yang belum
-     * direalisasi — Rekap sempat menampilkan Realisasi Rp 0 karena netting dilakukan
-     * PDO-wide.
+     * Kredit potongan TIDAK boleh melewati batas KATEGORI. Kategori yang sama sekali
+     * tidak punya panjar tidak boleh ikut terpotong hanya karena kategori lain punya —
+     * itu akan mengecilkan realisasi item yang tidak punya uang muka sama sekali
+     * (perilaku PDO-wide lama yang sudah dibuang).
      */
-    public function test_subcategory_without_deduction_is_not_reduced_by_other_subcategory_deduction(): void
+    public function test_deduction_credit_does_not_spill_across_categories(): void
+    {
+        $pdo = $this->makeFinalPdo();
+
+        // Kategori A: panjar 1.000.000, belum ada realisasi sama sekali.
+        $catA = ExpenseCategory::factory()->create(['company_id' => $this->companyId, 'include_in_recap' => true]);
+        $subA = ExpenseSubcategory::factory()->create(['category_id' => $catA->id]);
+        $this->seedDeduction($pdo, $subA, 1_000_000, 'rek_kebun');
+
+        // Kategori B: tidak punya panjar, realisasi 300.000 — harus tetap utuh.
+        $catB  = ExpenseCategory::factory()->create(['company_id' => $this->companyId, 'include_in_recap' => true]);
+        $subB  = ExpenseSubcategory::factory()->create(['category_id' => $catB->id]);
+        $itemB = ExpenseItem::factory()->create(['subcategory_id' => $subB->id]);
+        $detB  = PdoDetail::factory()->create(['pdo_header_id' => $pdo->id, 'expense_item_id' => $itemB->id, 'amount' => 500_000]);
+        TransferEntry::factory()->create(['pdo_detail_id' => $detB->id, 'amount' => 500_000, 'transfer_destination' => 'rek_kebun']);
+        RealizationEntry::factory()->create([
+            'pdo_detail_id'  => $detB->id,
+            'amount'         => 300_000,
+            'funding_source' => RealizationEntry::FUNDING_KAS_KEBUN,
+        ]);
+
+        $result = $this->query();
+
+        // transfer  = 500.000 − 1.000.000 = −500.000
+        // realisasi = 0 (kategori A, kredit tertahan) + 300.000 (kategori B, utuh)
+        $this->assertEquals(-500_000, $result['transfer_kebun']);
+        $this->assertEquals(300_000, $result['realisasi_kebun']);
+    }
+
+    /**
+     * Kalau realisasi SATU KATEGORI pun masih lebih kecil dari panjarnya, kredit
+     * di-clamp sebesar realisasi kategori itu — realisasi efektif kategori jadi 0,
+     * TIDAK pernah negatif. Sisa kreditnya tertahan sampai realisasinya masuk.
+     *
+     * Konsekuensi yang disengaja: selama kerani belum selesai mencatat realisasi
+     * sub-kategori yang punya panjar, realisasi sub-kategori TETANGGA di kategori yang
+     * sama ikut terserap (di sini 300.000 habis dipakai menutup panjar 1.000.000).
+     * Ini self-correcting — begitu realisasi sub berpanjar masuk, angkanya normal
+     * kembali. Batasnya tetap kategori, tidak pernah PDO-wide (lihat
+     * test_deduction_credit_does_not_spill_across_categories).
+     */
+    public function test_credit_clamped_at_category_total_when_category_realisasi_insufficient(): void
     {
         $pdo = $this->makeFinalPdo();
         $cat = ExpenseCategory::factory()->create(['company_id' => $this->companyId, 'include_in_recap' => true]);
@@ -403,7 +440,7 @@ class RecapQueryServiceTest extends TestCase
         $subA = ExpenseSubcategory::factory()->create(['category_id' => $cat->id]);
         $this->seedDeduction($pdo, $subA, 1_000_000, 'rek_kebun');
 
-        // Sub-kategori B: TIDAK punya panjar, realisasi 300.000 — harus tetap utuh.
+        // Sub-kategori B (KATEGORI SAMA): tidak punya panjar, realisasi 300.000.
         $subB  = ExpenseSubcategory::factory()->create(['category_id' => $cat->id]);
         $itemB = ExpenseItem::factory()->create(['subcategory_id' => $subB->id]);
         $detB  = PdoDetail::factory()->create(['pdo_header_id' => $pdo->id, 'expense_item_id' => $itemB->id, 'amount' => 500_000]);
@@ -417,9 +454,10 @@ class RecapQueryServiceTest extends TestCase
         $result = $this->query();
 
         // transfer  = 500.000 − 1.000.000 = −500.000
-        // realisasi = 0 (sub A, kredit tertahan) + 300.000 (sub B, utuh) = 300.000
+        // realisasi = max(0, 300.000 − 1.000.000) = 0  (kredit terpakai 300.000,
+        //             sisa 700.000 tertahan sampai realisasi sub A masuk)
         $this->assertEquals(-500_000, $result['transfer_kebun']);
-        $this->assertEquals(300_000, $result['realisasi_kebun']);
+        $this->assertEquals(0, $result['realisasi_kebun']);
     }
 
     /**

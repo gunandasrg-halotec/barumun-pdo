@@ -9,6 +9,7 @@ export interface CashBookFilters {
   unit_id?: string
   start_date?: string
   end_date?: string
+  kantong?: 'all' | 'kebun' | 'pribadi'
 }
 
 export function useCashBookData(filters: CashBookFilters, enabled = true) {
@@ -22,6 +23,7 @@ export function useCashBookData(filters: CashBookFilters, enabled = true) {
       if (filters.unit_id)    params.unit_id    = filters.unit_id
       if (filters.start_date) params.start_date = filters.start_date
       if (filters.end_date)   params.end_date   = filters.end_date
+      if (filters.kantong)    params.kantong    = filters.kantong
 
       const res = await api.get<ApiResponse<CashBookResponse>>('/reports/cashbook', { params })
       return res.data.data

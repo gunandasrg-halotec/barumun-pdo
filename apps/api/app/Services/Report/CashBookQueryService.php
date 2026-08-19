@@ -10,11 +10,42 @@ use Illuminate\Database\Eloquent\Builder;
 
 class CashBookQueryService
 {
-    private const RECEIPT_DESTINATIONS = [TransferEntry::DEST_REK_KEBUN];
-    private const EXPENSE_FUNDING_SOURCES = [
+    private const RECEIPT_DESTINATIONS_KEBUN   = [TransferEntry::DEST_REK_KEBUN];
+    private const RECEIPT_DESTINATIONS_PRIBADI = [TransferEntry::DEST_PRIBADI, TransferEntry::DEST_VENDOR];
+    private const EXPENSE_FUNDING_SOURCES_KEBUN = [
         RealizationEntry::FUNDING_KAS_KEBUN,
         RealizationEntry::FUNDING_REKENING_KEBUN,
     ];
+    private const EXPENSE_FUNDING_SOURCES_PRIBADI = [RealizationEntry::FUNDING_REKENING_UTAMA];
+
+    /**
+     * Semua metode LAIN di file ini (openingBalanceForPeriod, closingBalanceForPeriod,
+     * currentBalance — dipakai validasi saldo kas kebun & KPI Dashboard/Recap) SENGAJA
+     * tidak menerima parameter kantong: makna aslinya memang murni kas fisik kas kebun,
+     * bukan "kantong" yang bisa dipilih user. Hanya getCashBookData() (Buku Kas Harian)
+     * yang mendukung kantong pribadi/vendor/semua — HO (role tanpa unit kebun) ingin
+     * melihat dana yang ditransfer LANGSUNG oleh HO ke pribadi/vendor tanpa transit di
+     * kas kebun. Formula saldo berjalan tetap sama persis (seed + penerimaan − realisasi),
+     * hanya himpunan transaksi yang mendasarinya yang berbeda — secara akuntansi semua
+     * tetap "dana operasional kebun", kantong hanya membedakan jalur transfernya.
+     */
+    private function receiptDestinationsFor(string $kantong): array
+    {
+        return match ($kantong) {
+            'pribadi' => self::RECEIPT_DESTINATIONS_PRIBADI,
+            'kebun'   => self::RECEIPT_DESTINATIONS_KEBUN,
+            default   => [...self::RECEIPT_DESTINATIONS_KEBUN, ...self::RECEIPT_DESTINATIONS_PRIBADI],
+        };
+    }
+
+    private function expenseFundingSourcesFor(string $kantong): array
+    {
+        return match ($kantong) {
+            'pribadi' => self::EXPENSE_FUNDING_SOURCES_PRIBADI,
+            'kebun'   => self::EXPENSE_FUNDING_SOURCES_KEBUN,
+            default   => [...self::EXPENSE_FUNDING_SOURCES_KEBUN, ...self::EXPENSE_FUNDING_SOURCES_PRIBADI],
+        };
+    }
 
     /**
      * TransferEntry auto-generated untuk PDOT funding_option=kas_kebun BUKAN uang
@@ -47,6 +78,7 @@ class CashBookQueryService
         $unitId    = $filters['unit_id'];
         $startDate = $filters['start_date'] ?? null;
         $endDate   = $filters['end_date']   ?? null;
+        $kantong   = $filters['kantong']    ?? 'kebun'; // 'kebun' | 'pribadi' | 'all'
 
         $periodStart = Carbon::createFromDate($year, $month, 1)->startOfMonth();
         $periodEnd   = $periodStart->copy()->endOfMonth();
@@ -54,7 +86,7 @@ class CashBookQueryService
         $effectiveStart = $startDate ? Carbon::parse($startDate) : $periodStart;
         $effectiveEnd   = $endDate   ? Carbon::parse($endDate)   : $periodEnd;
 
-        $openingBalance = $this->cumulativeBalanceBefore($unitId, $effectiveStart);
+        $openingBalance = $this->cumulativeBalanceBefore($unitId, $effectiveStart, $kantong);
 
         // Penerimaan digabung per tanggal transfer — 1 baris per tanggal, jumlah
         // dijumlahkan, dan uraian mendaftar semua item biaya yang didanai hari itu.
@@ -71,7 +103,7 @@ class CashBookQueryService
         // mengoreksi supaya saldo berjalan tetap akurat (lihat cumulativeBalanceBefore
         // yang membuktikan secara matematis kedua sisi saling menetralkan).
         $receiptsQuery = TransferEntry::query()
-            ->whereIn('transfer_destination', self::RECEIPT_DESTINATIONS)
+            ->whereIn('transfer_destination', $this->receiptDestinationsFor($kantong))
             ->whereHas('pdoDetail', fn ($q) => $this->excludingKasKebunFunded($q))
             ->whereHas('pdoDetail.pdoHeader', fn ($q) => $q
                 ->where('plantation_unit_id', $unitId)
@@ -104,7 +136,7 @@ class CashBookQueryService
             })
             ->values();
 
-        $expenseRows = $this->buildExpenseRows($unitId, $year, $month, $effectiveStart, $effectiveEnd);
+        $expenseRows = $this->buildExpenseRows($unitId, $year, $month, $effectiveStart, $effectiveEnd, $kantong);
 
         $rows = $receipts->concat($expenseRows)
             ->sortBy([['date', 'asc'], ['created_at', 'asc']])
@@ -180,15 +212,22 @@ class CashBookQueryService
      * Item Potongan Panjar (down payment yang SUDAH direalisasikan periode
      * sebelumnya — direpresentasikan sebagai TransferEntry negatif, bukan
      * RealizationEntry, sehingga tidak pernah muncul sebagai baris pengeluaran
-     * sendiri) dinetkan (dikurangkan) HANYA ke grup tanggal PALING AWAL dalam
-     * subkategori yang sama — mewakili "biaya bulan lalu yang di-settle bulan
-     * ini". Grup tanggal berikutnya dalam subkategori yang sama (mis. Panjar
-     * Gaji yang direalisasikan pertengahan bulan) tidak lagi dikurangi.
+     * sendiri) dinetkan (dikurangkan) mulai dari grup tanggal PALING AWAL dalam
+     * KATEGORI yang sama — mewakili "biaya bulan lalu yang di-settle bulan ini".
+     * Grup tanggal berikutnya baru ikut dikurangi kalau kreditnya belum habis.
+     *
+     * Skop kredit sengaja KATEGORI, bukan subkategori: kerani memperkirakan beban
+     * pekerjaan di muka dan perkiraan itu bisa meleset, sehingga panjar satu
+     * subkategori bisa melebihi biaya riilnya (kasus Binanga Juli 2026). Pekerja
+     * yang sama umumnya juga mengerjakan subkategori lain di kategori yang sama,
+     * jadi kelebihan panjar wajar diserap subkategori tetangga. Skop ini WAJIB
+     * sama dengan RecapQueryService supaya Buku Kas Harian dan Rekap Buku Kas
+     * selalu menghasilkan angka yang sama.
      */
-    private function buildExpenseRows(string $unitId, int $year, int $month, Carbon $effectiveStart, Carbon $effectiveEnd): array
+    private function buildExpenseRows(string $unitId, int $year, int $month, Carbon $effectiveStart, Carbon $effectiveEnd, string $kantong = 'kebun'): array
     {
         $entries = RealizationEntry::query()
-            ->whereIn('funding_source', self::EXPENSE_FUNDING_SOURCES)
+            ->whereIn('funding_source', $this->expenseFundingSourcesFor($kantong))
             ->whereHas('pdoDetail.pdoHeader', fn ($q) => $q
                 ->where('plantation_unit_id', $unitId)
                 ->where('period_year', $year)
@@ -197,31 +236,38 @@ class CashBookQueryService
             ->with(['pdoDetail.expenseItem.subcategory.category', 'pettyCashVoucherLine.pettyCashVoucher'])
             ->get();
 
-        $deductionBySubcategory = TransferEntry::query()
-            ->whereIn('transfer_destination', self::RECEIPT_DESTINATIONS)
+        $deductionByCategory = TransferEntry::query()
+            ->whereIn('transfer_destination', $this->receiptDestinationsFor($kantong))
             ->whereHas('pdoDetail', fn ($q) => $this->excludingKasKebunFunded($q))
             ->whereHas('pdoDetail.expenseItem', fn ($q) => $q->where('is_deduction', true))
             ->whereHas('pdoDetail.pdoHeader', fn ($q) => $q
                 ->where('plantation_unit_id', $unitId)
                 ->where('period_year', $year)
                 ->where('period_month', $month))
-            ->with('pdoDetail.expenseItem')
+            ->with('pdoDetail.expenseItem.subcategory')
             ->get()
-            ->groupBy(fn (TransferEntry $t) => $t->pdoDetail?->expenseItem?->subcategory_id)
+            ->groupBy(fn (TransferEntry $t) => $t->pdoDetail?->expenseItem?->subcategory?->category_id)
             ->map(fn ($group) => (int) $group->sum('amount')); // negatif
 
         $rows = [];
 
         $entries
-            ->groupBy(fn (RealizationEntry $r) => $r->pdoDetail?->expenseItem?->subcategory_id ?? 'unknown')
-            ->each(function ($subcategoryEntries, $subcategoryId) use (&$rows, $deductionBySubcategory) {
-                $deductionRemaining = (int) ($deductionBySubcategory[$subcategoryId] ?? 0); // negatif atau 0
+            ->groupBy(fn (RealizationEntry $r) => $r->pdoDetail?->expenseItem?->subcategory?->category_id ?? 'unknown')
+            ->each(function ($categoryEntries, $categoryId) use (&$rows, $deductionByCategory) {
+                $deductionRemaining = (int) ($deductionByCategory[$categoryId] ?? 0); // negatif atau 0
 
-                $dateGroups = $subcategoryEntries
-                    ->groupBy(fn (RealizationEntry $r) => $r->transaction_date->toDateString())
-                    ->sortKeys(); // tanggal paling awal duluan
+                // Baris tetap digabung per (subkategori, tanggal) seperti sebelumnya —
+                // yang berubah hanya SKOP kredit potongan. Tanggal ditaruh di depan key
+                // supaya sortKeys() mengurutkan per tanggal lintas subkategori, sehingga
+                // kredit selalu dikonsumsi dari pengeluaran paling awal di kategori ini.
+                $dateGroups = $categoryEntries
+                    ->groupBy(fn (RealizationEntry $r) => $r->transaction_date->toDateString()
+                        .'|'.($r->pdoDetail?->expenseItem?->subcategory_id ?? 'unknown'))
+                    ->sortKeys();
 
-                foreach ($dateGroups as $date => $group) {
+                foreach ($dateGroups as $groupKey => $group) {
+                    $date = explode('|', $groupKey)[0];
+
                     $lines = $group->map(function (RealizationEntry $r) {
                         $item = $r->pdoDetail?->expenseItem;
                         $cat  = $item?->subcategory?->category?->name;
@@ -266,11 +312,12 @@ class CashBookQueryService
                     $amount = (int) $group->sum('amount');
 
                     // Netkan potongan mulai dari grup tanggal paling awal dalam
-                    // subkategori ini. Kredit dibatasi sebesar nilai grup itu supaya
+                    // KATEGORI ini. Kredit dibatasi sebesar nilai grup itu supaya
                     // baris tidak pernah jadi negatif; sisanya diteruskan ke grup
-                    // tanggal berikutnya. Kalau subkategori ini tidak punya realisasi
-                    // sama sekali, loop ini tidak jalan dan potongan tidak dikreditkan
-                    // — konsisten dengan clamp di cumulativeBalanceBefore().
+                    // tanggal berikutnya (boleh subkategori lain). Kalau kategori ini
+                    // tidak punya realisasi sama sekali, loop ini tidak jalan dan
+                    // potongan tidak dikreditkan — konsisten dengan clamp di
+                    // cumulativeBalanceBefore().
                     if ($deductionRemaining !== 0 && $amount > 0) {
                         $applied = -min($amount, abs($deductionRemaining));
                         $amount += $applied;
@@ -300,6 +347,11 @@ class CashBookQueryService
      * Ditambah saldo awal (seed) per unit — saldo kas kebun akhir Juni 2026
      * sebelum sistem PDO dipakai, lihat UnitOpeningBalance — supaya saldo
      * berjalan akurat sejak titik mulai pemakaian sistem, bukan mulai dari nol.
+     * Seed ini MURNI kas fisik kas kebun (hasil hitung tunai saat cutover),
+     * jadi HANYA disertakan kalau kantong mencakup kebun ('kebun'/'all').
+     * Kantong 'pribadi' murni tidak pernah menyimpan kas fisik — dana
+     * ditransfer langsung HO ke rekening pribadi/vendor dan dibelanjakan,
+     * tidak pernah "dipegang" siapa pun — sehingga tidak punya saldo awal.
      *
      * Potongan (transfer negatif) mengurangi total pengeluaran, tapi HANYA
      * sebatas realisasi yang benar-benar sudah tercatat pada PDO yang sama —
@@ -313,19 +365,19 @@ class CashBookQueryService
      * sama sekali saldo jadi kekurangan pada periode yang realisasinya sudah
      * lengkap (PDO Juli: KP −7.026.778 padahal seharusnya 4.073.222).
      */
-    private function cumulativeBalanceBefore(string $unitId, Carbon $before): int
+    private function cumulativeBalanceBefore(string $unitId, Carbon $before, string $kantong = 'kebun'): int
     {
-        $seed = UnitOpeningBalance::amountForUnit($unitId);
+        $seed = $kantong === 'pribadi' ? 0 : UnitOpeningBalance::amountForUnit($unitId);
 
         $totalReceipts = (int) TransferEntry::query()
-            ->whereIn('transfer_destination', self::RECEIPT_DESTINATIONS)
+            ->whereIn('transfer_destination', $this->receiptDestinationsFor($kantong))
             ->whereHas('pdoDetail', fn ($q) => $this->excludingKasKebunFunded($q))
             ->whereHas('pdoDetail.pdoHeader', fn ($q) => $q->where('plantation_unit_id', $unitId))
             ->where('transfer_date', '<', $before->toDateString())
             ->sum('amount');
 
         $realizationByPdo = RealizationEntry::query()
-            ->whereIn('funding_source', self::EXPENSE_FUNDING_SOURCES)
+            ->whereIn('funding_source', $this->expenseFundingSourcesFor($kantong))
             ->whereHas('pdoDetail.pdoHeader', fn ($q) => $q->where('plantation_unit_id', $unitId))
             ->where('transaction_date', '<', $before->toDateString())
             ->join('pdo_details', 'pdo_details.id', '=', 'realization_entries.pdo_detail_id')
@@ -334,7 +386,7 @@ class CashBookQueryService
             ->pluck('total', 'pdo_id');
 
         $deductionByPdo = TransferEntry::query()
-            ->whereIn('transfer_destination', self::RECEIPT_DESTINATIONS)
+            ->whereIn('transfer_destination', $this->receiptDestinationsFor($kantong))
             ->whereHas('pdoDetail', fn ($q) => $this->excludingKasKebunFunded($q))
             ->whereHas('pdoDetail.expenseItem', fn ($q) => $q->where('is_deduction', true))
             ->whereHas('pdoDetail.pdoHeader', fn ($q) => $q->where('plantation_unit_id', $unitId))

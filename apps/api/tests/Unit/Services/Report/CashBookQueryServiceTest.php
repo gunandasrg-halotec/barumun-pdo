@@ -12,6 +12,7 @@ use App\Models\PlantationUnit;
 use App\Models\RealizationEntry;
 use App\Models\Role;
 use App\Models\TransferEntry;
+use App\Models\UnitOpeningBalance;
 use App\Models\User;
 use App\Services\Report\CashBookQueryService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -433,5 +434,167 @@ class CashBookQueryServiceTest extends TestCase
 
         $this->assertNotNull($expenseRow);
         $this->assertNull($expenseRow['vouchers']);
+    }
+
+    /**
+     * Filter kantong untuk HO (role tanpa unit kebun): 'kebun' → hanya transaksi
+     * rek_kebun/kas_kebun (default, perilaku existing); 'pribadi' → hanya transaksi
+     * pribadi/vendor; 'all' → gabungan keduanya. Ketiganya harus menjumlah secara
+     * matematis konsisten (all = kebun + pribadi).
+     */
+    public function test_kantong_filter_scopes_receipts_and_expenses(): void
+    {
+        $cat = ExpenseCategory::factory()->create(['company_id' => $this->companyId]);
+        $sub = ExpenseSubcategory::factory()->create(['category_id' => $cat->id]);
+        $pdo = PdoHeader::factory()->create([
+            'company_id'         => $this->companyId,
+            'plantation_unit_id' => $this->unit->id,
+            'created_by'         => $this->kerani->id,
+            'status'             => PdoHeader::STATUS_FINAL,
+            'period_year'        => 2026,
+            'period_month'       => 8,
+        ]);
+
+        // Item kantong kebun: transfer 3.000.000, realisasi 1.500.000.
+        $itemKebun   = ExpenseItem::factory()->create(['subcategory_id' => $sub->id]);
+        $detailKebun = PdoDetail::factory()->create(['pdo_header_id' => $pdo->id, 'expense_item_id' => $itemKebun->id, 'amount' => 3_000_000]);
+        TransferEntry::factory()->create([
+            'pdo_detail_id' => $detailKebun->id, 'amount' => 3_000_000,
+            'transfer_destination' => 'rek_kebun', 'transfer_date' => '2026-08-01',
+        ]);
+        RealizationEntry::factory()->create([
+            'pdo_detail_id'    => $detailKebun->id,
+            'amount'           => 1_500_000,
+            'funding_source'   => RealizationEntry::FUNDING_KAS_KEBUN,
+            'transaction_date' => '2026-08-05',
+        ]);
+
+        // Item kantong pribadi/vendor: transfer langsung 2.000.000, realisasi 800.000.
+        $itemPribadi   = ExpenseItem::factory()->create(['subcategory_id' => $sub->id]);
+        $detailPribadi = PdoDetail::factory()->create(['pdo_header_id' => $pdo->id, 'expense_item_id' => $itemPribadi->id, 'amount' => 2_000_000]);
+        TransferEntry::factory()->create([
+            'pdo_detail_id' => $detailPribadi->id, 'amount' => 2_000_000,
+            'transfer_destination' => 'vendor', 'transfer_date' => '2026-08-02',
+        ]);
+        RealizationEntry::factory()->create([
+            'pdo_detail_id'    => $detailPribadi->id,
+            'amount'           => 800_000,
+            'funding_source'   => RealizationEntry::FUNDING_REKENING_UTAMA,
+            'settlement_group' => RealizationEntry::SETTLEMENT_PRIBADI_VENDOR,
+            'transaction_date' => '2026-08-06',
+        ]);
+
+        $filters = ['period_year' => 2026, 'period_month' => 8, 'unit_id' => $this->unit->id];
+
+        $kebun   = $this->service->getCashBookData([...$filters, 'kantong' => 'kebun']);
+        $pribadi = $this->service->getCashBookData([...$filters, 'kantong' => 'pribadi']);
+        $all     = $this->service->getCashBookData([...$filters, 'kantong' => 'all']);
+
+        $this->assertEquals(3_000_000, $kebun['total_penerimaan']);
+        $this->assertEquals(1_500_000, $kebun['total_pengeluaran']);
+
+        $this->assertEquals(2_000_000, $pribadi['total_penerimaan']);
+        $this->assertEquals(800_000, $pribadi['total_pengeluaran']);
+
+        $this->assertEquals(5_000_000, $all['total_penerimaan']);
+        $this->assertEquals(2_300_000, $all['total_pengeluaran']);
+
+        // Tanpa kantong sama sekali (default) harus identik dengan eksplisit 'kebun' —
+        // menjaga kompatibilitas mundur untuk caller lama yang belum kirim param ini.
+        $default = $this->service->getCashBookData($filters);
+        $this->assertEquals($kebun['total_penerimaan'], $default['total_penerimaan']);
+        $this->assertEquals($kebun['total_pengeluaran'], $default['total_pengeluaran']);
+    }
+
+    /**
+     * UnitOpeningBalance adalah saldo kas FISIK kas kebun hasil hitung tunai saat
+     * cutover sistem — tidak pernah relevan untuk kantong Pribadi/Vendor karena dana
+     * ke sana tidak pernah disimpan sebagai kas (ditransfer langsung HO ke rekening
+     * pribadi/vendor lalu dibelanjakan). Kantong 'kebun' dan 'all' tetap menyertakan
+     * seed ini; kantong 'pribadi' murni harus 0.
+     */
+    public function test_unit_opening_balance_seed_excluded_from_pribadi_only_kantong(): void
+    {
+        UnitOpeningBalance::create([
+            'plantation_unit_id' => $this->unit->id,
+            'amount'             => 2_533_178,
+            'as_of_date'         => '2026-06-30',
+        ]);
+
+        $filters = ['period_year' => 2026, 'period_month' => 8, 'unit_id' => $this->unit->id];
+
+        $kebun   = $this->service->getCashBookData([...$filters, 'kantong' => 'kebun']);
+        $pribadi = $this->service->getCashBookData([...$filters, 'kantong' => 'pribadi']);
+        $all     = $this->service->getCashBookData([...$filters, 'kantong' => 'all']);
+
+        $this->assertEquals(2_533_178, $kebun['opening_balance']);
+        $this->assertEquals(0, $pribadi['opening_balance']);
+        $this->assertEquals(2_533_178, $all['opening_balance']);
+    }
+
+    /**
+     * Kasus Binanga Juli 2026 — kredit potongan yang melebihi biaya sub-kategorinya
+     * sendiri harus meluber ke sub-kategori TETANGGA dalam KATEGORI yang sama, bukan
+     * tertahan. Skopnya WAJIB sama dengan RecapQueryService supaya Buku Kas Harian dan
+     * Rekap Buku Kas tidak pernah berbeda angka.
+     */
+    public function test_deduction_credit_spills_into_sibling_subcategory_of_same_category(): void
+    {
+        $cat = ExpenseCategory::factory()->create(['company_id' => $this->companyId]);
+        $pdo = PdoHeader::factory()->create([
+            'company_id'         => $this->companyId,
+            'plantation_unit_id' => $this->unit->id,
+            'created_by'         => $this->kerani->id,
+            'status'             => PdoHeader::STATUS_FINAL,
+            'period_year'        => 2026,
+            'period_month'       => 8,
+        ]);
+
+        // Sub A: transfer 455.000, realisasi 455.000, TAPI panjar 600.000 (lebih besar).
+        $subA  = ExpenseSubcategory::factory()->create(['category_id' => $cat->id]);
+        $itemA = ExpenseItem::factory()->create(['subcategory_id' => $subA->id]);
+        $detA  = PdoDetail::factory()->create(['pdo_header_id' => $pdo->id, 'expense_item_id' => $itemA->id, 'amount' => 455_000]);
+        TransferEntry::factory()->create([
+            'pdo_detail_id' => $detA->id, 'amount' => 455_000,
+            'transfer_destination' => 'rek_kebun', 'transfer_date' => '2026-08-01',
+        ]);
+        RealizationEntry::factory()->create([
+            'pdo_detail_id' => $detA->id, 'amount' => 455_000,
+            'funding_source' => RealizationEntry::FUNDING_KAS_KEBUN, 'transaction_date' => '2026-08-05',
+        ]);
+
+        $dedItem   = ExpenseItem::factory()->create(['subcategory_id' => $subA->id, 'is_deduction' => true]);
+        $dedDetail = PdoDetail::factory()->create(['pdo_header_id' => $pdo->id, 'expense_item_id' => $dedItem->id, 'amount' => 600_000]);
+        TransferEntry::factory()->create([
+            'pdo_detail_id' => $dedDetail->id, 'amount' => -600_000,
+            'transfer_destination' => 'rek_kebun', 'transfer_date' => '2026-08-01',
+            'entry_source' => 'system', 'is_auto_generated' => true,
+        ]);
+
+        // Sub B (KATEGORI SAMA): realisasi 5.252.000, tidak punya panjar.
+        $subB  = ExpenseSubcategory::factory()->create(['category_id' => $cat->id]);
+        $itemB = ExpenseItem::factory()->create(['subcategory_id' => $subB->id]);
+        $detB  = PdoDetail::factory()->create(['pdo_header_id' => $pdo->id, 'expense_item_id' => $itemB->id, 'amount' => 5_252_000]);
+        TransferEntry::factory()->create([
+            'pdo_detail_id' => $detB->id, 'amount' => 5_252_000,
+            'transfer_destination' => 'rek_kebun', 'transfer_date' => '2026-08-01',
+        ]);
+        RealizationEntry::factory()->create([
+            'pdo_detail_id' => $detB->id, 'amount' => 5_252_000,
+            'funding_source' => RealizationEntry::FUNDING_KAS_KEBUN, 'transaction_date' => '2026-08-06',
+        ]);
+
+        $cashBook = $this->service->getCashBookData([
+            'period_year' => 2026, 'period_month' => 8, 'unit_id' => $this->unit->id,
+        ]);
+
+        // Penerimaan = 455.000 + 5.252.000 − 600.000 = 5.107.000
+        // Pengeluaran = (455.000 + 5.252.000) − 600.000 = 5.107.000 (kredit terpakai
+        // PENUH: 455.000 dari sub A + sisa 145.000 diserap sub B)
+        // Saldo akhir = 0 — inilah inti perbaikannya; sebelumnya saldo menggantung
+        // −145.000 karena sisa kredit tertahan di sub A.
+        $this->assertEquals(5_107_000, $cashBook['total_penerimaan']);
+        $this->assertEquals(5_107_000, $cashBook['total_pengeluaran']);
+        $this->assertEquals(0, $cashBook['closing_balance']);
     }
 }

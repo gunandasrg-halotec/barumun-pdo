@@ -287,6 +287,12 @@ class PdoServiceTest extends TestCase
      * Regresi PDO Juli: potongan harus dinetkan penuh begitu realisasinya tercatat.
      * Pernah rusak (KP saldo −7.026.778 dari seharusnya 4.073.222) saat netting
      * dihapus total demi memperbaiki kasus "belum ada realisasi" di atas.
+     *
+     * Kategori dibuat EKSPLISIT: di produksi item POTONGAN PANJAR selalu berada di
+     * kategori yang sama dengan pekerjaan yang dipotongnya, dan netting memang
+     * di-clamp per kategori (lihat PdoService::effectiveRealizedSql()). Kalau
+     * memakai factory polos, tiap item mendapat kategori sendiri-sendiri sehingga
+     * skenarionya tidak mewakili data nyata.
      */
     public function test_list_pdo_nets_deduction_fully_once_realized(): void
     {
@@ -297,15 +303,20 @@ class PdoServiceTest extends TestCase
             'status'             => PdoHeader::STATUS_DRAFT,
         ]);
 
-        $detail = PdoDetail::factory()->create(['pdo_header_id' => $pdo->id, 'amount' => 5_000_000]);
+        $cat = ExpenseCategory::factory()->create(['company_id' => $this->companyId]);
+        $sub = ExpenseSubcategory::factory()->create(['category_id' => $cat->id]);
+
+        $item   = ExpenseItem::factory()->create(['subcategory_id' => $sub->id]);
+        $detail = PdoDetail::factory()->create(['pdo_header_id' => $pdo->id, 'expense_item_id' => $item->id, 'amount' => 5_000_000]);
         TransferEntry::factory()->create(['pdo_detail_id' => $detail->id, 'amount' => 4_000_000, 'transfer_destination' => 'rek_kebun']);
         RealizationEntry::factory()->create([
             'pdo_detail_id'  => $detail->id,
             'amount'         => 5_000_000,
-            'funding_source' => \App\Models\RealizationEntry::FUNDING_KAS_KEBUN,
+            'funding_source' => RealizationEntry::FUNDING_KAS_KEBUN,
         ]);
 
-        $dedItem   = \App\Models\ExpenseItem::factory()->create(['is_deduction' => true]);
+        // Potongan di KATEGORI YANG SAMA — persis seperti data produksi.
+        $dedItem   = ExpenseItem::factory()->create(['subcategory_id' => $sub->id, 'is_deduction' => true]);
         $dedDetail = PdoDetail::factory()->create(['pdo_header_id' => $pdo->id, 'expense_item_id' => $dedItem->id, 'amount' => 1_000_000]);
         TransferEntry::factory()->create([
             'pdo_detail_id' => $dedDetail->id, 'amount' => -1_000_000, 'transfer_destination' => 'rek_kebun',
@@ -317,6 +328,54 @@ class PdoServiceTest extends TestCase
         $this->assertNotNull($row);
         $this->assertEquals(3_000_000, (int) $row->total_transferred);  // 4.000.000 − 1.000.000
         $this->assertEquals(4_000_000, (int) $row->total_realized);     // 5.000.000 − 1.000.000
+        $this->assertEquals(-1_000_000, (int) $row->balance);
+    }
+
+    /**
+     * Kredit potongan TIDAK boleh melewati batas kategori — kategori yang tidak punya
+     * panjar sama sekali tetap menampilkan realisasinya utuh. Skop ini WAJIB sama
+     * dengan RecapQueryService, kalau tidak Daftar PDO dan Rekap Buku Kas akan
+     * menampilkan angka Realisasi berbeda untuk PDO yang sama (kasus KP Agustus 2026:
+     * Daftar PDO 27.718.000 vs Rekap 30.615.000 saat clamp masih PDO-wide).
+     */
+    public function test_list_pdo_deduction_does_not_consume_other_category_realization(): void
+    {
+        $pdo = PdoHeader::factory()->create([
+            'company_id'         => $this->companyId,
+            'plantation_unit_id' => $this->unit->id,
+            'created_by'         => $this->kerani->id,
+            'status'             => PdoHeader::STATUS_DRAFT,
+        ]);
+
+        // Kategori A: realisasi 5.000.000, tanpa panjar.
+        $catA  = ExpenseCategory::factory()->create(['company_id' => $this->companyId]);
+        $subA  = ExpenseSubcategory::factory()->create(['category_id' => $catA->id]);
+        $itemA = ExpenseItem::factory()->create(['subcategory_id' => $subA->id]);
+        $detA  = PdoDetail::factory()->create(['pdo_header_id' => $pdo->id, 'expense_item_id' => $itemA->id, 'amount' => 5_000_000]);
+        TransferEntry::factory()->create(['pdo_detail_id' => $detA->id, 'amount' => 5_000_000, 'transfer_destination' => 'rek_kebun']);
+        RealizationEntry::factory()->create([
+            'pdo_detail_id'  => $detA->id,
+            'amount'         => 5_000_000,
+            'funding_source' => RealizationEntry::FUNDING_KAS_KEBUN,
+        ]);
+
+        // Kategori B: panjar 1.000.000 yang belum direalisasi sama sekali.
+        $catB    = ExpenseCategory::factory()->create(['company_id' => $this->companyId]);
+        $subB    = ExpenseSubcategory::factory()->create(['category_id' => $catB->id]);
+        $dedItem = ExpenseItem::factory()->create(['subcategory_id' => $subB->id, 'is_deduction' => true]);
+        $dedDet  = PdoDetail::factory()->create(['pdo_header_id' => $pdo->id, 'expense_item_id' => $dedItem->id, 'amount' => 1_000_000]);
+        TransferEntry::factory()->create([
+            'pdo_detail_id' => $dedDet->id, 'amount' => -1_000_000, 'transfer_destination' => 'rek_kebun',
+            'entry_source' => 'system', 'is_auto_generated' => true,
+        ]);
+
+        $row = $this->service->listPdo()->getCollection()->firstWhere('id', $pdo->id);
+
+        $this->assertNotNull($row);
+        $this->assertEquals(4_000_000, (int) $row->total_transferred); // 5.000.000 − 1.000.000
+        // Realisasi kategori A tetap UTUH; kredit kategori B tertahan sampai
+        // realisasinya masuk (kalau ikut termakan, hasilnya 4.000.000).
+        $this->assertEquals(5_000_000, (int) $row->total_realized);
         $this->assertEquals(-1_000_000, (int) $row->balance);
     }
 

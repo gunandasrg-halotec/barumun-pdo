@@ -22,43 +22,56 @@ class PdoService
 {
     /**
      * Realisasi efektif 1 PDO = realisasi mentah dinetkan dengan potongan, di-clamp
-     * per kantong supaya kredit potongan tidak pernah melebihi realisasi yang benar-
-     * benar ada. Padanan SQL dari
+     * per (KATEGORI, kantong) supaya kredit potongan tidak pernah melebihi realisasi
+     * yang benar-benar ada DI KATEGORI ITU. Padanan SQL dari
      * App\Services\Report\DeductionNetting::effectiveRealization() — dipakai untuk
      * total_realized DAN balance di listPdo() supaya keduanya tidak pernah beda.
      *
-     * Kantong kebun  = realisasi funding_source kas_kebun/rekening_kebun vs transfer rek_kebun.
-     * Kantong pribadi = realisasi funding_source rekening_utama       vs transfer pribadi/vendor.
+     * Kantong kebun   = realisasi funding_source kas_kebun/rekening_kebun vs transfer rek_kebun.
+     * Kantong pribadi = realisasi funding_source rekening_utama           vs transfer pribadi/vendor.
+     *
+     * Skop KATEGORI (dulu PDO-wide) WAJIB sama dengan RecapQueryService,
+     * CashBookQueryService::buildExpenseRows(), dan
+     * RealizationEntryService::totalRealizedForGroup() — kalau tidak, Daftar PDO
+     * menampilkan Realisasi berbeda dari Rekap Buku Kas untuk PDO yang sama. Kasus
+     * nyata KP Agustus 2026: clamp PDO-wide menelan SELURUH realisasi kas kebun
+     * (2.897.000) karena panjar 11.800.000 di kategori LAIN belum direalisasi,
+     * sehingga Daftar PDO menampilkan 27.718.000 sementara Rekap 30.615.000.
+     *
+     * Realisasi & potongan diambil lewat subquery SKALAR per pdo_detail, bukan JOIN
+     * langsung ke realization_entries/transfer_entries: JOIN dua tabel itu sekaligus
+     * ke pdo_details menggandakan baris begitu satu detail punya >1 entri di salah
+     * satu sisi (join fan-out), sehingga totalnya menggelembung.
      */
-    private const SQL_EFFECTIVE_REALIZED = "
-        GREATEST(
-            COALESCE((SELECT SUM(re.amount) FROM realization_entries re
-                      JOIN pdo_details pd ON pd.id = re.pdo_detail_id
-                      WHERE pd.pdo_header_id = pdo_headers.id
-                        AND re.funding_source IN ('kas_kebun', 'rekening_kebun')), 0)
-            + COALESCE((SELECT SUM(te.amount) FROM transfer_entries te
-                        JOIN pdo_details pd ON pd.id = te.pdo_detail_id
-                        JOIN expense_items ei ON ei.id = pd.expense_item_id
-                        WHERE pd.pdo_header_id = pdo_headers.id
-                          AND te.status = 'committed'
-                          AND te.transfer_destination = 'rek_kebun'
-                          AND ei.is_deduction = TRUE), 0)
-        , 0)
-        +
-        GREATEST(
-            COALESCE((SELECT SUM(re.amount) FROM realization_entries re
-                      JOIN pdo_details pd ON pd.id = re.pdo_detail_id
-                      WHERE pd.pdo_header_id = pdo_headers.id
-                        AND re.funding_source = 'rekening_utama'), 0)
-            + COALESCE((SELECT SUM(te.amount) FROM transfer_entries te
-                        JOIN pdo_details pd ON pd.id = te.pdo_detail_id
-                        JOIN expense_items ei ON ei.id = pd.expense_item_id
-                        WHERE pd.pdo_header_id = pdo_headers.id
-                          AND te.status = 'committed'
-                          AND te.transfer_destination IN ('pribadi', 'vendor')
-                          AND ei.is_deduction = TRUE), 0)
-        , 0)
-    ";
+    private static function effectiveRealizedSql(): string
+    {
+        $perKantong = fn (string $fundingSources, string $destinations): string => "
+            COALESCE((
+                SELECT SUM(GREATEST(cat.rel + cat.ded, 0))
+                FROM (
+                    SELECT es.category_id,
+                           SUM(COALESCE((SELECT SUM(re.amount) FROM realization_entries re
+                                         WHERE re.pdo_detail_id = pd.id
+                                           AND re.funding_source IN ({$fundingSources})), 0)) AS rel,
+                           SUM(CASE WHEN ei.is_deduction THEN
+                                 COALESCE((SELECT SUM(te.amount) FROM transfer_entries te
+                                           WHERE te.pdo_detail_id = pd.id
+                                             AND te.status = 'committed'
+                                             AND te.transfer_destination IN ({$destinations})), 0)
+                               ELSE 0 END) AS ded
+                    FROM pdo_details pd
+                    JOIN expense_items ei         ON ei.id = pd.expense_item_id
+                    JOIN expense_subcategories es ON es.id = ei.subcategory_id
+                    WHERE pd.pdo_header_id = pdo_headers.id
+                    GROUP BY es.category_id
+                ) cat
+            ), 0)
+        ";
+
+        return $perKantong("'kas_kebun', 'rekening_kebun'", "'rek_kebun'")
+            .' + '
+            .$perKantong("'rekening_utama'", "'pribadi', 'vendor'");
+    }
 
     // ─────────────────────────────────────────────────────
     // PDO HEADER
@@ -85,18 +98,19 @@ class PdoService
             // total_realized dinetkan dengan item potongan (mis. POTONGAN PANJAR) —
             // down payment yang SUDAH dibayar periode sebelumnya, direpresentasikan
             // sebagai TransferEntry NEGATIF (bukan RealizationEntry). Netting-nya
-            // di-CLAMP per kantong lewat GREATEST(..., 0): kredit potongan tidak boleh
-            // melebihi realisasi yang benar-benar sudah tercatat, supaya PDO yang baru
-            // final (belum ada realisasi) tidak menampilkan Realisasi negatif & Saldo
-            // yang naik keliru. Lihat App\Services\Report\DeductionNetting untuk
-            // penjelasan lengkap; Rekap & Dashboard memakai aturan yang sama persis.
-            ->addSelect(\DB::raw("(" . self::SQL_EFFECTIVE_REALIZED . ") as total_realized"))
+            // di-CLAMP per (kategori, kantong) lewat GREATEST(..., 0): kredit potongan
+            // tidak boleh melebihi realisasi yang benar-benar sudah tercatat di
+            // kategori itu, supaya PDO yang baru final (belum ada realisasi) tidak
+            // menampilkan Realisasi negatif & Saldo yang naik keliru. Lihat
+            // effectiveRealizedSql() di atas dan App\Services\Report\DeductionNetting;
+            // Rekap, Buku Kas Harian & Sisa Dana memakai skop yang sama persis.
+            ->addSelect(\DB::raw("(" . self::effectiveRealizedSql() . ") as total_realized"))
             ->addSelect(\DB::raw("(
                 COALESCE((SELECT SUM(te.amount) FROM transfer_entries te
                           JOIN pdo_details pd ON pd.id = te.pdo_detail_id
                           WHERE pd.pdo_header_id = pdo_headers.id
                             AND te.status = 'committed'), 0)
-                - (" . self::SQL_EFFECTIVE_REALIZED . ")
+                - (" . self::effectiveRealizedSql() . ")
             ) as balance"))
             ->when(!empty($filters['search']), fn ($q) => $q->where('pdo_number', 'ilike', '%' . $filters['search'] . '%'))
             ->when(!empty($filters['status']), fn ($q) => $q->where('status', $filters['status']))

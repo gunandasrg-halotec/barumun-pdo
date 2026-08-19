@@ -39,26 +39,35 @@ class RecapQueryService
         $transferKebun    = 0;
         $transferPribadi  = 0;
 
-        // Akumulasi realisasi & potongan DIPISAH PER SUB-KATEGORI, bukan PDO-wide.
+        // Akumulasi realisasi & potongan DIPISAH PER KATEGORI, bukan PDO-wide.
         // Potongan Panjar = uang muka yang sudah dibayar periode lalu untuk pekerjaan
-        // di sub-kategori itu sendiri, jadi hanya boleh dinetkan terhadap realisasi
-        // sub-kategori yang sama. Sub-kategori yang tidak punya potongan TIDAK boleh
-        // ikut terpotong hanya karena sub-kategori lain punya panjar — itu akan
-        // mengecilkan realisasi item yang tidak ada uang mukanya sama sekali.
+        // di kategori itu sendiri, jadi hanya boleh dinetkan terhadap realisasi
+        // kategori yang sama. Kategori yang tidak punya potongan TIDAK boleh ikut
+        // terpotong hanya karena kategori lain punya panjar — itu akan mengecilkan
+        // realisasi item yang tidak ada uang mukanya sama sekali.
+        //
+        // Skop ini SENGAJA kategori, bukan sub-kategori. Kerani memperkirakan beban
+        // pekerjaan di muka, dan perkiraan itu bisa meleset sehingga panjar > biaya
+        // riil sub-kategori tsb (kasus Binanga Juli 2026: panjar TANAMAN MENGHASILKAN
+        // 600.000 tapi upah babat gawangan cuma 455.000). Pekerja yang sama biasanya
+        // juga mengerjakan sub-kategori lain di kategori yang sama, jadi kelebihan
+        // panjar wajar diserap sub-kategori tetangga — bukan dibiarkan tertahan
+        // sehingga saldo kantong tampil minus padahal tidak ada kas yang negatif.
+        //
         // Skop ini sengaja sama persis dengan CashBookQueryService::buildExpenseRows()
         // supaya Rekap Buku Kas dan Buku Kas Harian selalu menghasilkan angka yang sama.
-        $rawBySub       = []; // [subId => ['kebun' => int, 'pribadi' => int]]
-        $deductionBySub = []; // [subId => ['kebun' => int, 'pribadi' => int]] — negatif
+        $rawByCat       = []; // [catId => ['kebun' => int, 'pribadi' => int]]
+        $deductionByCat = []; // [catId => ['kebun' => int, 'pribadi' => int]] — negatif
 
         foreach ($kpiRows as $row) {
             $isDeduction      = (bool) $row->is_deduction;
             $isKasKebunFunded = ($row->funding_option ?? null) === 'kas_kebun';
             $tKebun           = (int) $row->total_transfer_kebun;
             $tPribadi         = (int) $row->total_transfer_pribadi;
-            $subId            = $row->subcategory_id;
+            $catId            = $row->category_id;
 
-            $rawBySub[$subId]       ??= ['kebun' => 0, 'pribadi' => 0];
-            $deductionBySub[$subId] ??= ['kebun' => 0, 'pribadi' => 0];
+            $rawByCat[$catId]       ??= ['kebun' => 0, 'pribadi' => 0];
+            $deductionByCat[$catId] ??= ['kebun' => 0, 'pribadi' => 0];
 
             // Item PDOT funding_option=kas_kebun: TransferEntry auto-generated di
             // sini (lihat PdoSupplementaryApprovalService::mergeIntoParent()) BUKAN
@@ -77,34 +86,39 @@ class RecapQueryService
                 // Item potongan tidak pernah punya realization_entries — nilainya
                 // hidup sebagai transfer negatif.
                 if (! $isKasKebunFunded) {
-                    $deductionBySub[$subId]['kebun']   += $tKebun;
-                    $deductionBySub[$subId]['pribadi'] += $tPribadi;
+                    $deductionByCat[$catId]['kebun']   += $tKebun;
+                    $deductionByCat[$catId]['pribadi'] += $tPribadi;
                 }
                 continue;
             }
 
-            $rawBySub[$subId]['kebun']   += (int) $row->total_realization;
-            $rawBySub[$subId]['pribadi'] += (int) $row->total_realization_pribadi;
+            $rawByCat[$catId]['kebun']   += (int) $row->total_realization;
+            $rawByCat[$catId]['pribadi'] += (int) $row->total_realization_pribadi;
         }
 
-        // Netting potongan di-clamp per (sub-kategori, kantong): kredit tidak boleh
-        // melebihi realisasi yang benar-benar sudah tercatat DI SUB-KATEGORI ITU.
-        // Kalau kerani belum selesai mencatat realisasi sub-kategori tsb, kreditnya
-        // tertahan (realisasi efektif 0, tidak pernah negatif) sampai realisasinya
-        // masuk — bukan ditutup memakai surplus sub-kategori lain.
+        // Netting potongan di-clamp per (kategori, kantong): kredit tidak boleh
+        // melebihi realisasi yang benar-benar sudah tercatat DI KATEGORI ITU.
+        // Kalau realisasi satu kategori belum lengkap, kreditnya tertahan (realisasi
+        // efektif kategori 0, tidak pernah negatif) sampai realisasinya masuk —
+        // bukan ditutup memakai surplus kategori lain.
+        //
+        // Catatan: karena clamp-nya di level kategori, realisasi efektif satu
+        // SUB-kategori boleh negatif (sub yang potongannya melebihi biayanya sendiri
+        // ditutup sub-kategori tetangga). Yang dijamin tidak pernah negatif adalah
+        // total kategori.
         $realisasiKebun   = 0;
         $realisasiPribadi = 0;
-        $creditBySub      = []; // [subId => ['kebun' => int, 'pribadi' => int]] — negatif
+        $creditByCat      = []; // [catId => ['kebun' => int, 'pribadi' => int]] — negatif
 
-        foreach ($rawBySub as $subId => $raw) {
-            $ded = $deductionBySub[$subId];
+        foreach ($rawByCat as $catId => $raw) {
+            $ded = $deductionByCat[$catId];
 
             $realisasiKebun   += DeductionNetting::effectiveRealization($raw['kebun'], $ded['kebun']);
             $realisasiPribadi += DeductionNetting::effectiveRealization($raw['pribadi'], $ded['pribadi']);
 
             // Kredit yang benar-benar terpakai — dibagikan ke baris potongan di
             // buildHierarchy() supaya penjumlahan baris tetap sama dengan KPI ini.
-            $creditBySub[$subId] = [
+            $creditByCat[$catId] = [
                 'kebun'   => DeductionNetting::usableCredit($raw['kebun'], $ded['kebun']),
                 'pribadi' => DeductionNetting::usableCredit($raw['pribadi'], $ded['pribadi']),
             ];
@@ -116,7 +130,7 @@ class RecapQueryService
 
         return $this->buildHierarchy(
             $rows, $transferKebun, $transferPribadi, $realisasiKebun, $realisasiPribadi,
-            $kantong, $saldoAwal, $creditBySub,
+            $kantong, $saldoAwal, $creditByCat,
         );
     }
 
@@ -243,7 +257,7 @@ class RecapQueryService
         ]);
     }
 
-    private function buildHierarchy(array $rows, int $transferKebun, int $transferPribadi, int $realisasiKebun, int $realisasiPribadi, string $kantong = 'all', int $saldoAwal = 0, array $creditBySub = []): array
+    private function buildHierarchy(array $rows, int $transferKebun, int $transferPribadi, int $realisasiKebun, int $realisasiPribadi, string $kantong = 'all', int $saldoAwal = 0, array $creditByCat = []): array
     {
         $categories  = [];
         $catIndex    = [];
@@ -254,12 +268,12 @@ class RecapQueryService
         $grandTotalTransfer    = 0;
         $grandTotalRealization = 0;
 
-        // Sisa kredit potongan (positif) PER SUB-KATEGORI, dibatasi di getRecapData()
-        // sebesar realisasi yang benar-benar ada di sub-kategori itu, lalu dikonsumsi
+        // Sisa kredit potongan (positif) PER KATEGORI, dibatasi di getRecapData()
+        // sebesar realisasi yang benar-benar ada di kategori itu, lalu dikonsumsi
         // berurutan di sini supaya penjumlahan baris selalu sama dengan KPI.
         $pool = [];
-        foreach ($creditBySub as $subId => $credit) {
-            $pool[$subId] = ['kebun' => abs($credit['kebun']), 'pribadi' => abs($credit['pribadi'])];
+        foreach ($creditByCat as $catId => $credit) {
+            $pool[$catId] = ['kebun' => abs($credit['kebun']), 'pribadi' => abs($credit['pribadi'])];
         }
 
         foreach ($rows as $row) {
@@ -268,7 +282,7 @@ class RecapQueryService
             $transferKebunItem   = (int) $row->total_transfer_kebun;
             $transferPribadiItem = (int) $row->total_transfer_pribadi;
             $isDeduction         = (bool) $row->is_deduction;
-            $rowSubId            = $row->subcategory_id;
+            $rowCatId            = $row->category_id;
             $isKasKebunFunded    = ($row->funding_option ?? null) === 'kas_kebun';
 
             // Item PDO Tambahan "Gunakan Kas Kebun": TransferEntry auto-generated-nya
@@ -291,12 +305,12 @@ class RecapQueryService
             }
 
             if ($isDeduction) {
-                $pool[$rowSubId] ??= ['kebun' => 0, 'pribadi' => 0];
+                $pool[$rowCatId] ??= ['kebun' => 0, 'pribadi' => 0];
 
-                $takenKebun   = min(abs($transferKebunItem), $pool[$rowSubId]['kebun']);
-                $takenPribadi = min(abs($transferPribadiItem), $pool[$rowSubId]['pribadi']);
-                $pool[$rowSubId]['kebun']   -= $takenKebun;
-                $pool[$rowSubId]['pribadi'] -= $takenPribadi;
+                $takenKebun   = min(abs($transferKebunItem), $pool[$rowCatId]['kebun']);
+                $takenPribadi = min(abs($transferPribadiItem), $pool[$rowCatId]['pribadi']);
+                $pool[$rowCatId]['kebun']   -= $takenKebun;
+                $pool[$rowCatId]['pribadi'] -= $takenPribadi;
 
                 $realKebunItem   = -$takenKebun;
                 $realPribadiItem = -$takenPribadi;
