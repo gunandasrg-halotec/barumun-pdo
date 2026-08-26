@@ -159,16 +159,18 @@ class PettyCashVoucherService
     }
 
     /**
-     * Sisa kantong Kas Kebun yang bisa dipakai voucher baru = total kantong − total
-     * realisasi (BR-REAL-002, lihat RealizationEntryService::totalKantongForGroup() /
-     * totalRealizedForGroup()) − total baris voucher DRAFT lain di PDO ini (reservasi,
-     * lihat catatan di §3b plan). $excludeVoucherId dipakai saat update() supaya voucher
-     * yang sedang diedit tidak menghitung dirinya sendiri dua kali.
+     * Sisa kantong Kas Kebun yang bisa dipakai voucher baru = sisa dana kantong
+     * (saldo awal + transfer − realisasi; BR-REAL-002, lihat
+     * RealizationEntryService::remainingKantongForGroup()) − total baris voucher
+     * DRAFT lain di PDO ini (reservasi, lihat catatan di §3b plan).
+     * $excludeVoucherId dipakai saat update() supaya voucher yang sedang diedit
+     * tidak menghitung dirinya sendiri dua kali.
      */
     public function remainingKantongForVoucher(PdoHeader $pdo, ?string $excludeVoucherId = null): int
     {
-        $totalKantong  = $this->realizationService->totalKantongForGroup($pdo, RealizationEntry::SETTLEMENT_KEBUN);
-        $totalRealized = $this->realizationService->totalRealizedForGroup($pdo, RealizationEntry::SETTLEMENT_KEBUN);
+        $remainingKantong = $this->realizationService->remainingKantongForGroup(
+            $pdo, RealizationEntry::SETTLEMENT_KEBUN
+        );
 
         $reservedDraft = (int) PettyCashVoucherLine::whereHas('pettyCashVoucher', function ($q) use ($pdo, $excludeVoucherId) {
             $q->where('pdo_header_id', $pdo->id)->where('status', PettyCashVoucher::STATUS_DRAFT);
@@ -177,7 +179,7 @@ class PettyCashVoucherService
             }
         })->sum('amount');
 
-        return $totalKantong - $totalRealized - $reservedDraft;
+        return $remainingKantong - $reservedDraft;
     }
 
     private function assertWithinKantong(PdoHeader $pdo, int $total, ?string $excludeVoucherId): void

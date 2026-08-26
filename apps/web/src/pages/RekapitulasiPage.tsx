@@ -77,8 +77,11 @@ export interface RealizationAvailableItem {
 
 interface RealizationAvailableResponse {
   items:             RealizationAvailableItem[]
+  /** saldo awal + total_kantong − realisasi. Saldo awal hanya untuk kantong Kas Kebun. */
   remaining_kantong: number
   total_kantong:     number
+  /** Sisa kas bulan lalu yang masih dipegang kebun; 0 untuk kantong Pribadi/Vendor. */
+  saldo_awal:        number
 }
 
 const FUNDING_LABEL: Record<string, string> = {
@@ -234,6 +237,7 @@ export function RekapitulasiPage() {
   const availableItems     = availableData?.items ?? []
   const remainingKantong   = availableData?.remaining_kantong ?? null
   const totalKantong       = availableData?.total_kantong ?? null
+  const saldoAwalKantong   = availableData?.saldo_awal ?? null
 
   // ── Petty Cash Voucher: daftar voucher untuk PDO aktif ───────────────────
   const vouchersQuery = useQuery({
@@ -769,24 +773,14 @@ export function RekapitulasiPage() {
                 </div>
               ))}
             </div>
-            {/* Row 1b: Saldo Awal + Saldo Kas Kebun Saat Ini (kumulatif, tidak terpengaruh filter tanggal) */}
-            <div className="grid grid-cols-2 border-b border-line">
-              {[
-                { label: 'Saldo Awal Kas Kebun',        value: recap.saldo_awal ?? 0 },
-                { label: 'Saldo Kas Kebun Saat Ini',    value: recap.saldo_kas_kebun_saat_ini ?? 0 },
-              ].map((k) => (
-                <div key={k.label} className="p-4 text-center border-r border-line last:border-r-0">
-                  <div className="text-[10px] font-[850] text-muted uppercase tracking-wider mb-1">{k.label}</div>
-                  <div className={`text-[17px] font-[950] ${k.value < 0 ? 'text-red-600' : 'text-ink'}`}>
-                    {new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', maximumFractionDigits: 0 }).format(k.value)}
-                  </div>
-                </div>
-              ))}
-            </div>
-            {/* Row 2: Kas Kebun (3 cols) + Pribadi/Vendor (3 cols) */}
-            <div className="grid grid-cols-6">
+            {/* Row 2: Kas Kebun (4 cols: saldo awal + transfer − realisasi = saldo)
+                + Pribadi/Vendor (3 cols: transfer − realisasi = saldo).
+                Kantong Pribadi/Vendor tidak punya saldo awal — dana ditransfer HO
+                langsung ke rekening orang/rekanan, tidak pernah disimpan sebagai kas. */}
+            <div className="grid grid-cols-7">
               {/* Kas Kebun */}
               {[
+                { label: 'Saldo Awal', value: recap.saldo_awal ?? 0,  group: 'Kas Kebun', clickGroup: null },
                 { label: 'Transfer',   value: recap.transfer_kebun,   group: 'Kas Kebun', clickGroup: null },
                 { label: 'Realisasi',  value: recap.realisasi_kebun,  group: 'Kas Kebun', clickGroup: 'kebun' as const },
                 { label: 'Saldo',      value: recap.saldo_kebun,      group: 'Kas Kebun', clickGroup: null },
@@ -979,7 +973,8 @@ export function RekapitulasiPage() {
                 </p>
                 {totalKantong !== null && (
                   <p className={`text-xs mt-0.5 ${remainingKantong <= 0 ? 'text-red-500' : 'text-amber-600'}`}>
-                    dari total dana {fmt(totalKantong)}
+                    dari total dana {fmt((saldoAwalKantong ?? 0) + totalKantong)}
+                    {saldoAwalKantong ? ` (saldo awal ${fmt(saldoAwalKantong)} + transfer ${fmt(totalKantong)})` : ''}
                   </p>
                 )}
                 {remainingKantong <= 0 && (

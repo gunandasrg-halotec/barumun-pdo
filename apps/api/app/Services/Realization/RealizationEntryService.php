@@ -107,8 +107,10 @@ class RealizationEntryService
      * Tampilkan semua item non-deduction; item dengan saldo ≤ 0 tetap ditampilkan
      * agar user bisa melihat status over-budget, tapi tidak bisa dipilih (saldo ≤ 0).
      *
-     * remaining_kantong = total transfer kantong actor − total realisasi kantong actor (PDO-level).
-     * Ini adalah hard ceiling: realisasi baru tidak boleh melebihi remaining_kantong.
+     * remaining_kantong = saldo awal + total transfer kantong actor − total realisasi
+     * kantong actor (PDO-level). Ini adalah hard ceiling: realisasi baru tidak boleh
+     * melebihi remaining_kantong. Saldo awal hanya berlaku untuk kantong Kas Kebun —
+     * lihat openingBalanceForGroup().
      *
      * GET /pdo/{pdo}/realizations/available
      */
@@ -123,6 +125,9 @@ class RealizationEntryService
             ->with(['expenseItem.subcategory.category', 'transferEntries', 'realizationEntries'])
             ->get();
 
+        // Saldo awal kantong (kebun saja) — sisa kas bulan lalu yang masih dipegang.
+        $saldoAwal = $this->openingBalanceForGroup($pdo, $group);
+
         // Hitung kantong PDO-level untuk group ini
         $totalKantong = $this->totalKantongForGroup($pdo, $group);
 
@@ -130,7 +135,7 @@ class RealizationEntryService
         // dengan potongan (lihat totalRealizedForGroup()).
         $totalRealizedGroup = $this->totalRealizedForGroup($pdo, $group);
 
-        $remainingKantong = $totalKantong - $totalRealizedGroup;
+        $remainingKantong = $saldoAwal + $totalKantong - $totalRealizedGroup;
 
         $destinations = $group === RealizationEntry::SETTLEMENT_KEBUN
             ? ['rek_kebun']
@@ -205,6 +210,7 @@ class RealizationEntryService
             'items'             => $result,
             'remaining_kantong' => $remainingKantong,
             'total_kantong'     => $totalKantong,
+            'saldo_awal'        => $saldoAwal,
         ];
     }
 
@@ -280,6 +286,43 @@ class RealizationEntryService
             ->where('proof_number', $proofNumber)
             ->when($excludeEntryId, fn ($q) => $q->where('id', '!=', $excludeEntryId))
             ->exists();
+    }
+
+    /**
+     * Saldo awal kantong ini di awal periode PDO.
+     *
+     * HANYA kantong Kas Kebun yang punya saldo awal: kas kebun memegang uang
+     * fisik, sehingga sisa bulan lalu benar-benar masih ada di tangan kerani dan
+     * sah dipakai membiayai realisasi bulan ini. Kantong Pribadi/Vendor tidak
+     * pernah menyimpan kas — HO mentransfer langsung ke rekening orang/rekanan
+     * per item — jadi tetap per-periode (bandingkan DashboardService, yang juga
+     * memperlakukan pribadi/vendor per-periode).
+     */
+    public function openingBalanceForGroup(PdoHeader $pdo, string $group): int
+    {
+        if ($group !== RealizationEntry::SETTLEMENT_KEBUN) {
+            return 0;
+        }
+
+        return $this->cashBook->openingBalanceForPeriod(
+            $pdo->plantation_unit_id, $pdo->period_year, $pdo->period_month
+        );
+    }
+
+    /**
+     * Sisa dana kantong actor = saldo awal + transfer − realisasi (efektif).
+     *
+     * Satu-satunya sumber kebenaran "Sisa Dana"/plafon BR-REAL-002: dipakai
+     * availableItemsForActor(), store(), PettyCashVoucherService, dan
+     * AutoRealizationService supaya angka di form Realisasi, form Voucher, dan
+     * pesan error selalu sama. Rumusnya sengaja identik dengan saldo di Buku Kas
+     * Harian, Rekap Buku Kas, Daftar PDO, dan Dashboard.
+     */
+    public function remainingKantongForGroup(PdoHeader $pdo, string $group): int
+    {
+        return $this->openingBalanceForGroup($pdo, $group)
+            + $this->totalKantongForGroup($pdo, $group)
+            - $this->totalRealizedForGroup($pdo, $group);
     }
 
     /**
@@ -600,17 +643,21 @@ class RealizationEntryService
                 // Realisasinya TETAP dihitung di totalRealizedForGroup() — uangnya keluar
                 // dari pot kas yang sama, jadi memang benar mengurangi sisa dana item lain.
                 if (! $isKasKebunFunded) {
-                    $totalKantong       = $this->totalKantongForGroup($pdo, $group);
-                    $totalRealizedGroup = $this->totalRealizedForGroup($pdo, $group);
-                    $newGroupTotal = $totalRealizedGroup + $data['amount'];
+                    // Plafon = saldo awal + transfer − realisasi, sama persis dengan
+                    // "Sisa Dana" yang ditampilkan di form (remainingKantongForGroup()).
+                    // Saldo awal hanya menambah plafon kantong Kas Kebun; kantong
+                    // Pribadi/Vendor tetap murni transfer − realisasi.
+                    $sisa = $this->remainingKantongForGroup($pdo, $group);
 
-                    if ($newGroupTotal > $totalKantong) {
-                        $sisa = $totalKantong - $totalRealizedGroup;
+                    if ($data['amount'] > $sisa) {
+                        $plafon = $this->openingBalanceForGroup($pdo, $group)
+                            + $this->totalKantongForGroup($pdo, $group);
+
                         abort(response()->json([
                             'success' => false,
                             'error'   => [
                                 'code'    => 'REALIZATION_EXCEEDS_KANTONG',
-                                'message' => "Total realisasi kantong ini (Rp " . number_format($newGroupTotal, 0, ',', '.') . ") melebihi saldo kantong (Rp " . number_format($totalKantong, 0, ',', '.') . "). Sisa: Rp " . number_format($sisa, 0, ',', '.') . ".",
+                                'message' => "Realisasi ini (Rp " . number_format($data['amount'], 0, ',', '.') . ") melebihi sisa dana kantong (Rp " . number_format($sisa, 0, ',', '.') . ") dari total dana tersedia Rp " . number_format($plafon, 0, ',', '.') . " (saldo awal + transfer).",
                             ],
                         ], 422));
                     }

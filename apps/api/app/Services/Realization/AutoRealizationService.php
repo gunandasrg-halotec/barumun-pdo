@@ -86,12 +86,12 @@ class AutoRealizationService
                 ], 422));
             }
 
-            // BR-REAL-002: plafon kantong PDO-level (pribadi_vendor) tidak boleh terlampaui
-            $totalKantong       = $this->realizationEntryService->totalKantongForGroup($pdo, RealizationEntry::SETTLEMENT_PRIBADI_VENDOR);
-            $totalRealizedGroup = $this->realizationEntryService->totalRealizedForGroup($pdo, RealizationEntry::SETTLEMENT_PRIBADI_VENDOR);
+            // BR-REAL-002: plafon kantong PDO-level (pribadi_vendor) tidak boleh terlampaui.
+            // Kantong pribadi/vendor tidak punya saldo awal, jadi sisanya tetap
+            // transfer − realisasi (lihat RealizationEntryService::openingBalanceForGroup()).
+            $sisa = $this->realizationEntryService->remainingKantongForGroup($pdo, RealizationEntry::SETTLEMENT_PRIBADI_VENDOR);
 
-            if ($totalRealizedGroup + $delta > $totalKantong) {
-                $sisa = $totalKantong - $totalRealizedGroup;
+            if ($delta > $sisa) {
                 abort(response()->json([
                     'success' => false,
                     'error'   => [

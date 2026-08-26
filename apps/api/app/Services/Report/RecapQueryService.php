@@ -446,14 +446,23 @@ class RecapQueryService
             'grand_total_amount'            => $grandTotalAmount,
             'grand_total_transfer'          => $grandTotalTransfer,
             'grand_total_realization'       => $grandTotalRealization,
+            // grand_total_saldo adalah total kolom Saldo di TABEL (per item), jadi
+            // tetap transfer − realisasi: saldo awal milik kantong, tidak bisa
+            // dibagi ke baris item mana pun tanpa menggandakan angkanya.
             'grand_total_saldo'             => $grandTotalTransfer - $grandTotalRealization,
             'transfer_kebun'                => $transferKebun,
             'transfer_pribadi'              => $transferPribadi,
             'realisasi_kebun'               => $realisasiKebun,
             'realisasi_pribadi'             => $realisasiPribadi,
-            'saldo_kebun'                   => $transferKebun - $realisasiKebun,
+            // Saldo kantong = saldo awal + transfer − realisasi. Saldo awal hanya
+            // dimiliki kantong Kas Kebun (kas fisik yang tersisa dari bulan lalu);
+            // kantong Pribadi/Vendor tidak pernah menyimpan kas, jadi tetap
+            // per-periode. Rumus yang sama dipakai Buku Kas Harian, "Sisa Dana" di
+            // form Realisasi/Voucher, Daftar PDO, dan Dashboard.
+            'saldo_kebun'                   => $saldoAwal + $transferKebun - $realisasiKebun,
             'saldo_pribadi'                 => $transferPribadi - $realisasiPribadi,
             'saldo_awal'                    => $saldoAwal,
+            // Alias historis dari saldo_kebun — dipertahankan supaya klien lama tidak pecah.
             'saldo_kas_kebun_saat_ini'      => $saldoAwal + $transferKebun - $realisasiKebun,
             'categories'                    => $categories,
         ];

@@ -65,6 +65,13 @@ class PettyCashVoucherServiceTest extends TestCase
                 'pdo_detail_id'        => $detail->id,
                 'amount'               => $transferred,
                 'transfer_destination' => 'rek_kebun',
+                // Tanggal transfer WAJIB di dalam periode PDO-nya, seperti data riil:
+                // transfer bertanggal sebelum awal periode akan terhitung dua kali —
+                // sekali sebagai saldo awal, sekali sebagai transfer PDO ini
+                // (lihat RealizationEntryService::remainingKantongForGroup()).
+                // Default factory-nya now(), sedangkan PdoHeaderFactory memilih
+                // periode acak, jadi tanpa ini test-nya flaky.
+                'transfer_date'        => sprintf('%04d-%02d-01', $pdo->period_year, $pdo->period_month),
             ]);
         }
 

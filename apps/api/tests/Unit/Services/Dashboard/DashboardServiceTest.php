@@ -240,7 +240,14 @@ class DashboardServiceTest extends TestCase
     {
         $keraniRole = Role::factory()->create(['code' => Role::KERANI]);
         $kerani     = User::factory()->create(['company_id' => $this->companyId, 'role_id' => $keraniRole->id]);
-        $dedItem    = ExpenseItem::factory()->create(['is_deduction' => true]);
+
+        // Netting di-clamp per KATEGORI, jadi item potongan HARUS satu kategori
+        // dengan pekerjaan yang diimbanginya — persis seperti data riil
+        // (POTONGAN PANJAR PANEN ada di kategori yang sama dengan UPAH PANEN).
+        // Tanpa ini tiap ExpenseItem::factory() membuat kategorinya sendiri.
+        $sub     = ExpenseSubcategory::factory()->create(['category_id' => ExpenseCategory::factory()->create()->id]);
+        $item    = ExpenseItem::factory()->create(['subcategory_id' => $sub->id, 'is_deduction' => false]);
+        $dedItem = ExpenseItem::factory()->create(['subcategory_id' => $sub->id, 'is_deduction' => true]);
 
         $pdo = PdoHeader::factory()->create([
             'company_id'         => $this->companyId,
@@ -251,7 +258,7 @@ class DashboardServiceTest extends TestCase
             'period_year'        => now()->year,
         ]);
 
-        $detail = PdoDetail::factory()->create(['pdo_header_id' => $pdo->id, 'amount' => 5_000_000]);
+        $detail = PdoDetail::factory()->create(['pdo_header_id' => $pdo->id, 'expense_item_id' => $item->id, 'amount' => 5_000_000]);
         TransferEntry::factory()->create(['pdo_detail_id' => $detail->id, 'amount' => 4_000_000, 'transfer_destination' => 'rek_kebun']);
         RealizationEntry::factory()->create(['pdo_detail_id' => $detail->id, 'amount' => 5_000_000]);
 
@@ -267,6 +274,51 @@ class DashboardServiceTest extends TestCase
         // 5.000.000 realisasi − 1.000.000 potongan = 4.000.000
         $this->assertEquals(4_000_000, $summary['total_realized']);
         $this->assertEquals(4_000_000, $unitRow['total_realized']);
+    }
+
+    /**
+     * Skop netting Dashboard dulu company/unit-wide: potongan di kategori B ikut
+     * memakan realisasi kategori A yang tidak punya panjar sama sekali, sehingga
+     * Dashboard menampilkan Realisasi berbeda dari Rekap Buku Kas (KP Agustus 2026,
+     * selisih ±Rp 12,4 juta). Sekarang clamp-nya per (PDO, kategori).
+     */
+    public function test_total_realized_deduction_does_not_consume_other_category(): void
+    {
+        $keraniRole = Role::factory()->create(['code' => Role::KERANI]);
+        $kerani     = User::factory()->create(['company_id' => $this->companyId, 'role_id' => $keraniRole->id]);
+
+        $subA = ExpenseSubcategory::factory()->create(['category_id' => ExpenseCategory::factory()->create()->id]);
+        $subB = ExpenseSubcategory::factory()->create(['category_id' => ExpenseCategory::factory()->create()->id]);
+        $itemA    = ExpenseItem::factory()->create(['subcategory_id' => $subA->id, 'is_deduction' => false]);
+        $dedItemB = ExpenseItem::factory()->create(['subcategory_id' => $subB->id, 'is_deduction' => true]);
+
+        $pdo = PdoHeader::factory()->create([
+            'company_id'         => $this->companyId,
+            'plantation_unit_id' => $this->unit->id,
+            'created_by'         => $kerani->id,
+            'status'             => PdoHeader::STATUS_FINAL,
+            'period_month'       => now()->month,
+            'period_year'        => now()->year,
+        ]);
+
+        // Kategori A: realisasi 5jt, tanpa panjar.
+        $detailA = PdoDetail::factory()->create(['pdo_header_id' => $pdo->id, 'expense_item_id' => $itemA->id, 'amount' => 5_000_000]);
+        TransferEntry::factory()->create(['pdo_detail_id' => $detailA->id, 'amount' => 5_000_000, 'transfer_destination' => 'rek_kebun']);
+        RealizationEntry::factory()->create(['pdo_detail_id' => $detailA->id, 'amount' => 5_000_000]);
+
+        // Kategori B: panjar 1jt, belum ada realisasi apa pun.
+        $detailB = PdoDetail::factory()->create(['pdo_header_id' => $pdo->id, 'expense_item_id' => $dedItemB->id, 'amount' => 1_000_000]);
+        TransferEntry::factory()->create([
+            'pdo_detail_id' => $detailB->id, 'amount' => -1_000_000, 'transfer_destination' => 'rek_kebun',
+            'entry_source' => 'system', 'is_auto_generated' => true,
+        ]);
+
+        $summary = $this->service->summary($this->manajer);
+        $unitRow = collect($summary['by_unit'])->firstWhere('unit_id', $this->unit->id);
+
+        // Kredit panjar kategori B tertahan (clamp 0), realisasi kategori A utuh.
+        $this->assertEquals(5_000_000, $summary['total_realized']);
+        $this->assertEquals(5_000_000, $unitRow['total_realized']);
     }
 
     /**

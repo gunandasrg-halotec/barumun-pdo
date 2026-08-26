@@ -69,6 +69,9 @@ class PettyCashVoucherPostingServiceTest extends TestCase
             'pdo_detail_id'        => $detail->id,
             'amount'               => $transferred,
             'transfer_destination' => 'rek_kebun',
+            // Tanggal transfer WAJIB di dalam periode PDO-nya, seperti data riil —
+            // lihat catatan di PettyCashVoucherServiceTest::makeDetail().
+            'transfer_date'        => sprintf('%04d-%02d-01', $pdo->period_year, $pdo->period_month),
         ]);
 
         return $detail->fresh();

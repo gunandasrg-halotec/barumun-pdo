@@ -1033,6 +1033,94 @@ class RealizationEntryServiceTest extends TestCase
         $this->assertEquals('Koreksi penjelasan', $updated->explanation);
     }
 
+    // ─────────────────────────────────────────────────────
+    // Saldo kantong = saldo awal + transfer − realisasi
+    // ─────────────────────────────────────────────────────
+
+    /**
+     * Kas kebun memegang uang fisik, jadi sisa kas bulan lalu sah dipakai
+     * membiayai realisasi bulan ini. Rumusnya wajib sama dengan saldo di Buku Kas
+     * Harian, Rekap Buku Kas, Daftar PDO, dan Dashboard.
+     */
+    public function test_remaining_kantong_kebun_includes_opening_balance(): void
+    {
+        UnitOpeningBalance::create(['plantation_unit_id' => $this->unit->id, 'amount' => 3000000, 'as_of_date' => '2026-07-01']);
+
+        $detail = $this->makeDetail(PdoHeader::STATUS_FINAL, budget: 5000000, transferred: 1000000, periodYear: 2026, periodMonth: 8);
+        TransferEntry::where('pdo_detail_id', $detail->id)->update(['transfer_destination' => 'rek_kebun']);
+
+        $available = $this->service->availableItemsForActor($detail->pdoHeader, $this->kerani);
+
+        $this->assertSame(3000000, $available['saldo_awal']);
+        $this->assertSame(1000000, $available['total_kantong']);
+        $this->assertSame(4000000, $available['remaining_kantong']);
+    }
+
+    public function test_realization_may_use_opening_balance_beyond_transfer(): void
+    {
+        UnitOpeningBalance::create(['plantation_unit_id' => $this->unit->id, 'amount' => 3000000, 'as_of_date' => '2026-07-01']);
+
+        $detail = $this->makeDetail(PdoHeader::STATUS_FINAL, budget: 5000000, transferred: 1000000, periodYear: 2026, periodMonth: 8);
+        TransferEntry::where('pdo_detail_id', $detail->id)->update(['transfer_destination' => 'rek_kebun']);
+
+        // 1.500.000 > transfer 1.000.000, tapi masih di bawah 3.000.000 + 1.000.000.
+        $entry = $this->service->store([
+            'pdo_detail_id'    => $detail->id,
+            'transaction_date' => '2026-08-05',
+            'amount'           => 1500000,
+            'payment_method'   => RealizationEntry::PAYMENT_TUNAI,
+            'proof_number'     => 'KW-OPEN-1',
+            'funding_source'   => RealizationEntry::FUNDING_KAS_KEBUN,
+            '_from_petty_cash_voucher' => 'test-voucher-id',
+        ], $this->kerani);
+
+        $this->assertSame(1500000, $entry->amount);
+    }
+
+    public function test_realization_rejected_when_exceeding_opening_balance_plus_transfer(): void
+    {
+        UnitOpeningBalance::create(['plantation_unit_id' => $this->unit->id, 'amount' => 3000000, 'as_of_date' => '2026-07-01']);
+
+        $detail = $this->makeDetail(PdoHeader::STATUS_FINAL, budget: 9000000, transferred: 1000000, periodYear: 2026, periodMonth: 8);
+        TransferEntry::where('pdo_detail_id', $detail->id)->update(['transfer_destination' => 'rek_kebun']);
+
+        $this->expectException(\Illuminate\Http\Exceptions\HttpResponseException::class);
+
+        $this->service->store([
+            'pdo_detail_id'    => $detail->id,
+            'transaction_date' => '2026-08-05',
+            'amount'           => 4500000, // > 3.000.000 + 1.000.000
+            'payment_method'   => RealizationEntry::PAYMENT_TUNAI,
+            'proof_number'     => 'KW-OPEN-2',
+            'funding_source'   => RealizationEntry::FUNDING_KAS_KEBUN,
+            '_from_petty_cash_voucher' => 'test-voucher-id',
+        ], $this->kerani);
+    }
+
+    /**
+     * Kantong Pribadi/Vendor tidak pernah menyimpan kas fisik — HO mentransfer
+     * langsung ke rekening orang/rekanan per item — jadi tetap per-periode.
+     */
+    public function test_remaining_kantong_pribadi_ignores_opening_balance(): void
+    {
+        UnitOpeningBalance::create(['plantation_unit_id' => $this->unit->id, 'amount' => 3000000, 'as_of_date' => '2026-07-01']);
+
+        $mkRole  = Role::factory()->create(['code' => Role::MANAJER_KEUANGAN]);
+        $manajer = User::factory()->create([
+            'company_id'         => $this->companyId,
+            'role_id'            => $mkRole->id,
+            'plantation_unit_id' => $this->unit->id,
+        ]);
+
+        $detail = $this->makeDetail(PdoHeader::STATUS_FINAL, budget: 5000000, transferred: 1000000, periodYear: 2026, periodMonth: 8);
+        TransferEntry::where('pdo_detail_id', $detail->id)->update(['transfer_destination' => 'pribadi']);
+
+        $available = $this->service->availableItemsForActor($detail->pdoHeader, $manajer);
+
+        $this->assertSame(0, $available['saldo_awal']);
+        $this->assertSame(1000000, $available['remaining_kantong']);
+    }
+
     private function makeDetail(string $status, int $budget, int $transferred, ?int $periodYear = null, ?int $periodMonth = null): PdoDetail
     {
         $pdo = PdoHeader::factory()->create([
@@ -1053,6 +1141,14 @@ class RealizationEntryServiceTest extends TestCase
             TransferEntry::factory()->create([
                 'pdo_detail_id' => $detail->id,
                 'amount'        => $transferred,
+                // Tanggal transfer WAJIB di dalam periode PDO-nya, seperti data riil
+                // (diverifikasi di produksi: nol transfer bertanggal sebelum awal
+                // periodenya). Default factory-nya now() sedangkan PdoHeaderFactory
+                // memilih periode acak 2024-2026 — kalau periodenya jatuh setelah
+                // hari ini, transfer itu ikut terhitung sebagai SALDO AWAL dan
+                // plafon kantong jadi dobel (lihat
+                // RealizationEntryService::remainingKantongForGroup()).
+                'transfer_date' => sprintf('%04d-%02d-01', $pdo->period_year, $pdo->period_month),
             ]);
         }
 

@@ -20,6 +20,9 @@ use Illuminate\Validation\ValidationException;
 
 class PdoService
 {
+    /** @var array<string, int> memo saldo awal kas kebun per (unit, tahun, bulan) selama 1 request */
+    private array $openingBalanceMemo = [];
+
     /**
      * Realisasi efektif 1 PDO = realisasi mentah dinetkan dengan potongan, di-clamp
      * per (KATEGORI, kantong) supaya kredit potongan tidak pernah melebihi realisasi
@@ -119,7 +122,36 @@ class PdoService
             ->when(!empty($filters['plantation_unit_id']), fn ($q) => $q->where('plantation_unit_id', $filters['plantation_unit_id']))
             ->orderByDesc('period_year')
             ->orderByDesc('period_month')
-            ->paginate(20);
+            ->paginate(20)
+            ->through(fn (PdoHeader $pdo) => $this->withKebunOpeningBalance($pdo));
+    }
+
+    /**
+     * Tambahkan saldo awal kas kebun periode ini ke kolom Saldo Daftar PDO, supaya
+     * rumusnya sama dengan Buku Kas Harian, Rekap Buku Kas, "Sisa Dana" di form
+     * Realisasi/Voucher, dan Dashboard: saldo = saldo awal + transfer − realisasi.
+     *
+     * Hanya kantong Kas Kebun yang punya saldo awal (kas fisik sisa bulan lalu);
+     * kantong Pribadi/Vendor tetap per-periode — lihat
+     * RealizationEntryService::openingBalanceForGroup().
+     *
+     * Dihitung di PHP, bukan di SQL: saldo awal butuh agregat kumulatif lintas
+     * SEMUA periode unit itu dengan netting potongan per (PDO, kategori), yang
+     * sebagai subquery berkorelasi akan dijalankan ulang untuk tiap baris.
+     * Di sini cukup 1 perhitungan per (unit, periode) — maksimal 20 baris per
+     * halaman, dan dimemo karena satu unit biasanya muncul berkali-kali.
+     */
+    private function withKebunOpeningBalance(PdoHeader $pdo): PdoHeader
+    {
+        $key = $pdo->plantation_unit_id . '|' . $pdo->period_year . '|' . $pdo->period_month;
+
+        $saldoAwal = $this->openingBalanceMemo[$key] ??= app(\App\Services\Report\CashBookQueryService::class)
+            ->openingBalanceForPeriod($pdo->plantation_unit_id, (int) $pdo->period_year, (int) $pdo->period_month);
+
+        $pdo->saldo_awal = $saldoAwal;
+        $pdo->balance    = (int) $pdo->balance + $saldoAwal;
+
+        return $pdo;
     }
 
     public function findPdo(string $id): PdoHeader

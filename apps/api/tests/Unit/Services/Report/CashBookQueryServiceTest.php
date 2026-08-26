@@ -43,6 +43,60 @@ class CashBookQueryServiceTest extends TestCase
         ]);
     }
 
+    /**
+     * Saldo kumulatif (Saldo Awal, validasi PDOT Kas Kebun, KPI Dashboard) harus
+     * memakai skop netting yang sama dengan tabel Buku Kas Harian: per KATEGORI.
+     * Dengan skop PDO-wide yang lama, kredit panjar kategori B ikut memakan
+     * realisasi kategori A yang tidak punya panjar sama sekali, sehingga
+     * closingBalanceForPeriod() berbeda dari saldo akhir Buku Kas Harian.
+     */
+    public function test_cumulative_balance_nets_deduction_per_category_and_matches_cash_book(): void
+    {
+        $subA = ExpenseSubcategory::factory()->create(['category_id' => ExpenseCategory::factory()->create(['company_id' => $this->companyId])->id]);
+        $subB = ExpenseSubcategory::factory()->create(['category_id' => ExpenseCategory::factory()->create(['company_id' => $this->companyId])->id]);
+
+        $pdo = PdoHeader::factory()->create([
+            'company_id'         => $this->companyId,
+            'plantation_unit_id' => $this->unit->id,
+            'created_by'         => $this->kerani->id,
+            'status'             => PdoHeader::STATUS_FINAL,
+            'period_year'        => 2026,
+            'period_month'       => 8,
+        ]);
+
+        // Kategori A: transfer 5jt, realisasi 5jt, tanpa panjar.
+        $itemA   = ExpenseItem::factory()->create(['subcategory_id' => $subA->id]);
+        $detailA = PdoDetail::factory()->create(['pdo_header_id' => $pdo->id, 'expense_item_id' => $itemA->id, 'amount' => 5_000_000]);
+        TransferEntry::factory()->create([
+            'pdo_detail_id' => $detailA->id, 'amount' => 5_000_000,
+            'transfer_destination' => 'rek_kebun', 'transfer_date' => '2026-08-01',
+        ]);
+        RealizationEntry::factory()->create([
+            'pdo_detail_id' => $detailA->id, 'amount' => 5_000_000,
+            'funding_source' => RealizationEntry::FUNDING_KAS_KEBUN, 'transaction_date' => '2026-08-10',
+        ]);
+
+        // Kategori B: panjar 1jt, belum ada realisasi apa pun.
+        $dedItemB   = ExpenseItem::factory()->create(['subcategory_id' => $subB->id, 'is_deduction' => true]);
+        $dedDetailB = PdoDetail::factory()->create(['pdo_header_id' => $pdo->id, 'expense_item_id' => $dedItemB->id, 'amount' => 1_000_000]);
+        TransferEntry::factory()->create([
+            'pdo_detail_id' => $dedDetailB->id, 'amount' => -1_000_000,
+            'transfer_destination' => 'rek_kebun', 'transfer_date' => '2026-08-01',
+            'entry_source' => 'system', 'is_auto_generated' => true,
+        ]);
+
+        // Penerimaan 5jt − 1jt = 4jt. Pengeluaran efektif: kategori A 5jt,
+        // kategori B 0 (kredit panjar tertahan) ⇒ saldo akhir −1.000.000.
+        // Skop PDO-wide lama menghasilkan 0 karena panjar B memakan realisasi A.
+        $closing  = $this->service->closingBalanceForPeriod($this->unit->id, 2026, 8);
+        $cashBook = $this->service->getCashBookData([
+            'period_year' => 2026, 'period_month' => 8, 'unit_id' => $this->unit->id, 'kantong' => 'kebun',
+        ]);
+
+        $this->assertEquals(-1_000_000, $closing);
+        $this->assertEquals($cashBook['closing_balance'], $closing);
+    }
+
     /** Sama seperti kasus nyata PDO Agustus Sosa: potongan belum direalisasikan. */
     public function test_closing_balance_not_inflated_by_unrealized_deduction(): void
     {

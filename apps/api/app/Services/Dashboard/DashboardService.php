@@ -73,14 +73,8 @@ class DashboardService
               {$unitClause}
         ", $params);
 
-        // Realisasi dipisah per kantong karena netting potongan di-clamp PER KANTONG —
-        // potongan kantong kebun tidak boleh "memakan" realisasi kantong pribadi/vendor
-        // (dan sebaliknya). Tanpa pemisahan ini, PDO dengan potongan kebun yang belum
-        // direalisasi akan mengurangi realisasi pribadi/vendor secara keliru.
         $realizationStats = DB::selectOne("
             SELECT
-                COALESCE(SUM(CASE WHEN re.funding_source IN ('kas_kebun', 'rekening_kebun') THEN re.amount ELSE 0 END), 0) AS realized_kebun,
-                COALESCE(SUM(CASE WHEN re.funding_source = 'rekening_utama' THEN re.amount ELSE 0 END), 0) AS realized_pribadi,
                 COUNT(DISTINCT CASE WHEN re.proof_number IS NULL OR re.proof_number = '' THEN re.id END) AS items_without_proof
             FROM pdo_headers ph
             LEFT JOIN pdo_details pd ON pd.pdo_header_id = ph.id
@@ -91,36 +85,16 @@ class DashboardService
               {$unitClause}
         ", $params);
 
-        // Item potongan (mis. POTONGAN PANJAR) = down payment yang SUDAH dibayar
-        // periode sebelumnya, direpresentasikan sebagai TransferEntry NEGATIF (bukan
-        // RealizationEntry) — jadi SUM(re.amount) polos di atas overstate realisasi.
-        // Netting-nya di-CLAMP (lihat DeductionNetting) supaya kredit tidak pernah
-        // melebihi realisasi yang benar-benar tercatat.
-        $deductionStats = DB::selectOne("
-            SELECT
-                COALESCE(SUM(CASE WHEN te.transfer_destination = 'rek_kebun' THEN te.amount ELSE 0 END), 0) AS deduction_kebun,
-                COALESCE(SUM(CASE WHEN te.transfer_destination IN ('pribadi', 'vendor') THEN te.amount ELSE 0 END), 0) AS deduction_pribadi
-            FROM pdo_headers ph
-            LEFT JOIN pdo_details pd   ON pd.pdo_header_id = ph.id
-            LEFT JOIN expense_items ei ON ei.id = pd.expense_item_id
-            LEFT JOIN transfer_entries te ON te.pdo_detail_id = pd.id AND te.status = 'committed'
-            WHERE ph.company_id = ?
-              AND ph.period_month = ?
-              AND ph.period_year  = ?
-              AND ei.is_deduction = TRUE
-              {$unitClause}
-        ", $params);
+        // Realisasi efektif (sudah dinetkan potongan) per unit & per kantong —
+        // satu sumber untuk KPI company-wide di bawah DAN untuk $byUnit.
+        $effectiveRealized = $this->effectiveRealizedByUnit($unitClause, $params);
+        $kebunRealizedByUnit   = $effectiveRealized['kebun'];
+        $pribadiRealizedByUnit = $effectiveRealized['pribadi'];
 
         $monthlyStats = (object) [
             'total_amount' => $amountStats->total_amount,
             'total_transferred' => $transferStats->total_transferred,
-            'total_realized' => DeductionNetting::effectiveRealization(
-                    (int) $realizationStats->realized_kebun,
-                    (int) $deductionStats->deduction_kebun,
-                ) + DeductionNetting::effectiveRealization(
-                    (int) $realizationStats->realized_pribadi,
-                    (int) $deductionStats->deduction_pribadi,
-                ),
+            'total_realized' => $kebunRealizedByUnit->sum() + $pribadiRealizedByUnit->sum(),
             'items_without_proof' => $realizationStats->items_without_proof,
         ];
 
@@ -167,101 +141,6 @@ class DashboardService
             GROUP BY pu.id, pu.code, pu.name
             ORDER BY COALESCE(pu.code, 'zzz')
         ", $params);
-
-        // Realisasi & potongan per unit, DIPISAH PER KANTONG — lihat alasannya di
-        // $realizationStats. Kantong kebun dihitung di sini; kantong pribadi/vendor
-        // di $unitPribadiRealizedRows / $unitPribadiDeductionRows di bawah.
-        $unitRealizedRows = DB::select("
-            SELECT
-                pu.id AS unit_id,
-                COALESCE(SUM(re.amount), 0) AS total_realized
-            FROM pdo_headers ph
-            LEFT JOIN plantation_units pu ON pu.id = ph.plantation_unit_id
-            LEFT JOIN pdo_details pd ON pd.pdo_header_id = ph.id
-            LEFT JOIN realization_entries re ON re.pdo_detail_id = pd.id
-                AND re.funding_source IN ('kas_kebun', 'rekening_kebun')
-            WHERE ph.company_id = ?
-              AND ph.period_month = ?
-              AND ph.period_year  = ?
-              {$unitClause}
-            GROUP BY pu.id
-        ", $params);
-        $kebunRealizedRawByUnit = collect($unitRealizedRows)->pluck('total_realized', 'unit_id');
-
-        $unitDeductionRows = DB::select("
-            SELECT
-                pu.id AS unit_id,
-                COALESCE(SUM(te.amount), 0) AS total_deduction
-            FROM pdo_headers ph
-            LEFT JOIN plantation_units pu ON pu.id = ph.plantation_unit_id
-            LEFT JOIN pdo_details pd   ON pd.pdo_header_id = ph.id
-            LEFT JOIN expense_items ei ON ei.id = pd.expense_item_id
-            LEFT JOIN transfer_entries te ON te.pdo_detail_id = pd.id
-                AND te.status = 'committed'
-                AND te.transfer_destination = 'rek_kebun'
-            WHERE ph.company_id = ?
-              AND ph.period_month = ?
-              AND ph.period_year  = ?
-              AND ei.is_deduction = TRUE
-              {$unitClause}
-            GROUP BY pu.id
-        ", $params);
-        $kebunDeductionByUnit = collect($unitDeductionRows)->pluck('total_deduction', 'unit_id');
-
-        $kebunRealizedByUnit = $kebunRealizedRawByUnit->keys()->merge($kebunDeductionByUnit->keys())->unique()
-            ->mapWithKeys(fn ($id) => [$id => DeductionNetting::effectiveRealization(
-                (int) ($kebunRealizedRawByUnit[$id] ?? 0),
-                (int) ($kebunDeductionByUnit[$id] ?? 0),
-            )]);
-
-        // Realisasi kantong Pribadi/Vendor per unit (funding_source rekening_utama) —
-        // dipisah dari kebun karena saldo Kas Kebun sekarang dihitung kumulatif
-        // (lihat kebunClosingBalance di bawah), sedangkan Pribadi/Vendor tetap
-        // per-periode (tidak membawa saldo lintas bulan).
-        $unitPribadiRealizedRows = DB::select("
-            SELECT
-                pu.id AS unit_id,
-                COALESCE(SUM(re.amount), 0) AS total_realized
-            FROM pdo_headers ph
-            LEFT JOIN plantation_units pu ON pu.id = ph.plantation_unit_id
-            LEFT JOIN pdo_details pd ON pd.pdo_header_id = ph.id
-            LEFT JOIN realization_entries re ON re.pdo_detail_id = pd.id AND re.funding_source = 'rekening_utama'
-            WHERE ph.company_id = ?
-              AND ph.period_month = ?
-              AND ph.period_year  = ?
-              {$unitClause}
-            GROUP BY pu.id
-        ", $params);
-        $pribadiRealizedRawByUnit = collect($unitPribadiRealizedRows)->pluck('total_realized', 'unit_id');
-
-        // Potongan Panjar yang didanai kantong Pribadi/Vendor — sama seperti kantong
-        // kebun, direpresentasikan sebagai TransferEntry NEGATIF sehingga tidak pernah
-        // ikut ter-SUM di query realisasi di atas. Clamp-nya juga sama.
-        $unitPribadiDeductionRows = DB::select("
-            SELECT
-                pu.id AS unit_id,
-                COALESCE(SUM(te.amount), 0) AS total_deduction
-            FROM pdo_headers ph
-            LEFT JOIN plantation_units pu ON pu.id = ph.plantation_unit_id
-            LEFT JOIN pdo_details pd   ON pd.pdo_header_id = ph.id
-            LEFT JOIN expense_items ei ON ei.id = pd.expense_item_id
-            LEFT JOIN transfer_entries te ON te.pdo_detail_id = pd.id
-                AND te.status = 'committed'
-                AND te.transfer_destination IN ('pribadi', 'vendor')
-            WHERE ph.company_id = ?
-              AND ph.period_month = ?
-              AND ph.period_year  = ?
-              AND ei.is_deduction = TRUE
-              {$unitClause}
-            GROUP BY pu.id
-        ", $params);
-        $pribadiDeductionByUnit = collect($unitPribadiDeductionRows)->pluck('total_deduction', 'unit_id');
-
-        $pribadiRealizedByUnit = $pribadiRealizedRawByUnit->keys()->merge($pribadiDeductionByUnit->keys())->unique()
-            ->mapWithKeys(fn ($id) => [$id => DeductionNetting::effectiveRealization(
-                (int) ($pribadiRealizedRawByUnit[$id] ?? 0),
-                (int) ($pribadiDeductionByUnit[$id] ?? 0),
-            )]);
 
         // "Realisasi" yang ditampilkan per unit = gabungan kedua kantong, masing-masing
         // sudah di-clamp sendiri-sendiri.
@@ -442,6 +321,96 @@ class DashboardService
      * app('current_unit_ids') (unit sendiri + unit yang di-link, mis. Sosa
      * Replanting) — request tanpa filter eksplisit pun otomatis dibatasi.
      */
+    /**
+     * Realisasi efektif per unit, dipisah per kantong, dengan potongan (mis.
+     * POTONGAN PANJAR) dinetkan PER (PDO, KATEGORI) lalu di-clamp 0 — skop yang
+     * sama persis dengan RecapQueryService, CashBookQueryService,
+     * PdoService::effectiveRealizedSql(), dan
+     * RealizationEntryService::totalRealizedForGroup().
+     *
+     * Skop lama di file ini adalah company/unit-wide: satu potongan yang
+     * kategorinya belum direalisasi ikut mengurangi realisasi kategori lain,
+     * sehingga Dashboard menampilkan Realisasi & Saldo berbeda dari Rekap Buku
+     * Kas untuk periode yang sama (KP Agustus 2026: selisih ±Rp 12,4 juta).
+     *
+     * Kantong tetap dipisah: potongan kantong kebun tidak boleh "memakan"
+     * realisasi kantong pribadi/vendor, dan sebaliknya.
+     *
+     * Dua query terpisah (realisasi & potongan) — menggabungkan
+     * realization_entries dan transfer_entries dalam satu JOIN akan menggandakan
+     * baris begitu satu pdo_detail punya >1 entri di salah satu sisi.
+     *
+     * @param  list<mixed>  $params
+     * @return array{kebun: \Illuminate\Support\Collection<string,int>, pribadi: \Illuminate\Support\Collection<string,int>}
+     */
+    private function effectiveRealizedByUnit(string $unitClause, array $params): array
+    {
+        $realRows = DB::select("
+            SELECT
+                ph.plantation_unit_id AS unit_id,
+                ph.id                 AS pdo_id,
+                es.category_id        AS cat_id,
+                COALESCE(SUM(CASE WHEN re.funding_source IN ('kas_kebun', 'rekening_kebun') THEN re.amount ELSE 0 END), 0) AS kebun,
+                COALESCE(SUM(CASE WHEN re.funding_source = 'rekening_utama' THEN re.amount ELSE 0 END), 0) AS pribadi
+            FROM pdo_headers ph
+            JOIN pdo_details pd            ON pd.pdo_header_id = ph.id
+            JOIN expense_items ei          ON ei.id = pd.expense_item_id
+            JOIN expense_subcategories es  ON es.id = ei.subcategory_id
+            JOIN realization_entries re    ON re.pdo_detail_id = pd.id
+            WHERE ph.company_id = ?
+              AND ph.period_month = ?
+              AND ph.period_year  = ?
+              {$unitClause}
+            GROUP BY ph.plantation_unit_id, ph.id, es.category_id
+        ", $params);
+
+        $dedRows = DB::select("
+            SELECT
+                ph.plantation_unit_id AS unit_id,
+                ph.id                 AS pdo_id,
+                es.category_id        AS cat_id,
+                COALESCE(SUM(CASE WHEN te.transfer_destination = 'rek_kebun' THEN te.amount ELSE 0 END), 0) AS kebun,
+                COALESCE(SUM(CASE WHEN te.transfer_destination IN ('pribadi', 'vendor') THEN te.amount ELSE 0 END), 0) AS pribadi
+            FROM pdo_headers ph
+            JOIN pdo_details pd            ON pd.pdo_header_id = ph.id
+            JOIN expense_items ei          ON ei.id = pd.expense_item_id
+            JOIN expense_subcategories es  ON es.id = ei.subcategory_id
+            JOIN transfer_entries te       ON te.pdo_detail_id = pd.id AND te.status = 'committed'
+            WHERE ph.company_id = ?
+              AND ph.period_month = ?
+              AND ph.period_year  = ?
+              AND ei.is_deduction = TRUE
+              {$unitClause}
+            GROUP BY ph.plantation_unit_id, ph.id, es.category_id
+        ", $params);
+
+        $real = [];
+        $ded  = [];
+        foreach ($realRows as $r) {
+            $real[$r->pdo_id . '|' . $r->cat_id] = $r;
+        }
+        foreach ($dedRows as $r) {
+            $ded[$r->pdo_id . '|' . $r->cat_id] = $r;
+        }
+
+        $kebun   = [];
+        $pribadi = [];
+        foreach (array_unique(array_merge(array_keys($real), array_keys($ded))) as $key) {
+            $unitId = ($real[$key] ?? $ded[$key])->unit_id;
+
+            $kebun[$unitId] = ($kebun[$unitId] ?? 0) + DeductionNetting::effectiveRealization(
+                (int) ($real[$key]->kebun ?? 0),
+                (int) ($ded[$key]->kebun ?? 0),
+            );
+            $pribadi[$unitId] = ($pribadi[$unitId] ?? 0) + DeductionNetting::effectiveRealization(
+                (int) ($real[$key]->pribadi ?? 0),
+                (int) ($ded[$key]->pribadi ?? 0),
+            );
+        }
+
+        return ['kebun' => collect($kebun), 'pribadi' => collect($pribadi)];
+    }
+
     private function resolveUnitIds(array $filters, User $user): ?array
     {
         $ids = $filters['plantation_unit_ids'] ?? null;

@@ -354,10 +354,19 @@ class CashBookQueryService
      * tidak pernah "dipegang" siapa pun — sehingga tidak punya saldo awal.
      *
      * Potongan (transfer negatif) mengurangi total pengeluaran, tapi HANYA
-     * sebatas realisasi yang benar-benar sudah tercatat pada PDO yang sama —
-     * lihat DeductionNetting. Dikelompokkan per PDO HEADER (bukan lintas semua
-     * riwayat) karena tiap PDO punya potongannya sendiri; tanpa itu, realisasi
-     * PDO bulan lalu bisa keliru dianggap "mengkompensasi" potongan bulan ini.
+     * sebatas realisasi yang benar-benar sudah tercatat di (PDO, KATEGORI) yang
+     * sama — lihat DeductionNetting.
+     *
+     * Dikelompokkan per PDO HEADER (bukan lintas seluruh riwayat) karena tiap PDO
+     * punya potongannya sendiri; tanpa itu, realisasi PDO bulan lalu bisa keliru
+     * dianggap "mengkompensasi" potongan bulan ini. Di dalam satu PDO, skopnya
+     * KATEGORI — sama persis dengan buildExpenseRows(), RecapQueryService,
+     * PdoService::effectiveRealizedSql(), dan
+     * RealizationEntryService::totalRealizedForGroup(). Skop PDO-wide yang lama
+     * membuat saldo kumulatif (dipakai Saldo Awal, validasi PDOT Kas Kebun, dan
+     * KPI Dashboard) berbeda dari saldo akhir Buku Kas Harian bulan yang sama
+     * begitu ada kategori yang panjarnya melebihi realisasi kategori itu
+     * sementara kategori lain surplus.
      *
      * Tanpa clamp, potongan dikreditkan balik sebelum realisasi penyeimbangnya
      * tercatat sehingga saldo kelebihan (PDO Agustus Sosa: saldo tampil
@@ -376,31 +385,42 @@ class CashBookQueryService
             ->where('transfer_date', '<', $before->toDateString())
             ->sum('amount');
 
-        $realizationByPdo = RealizationEntry::query()
+        // Kunci grup = "{pdo_header_id}|{category_id}". toBase() dipakai supaya
+        // hasil agregat tidak dihidrasi jadi model RealizationEntry/TransferEntry
+        // (kolomnya bukan kolom tabel aslinya).
+        $realizationByGroup = RealizationEntry::query()
             ->whereIn('funding_source', $this->expenseFundingSourcesFor($kantong))
             ->whereHas('pdoDetail.pdoHeader', fn ($q) => $q->where('plantation_unit_id', $unitId))
             ->where('transaction_date', '<', $before->toDateString())
             ->join('pdo_details', 'pdo_details.id', '=', 'realization_entries.pdo_detail_id')
-            ->selectRaw('pdo_details.pdo_header_id as pdo_id, SUM(realization_entries.amount) as total')
-            ->groupBy('pdo_details.pdo_header_id')
-            ->pluck('total', 'pdo_id');
+            ->join('expense_items', 'expense_items.id', '=', 'pdo_details.expense_item_id')
+            ->join('expense_subcategories', 'expense_subcategories.id', '=', 'expense_items.subcategory_id')
+            ->selectRaw('pdo_details.pdo_header_id as pdo_id, expense_subcategories.category_id as cat_id, SUM(realization_entries.amount) as total')
+            ->groupBy('pdo_details.pdo_header_id', 'expense_subcategories.category_id')
+            ->toBase()
+            ->get()
+            ->mapWithKeys(fn ($r) => [$r->pdo_id . '|' . $r->cat_id => (int) $r->total]);
 
-        $deductionByPdo = TransferEntry::query()
+        $deductionByGroup = TransferEntry::query()
             ->whereIn('transfer_destination', $this->receiptDestinationsFor($kantong))
             ->whereHas('pdoDetail', fn ($q) => $this->excludingKasKebunFunded($q))
             ->whereHas('pdoDetail.expenseItem', fn ($q) => $q->where('is_deduction', true))
             ->whereHas('pdoDetail.pdoHeader', fn ($q) => $q->where('plantation_unit_id', $unitId))
             ->where('transfer_date', '<', $before->toDateString())
             ->join('pdo_details', 'pdo_details.id', '=', 'transfer_entries.pdo_detail_id')
-            ->selectRaw('pdo_details.pdo_header_id as pdo_id, SUM(transfer_entries.amount) as total')
-            ->groupBy('pdo_details.pdo_header_id')
-            ->pluck('total', 'pdo_id'); // negatif
+            ->join('expense_items', 'expense_items.id', '=', 'pdo_details.expense_item_id')
+            ->join('expense_subcategories', 'expense_subcategories.id', '=', 'expense_items.subcategory_id')
+            ->selectRaw('pdo_details.pdo_header_id as pdo_id, expense_subcategories.category_id as cat_id, SUM(transfer_entries.amount) as total')
+            ->groupBy('pdo_details.pdo_header_id', 'expense_subcategories.category_id')
+            ->toBase()
+            ->get()
+            ->mapWithKeys(fn ($r) => [$r->pdo_id . '|' . $r->cat_id => (int) $r->total]); // negatif
 
         $totalExpenses = 0;
-        foreach ($realizationByPdo->keys()->merge($deductionByPdo->keys())->unique() as $pdoId) {
+        foreach ($realizationByGroup->keys()->merge($deductionByGroup->keys())->unique() as $key) {
             $totalExpenses += DeductionNetting::effectiveRealization(
-                (int) ($realizationByPdo[$pdoId] ?? 0),
-                (int) ($deductionByPdo[$pdoId] ?? 0),
+                (int) ($realizationByGroup[$key] ?? 0),
+                (int) ($deductionByGroup[$key] ?? 0),
             );
         }
 
