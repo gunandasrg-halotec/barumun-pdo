@@ -773,17 +773,20 @@ export function RekapitulasiPage() {
                 </div>
               ))}
             </div>
-            {/* Row 2: Kas Kebun (4 cols: saldo awal + transfer − realisasi = saldo)
-                + Pribadi/Vendor (3 cols: transfer − realisasi = saldo).
+            {/* Row 2: Kas Kebun (5 cols) + Pribadi/Vendor (3 cols).
+                Kas Kebun: Saldo PDO = transfer − realisasi (dana dari PDO periode ini
+                saja, sama dengan baris Grand Total tabel), lalu Saldo = saldo awal +
+                transfer − realisasi (posisi kas sebenarnya).
                 Kantong Pribadi/Vendor tidak punya saldo awal — dana ditransfer HO
                 langsung ke rekening orang/rekanan, tidak pernah disimpan sebagai kas. */}
-            <div className="grid grid-cols-7">
+            <div className="grid grid-cols-8">
               {/* Kas Kebun */}
               {[
-                { label: 'Saldo Awal', value: recap.saldo_awal ?? 0,  group: 'Kas Kebun', clickGroup: null },
-                { label: 'Transfer',   value: recap.transfer_kebun,   group: 'Kas Kebun', clickGroup: null },
-                { label: 'Realisasi',  value: recap.realisasi_kebun,  group: 'Kas Kebun', clickGroup: 'kebun' as const },
-                { label: 'Saldo',      value: recap.saldo_kebun,      group: 'Kas Kebun', clickGroup: null },
+                { label: 'Saldo Awal', value: recap.saldo_awal ?? 0,     group: 'Kas Kebun', clickGroup: null },
+                { label: 'Transfer',   value: recap.transfer_kebun,      group: 'Kas Kebun', clickGroup: null },
+                { label: 'Realisasi',  value: recap.realisasi_kebun,     group: 'Kas Kebun', clickGroup: 'kebun' as const },
+                { label: 'Saldo PDO',  value: recap.saldo_pdo_kebun ?? 0, group: 'Kas Kebun', clickGroup: null },
+                { label: 'Saldo',      value: recap.saldo_kebun,         group: 'Kas Kebun', clickGroup: null },
               ].map((k, i) => (
                 <div
                   key={`kebun-${i}`}

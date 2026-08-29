@@ -12,6 +12,7 @@ use App\Models\PlantationUnit;
 use App\Models\RealizationEntry;
 use App\Models\Role;
 use App\Models\TransferEntry;
+use App\Models\UnitOpeningBalance;
 use App\Models\User;
 use App\Services\Report\RecapQueryService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -586,6 +587,58 @@ class RecapQueryServiceTest extends TestCase
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────────
+
+    // ── Saldo awal: KPI "Saldo PDO" vs KPI "Saldo" vs baris Grand Total ───────
+
+    /**
+     * Baris Grand Total memakai rumus kantong yang sama dengan KPI "Saldo"
+     * (saldo awal + transfer − realisasi) supaya keduanya tidak pernah beda —
+     * inilah keluhan aslinya. KPI "Saldo PDO" menyimpan angka murni PDO
+     * (transfer − realisasi), yang tetap sama dengan penjumlahan kolom Saldo
+     * per item di tabel.
+     */
+    public function test_grand_total_saldo_includes_opening_balance_while_saldo_pdo_excludes_it(): void
+    {
+        UnitOpeningBalance::create([
+            'plantation_unit_id' => $this->unit->id,
+            'amount'             => 2_000_000,
+            'as_of_date'         => sprintf('%04d-%02d-01', $this->year, $this->month - 1),
+        ]);
+
+        $this->seedItem(amount: 1_000_000, transfer: 900_000, realized: 750_000);
+
+        $result = $this->query();
+
+        $this->assertEquals(2_000_000, $result['saldo_awal']);
+        // Murni PDO — sama dengan jumlah kolom Saldo per item.
+        $this->assertEquals(150_000, $result['saldo_pdo_kebun']);
+        // Posisi kas — KPI "Saldo" dan baris Grand Total wajib sama.
+        $this->assertEquals(2_150_000, $result['saldo_kebun']);
+        $this->assertEquals(2_150_000, $result['grand_total_saldo']);
+        $this->assertEquals($result['saldo_kebun'], $result['grand_total_saldo']);
+    }
+
+    /** Filter kantong Pribadi/Vendor tidak memuat transaksi kas kebun, jadi saldo awal tidak boleh ikut. */
+    public function test_grand_total_saldo_excludes_opening_balance_on_pribadi_kantong(): void
+    {
+        UnitOpeningBalance::create([
+            'plantation_unit_id' => $this->unit->id,
+            'amount'             => 2_000_000,
+            'as_of_date'         => sprintf('%04d-%02d-01', $this->year, $this->month - 1),
+        ]);
+
+        $this->seedItem(amount: 1_000_000, transfer: 900_000, realized: 750_000);
+
+        $result = $this->service->getRecapData([
+            'period_year'  => $this->year,
+            'period_month' => $this->month,
+            'unit_id'      => $this->unit->id,
+            'category_id'  => null,
+            'kantong'      => 'pribadi',
+        ]);
+
+        $this->assertEquals(0, $result['grand_total_saldo']);
+    }
 
     private function makeFinalPdo(): PdoHeader
     {

@@ -46,9 +46,13 @@ export interface RecapResponse {
   transfer_pribadi: number
   realisasi_kebun: number
   realisasi_pribadi: number
+  /** saldo awal + transfer − realisasi (posisi kas kebun sebenarnya) */
   saldo_kebun: number
+  /** transfer − realisasi, tanpa saldo awal — dana dari PDO periode ini saja */
+  saldo_pdo_kebun: number
   saldo_pribadi: number
   saldo_awal: number
+  /** alias historis dari saldo_kebun */
   saldo_kas_kebun_saat_ini: number
   categories: RecapCategory[]
 }

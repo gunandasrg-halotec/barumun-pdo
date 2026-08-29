@@ -143,7 +143,13 @@ export function RecapTable({ data, onRealizationClick }: Props) {
             <td className="px-3 py-2.5 text-right font-[950] border border-[#9ca3af]">{idr(data.grand_total_amount)}</td>
             <td className="px-3 py-2.5 text-right font-[950] border border-[#9ca3af]">{idr(data.grand_total_transfer)}</td>
             <td className="px-3 py-2.5 text-right font-[950] border border-[#9ca3af]">{idr(data.grand_total_realization)}</td>
-            <td className={`px-3 py-2.5 text-right font-[950] border border-[#9ca3af] ${data.grand_total_saldo < 0 ? 'text-red-700' : ''}`}>
+            {/* Saldo Grand Total = saldo awal + transfer − realisasi, sama dengan KPI
+                "Saldo" Kas Kebun. Sengaja BUKAN penjumlahan kolom Saldo per baris
+                (yang tetap transfer − realisasi) — selisihnya persis sebesar saldo awal. */}
+            <td
+              className={`px-3 py-2.5 text-right font-[950] border border-[#9ca3af] ${data.grand_total_saldo < 0 ? 'text-red-700' : ''}`}
+              title="Saldo awal + Transfer − Realisasi (termasuk saldo kas bulan lalu, sama dengan KPI Saldo Kas Kebun)"
+            >
               {idr(data.grand_total_saldo)}
             </td>
           </tr>

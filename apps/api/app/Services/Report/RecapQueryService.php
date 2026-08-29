@@ -442,18 +442,30 @@ class RecapQueryService
             $grandTotalRealization += $real;
         }
 
+        // Saldo awal hanya berlaku kalau kantong yang ditampilkan mencakup Kas Kebun.
+        // Saat filter kantong = Pribadi/Vendor, tabelnya tidak memuat transaksi kas
+        // kebun sama sekali, jadi menambahkan saldo awal di sana akan salah.
+        $saldoAwalTabel = in_array($kantong, ['all', 'kebun'], true) ? $saldoAwal : 0;
+
         return [
             'grand_total_amount'            => $grandTotalAmount,
             'grand_total_transfer'          => $grandTotalTransfer,
             'grand_total_realization'       => $grandTotalRealization,
-            // grand_total_saldo adalah total kolom Saldo di TABEL (per item), jadi
-            // tetap transfer − realisasi: saldo awal milik kantong, tidak bisa
-            // dibagi ke baris item mana pun tanpa menggandakan angkanya.
-            'grand_total_saldo'             => $grandTotalTransfer - $grandTotalRealization,
+            // Baris Grand Total memakai rumus kantong yang sama dengan KPI "Saldo"
+            // Kas Kebun: saldo awal + transfer − realisasi. Konsekuensinya baris ini
+            // TIDAK lagi sama dengan penjumlahan kolom Saldo per item (yang tetap
+            // transfer − realisasi, karena saldo awal milik kantong dan tidak bisa
+            // dibagi ke baris item mana pun) — selisihnya persis sebesar saldo awal.
+            // Ini disengaja: Grand Total dibaca sebagai posisi kas, bukan sebagai
+            // jumlah kolom. Angka "murni PDO" tetap tersedia di KPI "Saldo PDO".
+            'grand_total_saldo'             => $saldoAwalTabel + $grandTotalTransfer - $grandTotalRealization,
             'transfer_kebun'                => $transferKebun,
             'transfer_pribadi'              => $transferPribadi,
             'realisasi_kebun'               => $realisasiKebun,
             'realisasi_pribadi'             => $realisasiPribadi,
+            // Saldo PDO = transfer − realisasi, TANPA saldo awal: memperlihatkan
+            // posisi dana yang berasal dari PDO periode ini saja.
+            'saldo_pdo_kebun'               => $transferKebun - $realisasiKebun,
             // Saldo kantong = saldo awal + transfer − realisasi. Saldo awal hanya
             // dimiliki kantong Kas Kebun (kas fisik yang tersisa dari bulan lalu);
             // kantong Pribadi/Vendor tidak pernah menyimpan kas, jadi tetap
