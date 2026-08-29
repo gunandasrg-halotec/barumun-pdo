@@ -82,6 +82,16 @@
       @endforeach
     </tbody>
     <tfoot>
+      {{-- Saldo awal yang ikut dihitung di JUMLAH TOTAL. Diturunkan dari selisih
+           grand_total_saldo dengan (transfer − realisasi) supaya otomatis nol saat
+           filter kantong = Pribadi/Vendor — sama seperti RecapQueryService. Ditampilkan
+           sebagai baris tersendiri supaya pembaca bisa menelusuri kenapa JUMLAH TOTAL
+           berbeda dari penjumlahan kolom Saldo per baris. --}}
+      @php($saldoAwal = (int) $recap['grand_total_saldo'] - ((int) $recap['grand_total_transfer'] - (int) $recap['grand_total_realization']))
+      <tr class="row-total">
+        <td colspan="6">SALDO AWAL KAS KEBUN</td>
+        <td class="num">{{ number_format($saldoAwal, 0, ',', '.') }}</td>
+      </tr>
       <tr class="row-total">
         <td colspan="3">JUMLAH TOTAL</td>
         <td class="num">{{ number_format($recap['grand_total_amount'], 0, ',', '.') }}</td>

@@ -35,6 +35,13 @@ class RecapDirectExport implements WithEvents, ShouldAutoSize
                 $monthName = ['', 'Januari','Februari','Maret','April','Mei','Juni',
                               'Juli','Agustus','September','Oktober','November','Desember'][$this->month] ?? $this->month;
 
+                // Saldo awal yang IKUT dihitung di Grand Total. Diturunkan dari selisih
+                // grand_total_saldo dengan (transfer − realisasi) — bukan dibaca langsung
+                // dari $recap['saldo_awal'] — supaya otomatis nol saat filter kantong =
+                // Pribadi/Vendor, persis seperti keputusan RecapQueryService::buildHierarchy().
+                $saldoAwal = (int) $this->recap['grand_total_saldo']
+                    - ((int) $this->recap['grand_total_transfer'] - (int) $this->recap['grand_total_realization']);
+
                 foreach ([
                     ['Unit Kebun', $this->unit ? "{$this->unit->code} — {$this->unit->name}" : '—'],
                     ['Periode',    "{$monthName} {$this->year}"],
@@ -45,6 +52,18 @@ class RecapDirectExport implements WithEvents, ShouldAutoSize
                     $sheet->getStyle("A{$row}")->getFont()->setBold(true);
                     $row++;
                 }
+
+                // Saldo awal ditulis sebagai sel tersendiri supaya angkanya terlihat DAN
+                // bisa dirujuk rumus Grand Total di bawah — pembaca bisa menelusuri kenapa
+                // Grand Total berbeda dari penjumlahan kolom Saldo per baris.
+                $saldoAwalCell = "B{$row}";
+                $sheet->setCellValue("A{$row}", 'Saldo Awal Kas Kebun');
+                $sheet->setCellValue($saldoAwalCell, $saldoAwal);
+                $sheet->getStyle("A{$row}")->getFont()->setBold(true);
+                $sheet->getStyle($saldoAwalCell)->getNumberFormat()
+                    ->setFormatCode(NumberFormat::FORMAT_NUMBER_COMMA_SEPARATED1);
+                $row++;
+
                 $row++;
 
                 // ── Column headings ──────────────────────────────────────
@@ -174,8 +193,14 @@ class RecapDirectExport implements WithEvents, ShouldAutoSize
                         $refs = implode(',', array_map(fn ($r) => "{$col}{$r}", $categoryRows));
                         $sheet->setCellValue("{$col}{$grandRow}", "=SUM({$refs})");
                     }
-                    $sheet->setCellValue("G{$grandRow}", "=E{$grandRow}-F{$grandRow}");
                 }
+
+                // Saldo Grand Total = saldo awal + Transfer − Realisasi, rumus yang sama
+                // dengan KPI "Saldo" Kas Kebun di layar. SENGAJA berbeda dari subtotal
+                // kategori/subkategori (yang tetap Transfer − Realisasi): saldo awal milik
+                // kantong, tidak bisa dibagi ke baris mana pun tanpa menggandakan angkanya.
+                // Angka "murni PDO" ada di KPI "Saldo PDO" = E − F pada baris ini.
+                $sheet->setCellValue("G{$grandRow}", "={$saldoAwalCell}+E{$grandRow}-F{$grandRow}");
             },
         ];
     }
