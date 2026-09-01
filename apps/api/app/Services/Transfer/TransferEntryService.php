@@ -38,6 +38,15 @@ class TransferEntryService
      *
      * Entri negatif kini ikut dikirim, dan frontend menampilkannya sebagai baris
      * informatif yang tidak bisa dicentang — lihat TransferInstructionsPage.tsx.
+     *
+     * TransferEntry auto-generated untuk PDOT funding_option=kas_kebun DIKECUALIKAN
+     * sepenuhnya (bukan sekadar disamarkan seperti entri negatif di atas) — nominalnya
+     * SELALU 0 (penanda teknis supaya KERANI bisa merealisasikan item itu, lihat
+     * PdoSupplementaryApprovalService::mergeIntoParent()), dan HO memang tidak pernah
+     * mentransfer apa pun untuk item ini: dananya sudah ada di kas kebun sebelum PDO
+     * ini. Tanpa pengecualian ini baris itu tampil sebagai "Belum Ditransfer" — seolah
+     * masih ada instruksi transfer yang harus dieksekusi kasir, padahal tidak ada.
+     * Pola yang sama dengan CashBookQueryService::excludingKasKebunFunded().
      */
     public function listAll(User $actor, array $filters = []): Collection
     {
@@ -48,6 +57,7 @@ class TransferEntryService
                 'transferredByUser',
             ])
             ->whereHas('pdoDetail.pdoHeader', fn ($q) => $q->where('company_id', $actor->company_id))
+            ->whereHas('pdoDetail', fn ($q) => $q->where(fn ($qq) => $qq->whereNull('funding_option')->orWhere('funding_option', '!=', 'kas_kebun')))
             ->when($actor->plantation_unit_id, fn ($q) => $q->whereHas('pdoDetail.pdoHeader', fn ($qq) => $qq->where('plantation_unit_id', $actor->plantation_unit_id)))
             ->when(!empty($filters['unit_ids']), fn ($q) => $q->whereHas('pdoDetail.pdoHeader', fn ($qq) => $qq->whereIn('plantation_unit_id', $filters['unit_ids'])))
             ->orderByDesc('transfer_date')

@@ -204,6 +204,46 @@ class TransferEntryServiceTest extends TestCase
         $this->assertEquals(3_000_000, (int) $rows->sum('amount'));
     }
 
+    /**
+     * TransferEntry auto-generated untuk PDOT funding_option=kas_kebun (penanda
+     * teknis bernominal 0, lihat PdoSupplementaryApprovalService::mergeIntoParent())
+     * harus dikecualikan total — HO tidak pernah mentransfer apa pun untuk item ini,
+     * jadi tidak boleh tampil sebagai "Belum Ditransfer" di Daftar Perintah Transfer.
+     */
+    public function test_list_all_excludes_kas_kebun_funded_marker_entries(): void
+    {
+        $detail = $this->makeDetailWithStatus(PdoHeader::STATUS_FINAL, 0);
+        $detail->update(['funding_option' => 'kas_kebun']);
+
+        TransferEntry::factory()->create([
+            'pdo_detail_id'        => $detail->id,
+            'amount'               => 0,
+            'transfer_destination' => TransferEntry::DEST_REK_KEBUN,
+            'entry_source'         => TransferEntry::SOURCE_SYSTEM,
+            'is_auto_generated'    => true,
+        ]);
+
+        $rows = $this->service->listAll($this->manajerKeuangan);
+
+        $this->assertCount(0, $rows);
+    }
+
+    /** Item PDO biasa (funding_option null) tetap tampil seperti biasa. */
+    public function test_list_all_includes_entries_without_funding_option(): void
+    {
+        $detail = $this->makeDetailWithStatus(PdoHeader::STATUS_FINAL, 500_000);
+
+        TransferEntry::factory()->create([
+            'pdo_detail_id'        => $detail->id,
+            'amount'               => 500_000,
+            'transfer_destination' => TransferEntry::DEST_REK_KEBUN,
+        ]);
+
+        $rows = $this->service->listAll($this->manajerKeuangan);
+
+        $this->assertCount(1, $rows);
+    }
+
     // ─────────────────────────────────────────────────────
     // Sinkronisasi baris potongan dengan progres transfer PDO
     // ─────────────────────────────────────────────────────

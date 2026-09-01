@@ -229,6 +229,12 @@ class PdoServiceTest extends TestCase
             'plantation_unit_id' => $this->unit->id,
             'created_by'         => $this->kerani->id,
             'status'             => PdoHeader::STATUS_DRAFT,
+            // Periode dipatok ke bulan berjalan supaya TransferEntry bertanggal now() (default
+            // factory) tidak jatuh SEBELUM periode acak dari PdoHeaderFactory (2024-2026) —
+            // kalau itu terjadi, transfer ikut terhitung sebagai saldo awal kumulatif dan
+            // balance()-nya dobel (lihat PdoService::withKebunOpeningBalance()).
+            'period_year'         => now()->year,
+            'period_month'        => now()->month,
         ]);
 
         $detail = PdoDetail::factory()->create([
@@ -263,6 +269,12 @@ class PdoServiceTest extends TestCase
             'plantation_unit_id' => $this->unit->id,
             'created_by'         => $this->kerani->id,
             'status'             => PdoHeader::STATUS_DRAFT,
+            // Periode dipatok ke bulan berjalan supaya TransferEntry bertanggal now() (default
+            // factory) tidak jatuh SEBELUM periode acak dari PdoHeaderFactory (2024-2026) —
+            // kalau itu terjadi, transfer ikut terhitung sebagai saldo awal kumulatif dan
+            // balance()-nya dobel (lihat PdoService::withKebunOpeningBalance()).
+            'period_year'         => now()->year,
+            'period_month'        => now()->month,
         ]);
 
         $detail = PdoDetail::factory()->create(['pdo_header_id' => $pdo->id, 'amount' => 8_894_864]);
@@ -301,6 +313,12 @@ class PdoServiceTest extends TestCase
             'plantation_unit_id' => $this->unit->id,
             'created_by'         => $this->kerani->id,
             'status'             => PdoHeader::STATUS_DRAFT,
+            // Periode dipatok ke bulan berjalan supaya TransferEntry bertanggal now() (default
+            // factory) tidak jatuh SEBELUM periode acak dari PdoHeaderFactory (2024-2026) —
+            // kalau itu terjadi, transfer ikut terhitung sebagai saldo awal kumulatif dan
+            // balance()-nya dobel (lihat PdoService::withKebunOpeningBalance()).
+            'period_year'         => now()->year,
+            'period_month'        => now()->month,
         ]);
 
         $cat = ExpenseCategory::factory()->create(['company_id' => $this->companyId]);
@@ -345,6 +363,12 @@ class PdoServiceTest extends TestCase
             'plantation_unit_id' => $this->unit->id,
             'created_by'         => $this->kerani->id,
             'status'             => PdoHeader::STATUS_DRAFT,
+            // Periode dipatok ke bulan berjalan supaya TransferEntry bertanggal now() (default
+            // factory) tidak jatuh SEBELUM periode acak dari PdoHeaderFactory (2024-2026) —
+            // kalau itu terjadi, transfer ikut terhitung sebagai saldo awal kumulatif dan
+            // balance()-nya dobel (lihat PdoService::withKebunOpeningBalance()).
+            'period_year'         => now()->year,
+            'period_month'        => now()->month,
         ]);
 
         // Kategori A: realisasi 5.000.000, tanpa panjar.
