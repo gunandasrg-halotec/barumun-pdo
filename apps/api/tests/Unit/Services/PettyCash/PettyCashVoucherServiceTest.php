@@ -94,7 +94,10 @@ class PettyCashVoucherServiceTest extends TestCase
 
     public function test_nomor_voucher_berurutan_dan_reset_per_pdo(): void
     {
-        $detail = $this->makeDetail(budget: 5000000, transferred: 5000000);
+        // Periode dipatok eksplisit & berbeda: PdoHeaderFactory memilih bulan/tahun
+        // ACAK, jadi dua PDO untuk unit yang sama sesekali bertabrakan di unique
+        // (plantation_unit_id, period_month, period_year).
+        $detail = $this->makeDetail(budget: 5000000, transferred: 5000000, periodYear: 2026, periodMonth: 6);
         $pdo    = $detail->pdoHeader;
 
         $v1 = $this->service->create([
@@ -118,7 +121,7 @@ class PettyCashVoucherServiceTest extends TestCase
         $this->assertEquals("PCV/{$pdo->pdo_number}/1", $v1->voucher_number);
         $this->assertEquals("PCV/{$pdo->pdo_number}/2", $v2->voucher_number);
 
-        $otherDetail = $this->makeDetail(budget: 5000000, transferred: 5000000);
+        $otherDetail = $this->makeDetail(budget: 5000000, transferred: 5000000, periodYear: 2026, periodMonth: 7);
         $otherPdo    = $otherDetail->pdoHeader;
 
         $v3 = $this->service->create([

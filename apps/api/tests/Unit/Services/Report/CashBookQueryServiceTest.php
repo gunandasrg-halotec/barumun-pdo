@@ -651,4 +651,136 @@ class CashBookQueryServiceTest extends TestCase
         $this->assertEquals(5_107_000, $cashBook['total_pengeluaran']);
         $this->assertEquals(0, $cashBook['closing_balance']);
     }
+
+    /**
+     * Regresi KP Agustus 2026: kredit panjar dulu dikonsumsi dari grup tanggal paling
+     * awal di KATEGORI, tanpa melihat sub-kategori — akibatnya panjar Supir Truck
+     * Harian menghabiskan Upah Muat Pupuk (sub-kategori Pemuat, tidak dipanjar sama
+     * sekali) sehingga barisnya tampil Rp 0 di Buku Kas Harian padahal uangnya keluar.
+     *
+     * Sekarang panjar diserap sub-kategorinya sendiri lebih dulu, grup TERBESAR dulu.
+     */
+    public function test_deduction_consumed_from_own_subcategory_largest_group_first(): void
+    {
+        $cat = ExpenseCategory::factory()->create(['company_id' => $this->companyId]);
+        $pdo = PdoHeader::factory()->create([
+            'company_id'         => $this->companyId,
+            'plantation_unit_id' => $this->unit->id,
+            'created_by'         => $this->kerani->id,
+            'status'             => PdoHeader::STATUS_FINAL,
+            'period_year'        => 2026,
+            'period_month'       => 8,
+        ]);
+
+        // Sub LAIN (tanggal paling awal, TIDAK dipanjar) — dulu inilah yang tergerus.
+        $subOther  = ExpenseSubcategory::factory()->create(['category_id' => $cat->id]);
+        $itemOther = ExpenseItem::factory()->create(['subcategory_id' => $subOther->id]);
+        $detOther  = PdoDetail::factory()->create(['pdo_header_id' => $pdo->id, 'expense_item_id' => $itemOther->id, 'amount' => 395_000]);
+        TransferEntry::factory()->create([
+            'pdo_detail_id' => $detOther->id, 'amount' => 395_000,
+            'transfer_destination' => 'rek_kebun', 'transfer_date' => '2026-08-01',
+        ]);
+        RealizationEntry::factory()->create([
+            'pdo_detail_id' => $detOther->id, 'amount' => 395_000,
+            'funding_source' => RealizationEntry::FUNDING_KAS_KEBUN, 'transaction_date' => '2026-08-01',
+        ]);
+
+        // Sub yang DIPANJAR: biaya kecil 35.000 (5 Ags) + upah utama 5.485.000 (6 Ags).
+        $subPaid  = ExpenseSubcategory::factory()->create(['category_id' => $cat->id]);
+        $itemPaid = ExpenseItem::factory()->create(['subcategory_id' => $subPaid->id]);
+        $detPaid  = PdoDetail::factory()->create(['pdo_header_id' => $pdo->id, 'expense_item_id' => $itemPaid->id, 'amount' => 5_520_000]);
+        TransferEntry::factory()->create([
+            'pdo_detail_id' => $detPaid->id, 'amount' => 5_520_000,
+            'transfer_destination' => 'rek_kebun', 'transfer_date' => '2026-08-01',
+        ]);
+        RealizationEntry::factory()->create([
+            'pdo_detail_id' => $detPaid->id, 'amount' => 35_000,
+            'funding_source' => RealizationEntry::FUNDING_KAS_KEBUN, 'transaction_date' => '2026-08-05',
+        ]);
+        RealizationEntry::factory()->create([
+            'pdo_detail_id' => $detPaid->id, 'amount' => 5_485_000,
+            'funding_source' => RealizationEntry::FUNDING_KAS_KEBUN, 'transaction_date' => '2026-08-06',
+        ]);
+
+        $dedItem   = ExpenseItem::factory()->create(['subcategory_id' => $subPaid->id, 'is_deduction' => true]);
+        $dedDetail = PdoDetail::factory()->create(['pdo_header_id' => $pdo->id, 'expense_item_id' => $dedItem->id, 'amount' => 1_000_000]);
+        TransferEntry::factory()->create([
+            'pdo_detail_id' => $dedDetail->id, 'amount' => -1_000_000,
+            'transfer_destination' => 'rek_kebun', 'transfer_date' => '2026-08-01',
+            'entry_source' => 'system', 'is_auto_generated' => true,
+        ]);
+
+        $cashBook = $this->service->getCashBookData([
+            'period_year' => 2026, 'period_month' => 8, 'unit_id' => $this->unit->id,
+        ]);
+
+        $expenses = collect($cashBook['rows'])->where('type', 'pengeluaran')->keyBy('date');
+
+        // Sub lain tidak tersentuh sama sekali.
+        $this->assertEquals(395_000, $expenses['2026-08-01']['amount']);
+        // Biaya kecil di sub yang dipanjar tetap utuh — TIDAK lagi jadi Rp 0.
+        $this->assertEquals(35_000, $expenses['2026-08-05']['amount']);
+        // Panjar dilunasi dari pembayaran upah utama.
+        $this->assertEquals(4_485_000, $expenses['2026-08-06']['amount']);
+
+        // Total tetap: 5.915.000 realisasi − 1.000.000 panjar.
+        $this->assertEquals(4_915_000, $cashBook['total_pengeluaran']);
+    }
+
+    /** Panjar satu kategori tidak boleh meluber ke kategori lain saat fase spill-over. */
+    public function test_deduction_does_not_spill_into_other_category(): void
+    {
+        $pdo = PdoHeader::factory()->create([
+            'company_id'         => $this->companyId,
+            'plantation_unit_id' => $this->unit->id,
+            'created_by'         => $this->kerani->id,
+            'status'             => PdoHeader::STATUS_FINAL,
+            'period_year'        => 2026,
+            'period_month'       => 8,
+        ]);
+
+        // Kategori A: panjar 1.000.000 tapi realisasinya cuma 200.000 → 800.000 tertahan.
+        $subA  = ExpenseSubcategory::factory()->create(['category_id' => ExpenseCategory::factory()->create(['company_id' => $this->companyId])->id]);
+        $itemA = ExpenseItem::factory()->create(['subcategory_id' => $subA->id]);
+        $detA  = PdoDetail::factory()->create(['pdo_header_id' => $pdo->id, 'expense_item_id' => $itemA->id, 'amount' => 200_000]);
+        TransferEntry::factory()->create([
+            'pdo_detail_id' => $detA->id, 'amount' => 200_000,
+            'transfer_destination' => 'rek_kebun', 'transfer_date' => '2026-08-01',
+        ]);
+        RealizationEntry::factory()->create([
+            'pdo_detail_id' => $detA->id, 'amount' => 200_000,
+            'funding_source' => RealizationEntry::FUNDING_KAS_KEBUN, 'transaction_date' => '2026-08-05',
+        ]);
+        $dedItem = ExpenseItem::factory()->create(['subcategory_id' => $subA->id, 'is_deduction' => true]);
+        $dedDet  = PdoDetail::factory()->create(['pdo_header_id' => $pdo->id, 'expense_item_id' => $dedItem->id, 'amount' => 1_000_000]);
+        TransferEntry::factory()->create([
+            'pdo_detail_id' => $dedDet->id, 'amount' => -1_000_000,
+            'transfer_destination' => 'rek_kebun', 'transfer_date' => '2026-08-01',
+            'entry_source' => 'system', 'is_auto_generated' => true,
+        ]);
+
+        // Kategori B: realisasi 3.000.000, tanpa panjar — harus tetap utuh.
+        $subB  = ExpenseSubcategory::factory()->create(['category_id' => ExpenseCategory::factory()->create(['company_id' => $this->companyId])->id]);
+        $itemB = ExpenseItem::factory()->create(['subcategory_id' => $subB->id]);
+        $detB  = PdoDetail::factory()->create(['pdo_header_id' => $pdo->id, 'expense_item_id' => $itemB->id, 'amount' => 3_000_000]);
+        TransferEntry::factory()->create([
+            'pdo_detail_id' => $detB->id, 'amount' => 3_000_000,
+            'transfer_destination' => 'rek_kebun', 'transfer_date' => '2026-08-01',
+        ]);
+        RealizationEntry::factory()->create([
+            'pdo_detail_id' => $detB->id, 'amount' => 3_000_000,
+            'funding_source' => RealizationEntry::FUNDING_KAS_KEBUN, 'transaction_date' => '2026-08-06',
+        ]);
+
+        $cashBook = $this->service->getCashBookData([
+            'period_year' => 2026, 'period_month' => 8, 'unit_id' => $this->unit->id,
+        ]);
+
+        $expenses = collect($cashBook['rows'])->where('type', 'pengeluaran')->keyBy('date');
+
+        $this->assertEquals(0, $expenses['2026-08-05']['amount'], 'kategori A habis diserap panjarnya sendiri');
+        $this->assertEquals(3_000_000, $expenses['2026-08-06']['amount'], 'kategori B tidak boleh tergerus');
+        // Kredit terpakai hanya 200.000 (clamp kategori A), bukan 1.000.000.
+        $this->assertEquals(3_000_000, $cashBook['total_pengeluaran']);
+    }
 }

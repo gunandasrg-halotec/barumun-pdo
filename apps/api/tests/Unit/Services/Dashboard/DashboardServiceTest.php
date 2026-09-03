@@ -84,18 +84,24 @@ class DashboardServiceTest extends TestCase
         $keraniRole = Role::factory()->create(['code' => Role::KERANI]);
         $kerani     = User::factory()->create(['company_id' => $this->companyId, 'role_id' => $keraniRole->id]);
 
-        // Status yang menunggu MANAJER_KEUANGAN adalah in_review_manager
+        // Periode dipatok eksplisit: PdoHeaderFactory memilih bulan/tahun ACAK,
+        // sehingga kedua PDO ini sesekali jatuh di periode yang sama untuk unit yang
+        // sama dan melanggar unique (plantation_unit_id, period_month, period_year).
+        // Status yang menunggu MANAJER_KEUANGAN adalah in_review_manager.
         PdoHeader::factory()->create([
             'company_id'         => $this->companyId,
             'plantation_unit_id' => $this->unit->id,
             'created_by'         => $kerani->id,
             'status'             => PdoHeader::STATUS_IN_REVIEW_MANAGER,
+            'period_year'        => 2026,
+            'period_month'       => 4,
         ]);
         PdoHeader::factory()->create([
             'company_id'         => $this->companyId,
             'plantation_unit_id' => $this->unit->id,
             'created_by'         => $kerani->id,
             'status'             => PdoHeader::STATUS_DRAFT,
+            'period_year'        => 2026,
             'period_month'       => 5,
         ]);
 
