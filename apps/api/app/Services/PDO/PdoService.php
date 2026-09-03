@@ -20,9 +20,6 @@ use Illuminate\Validation\ValidationException;
 
 class PdoService
 {
-    /** @var array<string, int> memo saldo awal kas kebun per (unit, tahun, bulan) selama 1 request */
-    private array $openingBalanceMemo = [];
-
     /**
      * Realisasi efektif 1 PDO = realisasi mentah dinetkan dengan potongan, di-clamp
      * per (KATEGORI, kantong) supaya kredit potongan tidak pernah melebihi realisasi
@@ -108,13 +105,29 @@ class PdoService
             // effectiveRealizedSql() di atas dan App\Services\Report\DeductionNetting;
             // Rekap, Buku Kas Harian & Sisa Dana memakai skop yang sama persis.
             ->addSelect(\DB::raw("(" . self::effectiveRealizedSql() . ") as total_realized"))
+            // Tiga sudut pandang "posisi dana" PDO ini. Daftar PDO adalah rekap PER PDO,
+            // BUKAN kas berjalan — kas berjalan (yang membawa saldo awal lintas bulan)
+            // ada di Buku Kas Kebun. Karena itu saldo awal kas kebun SENGAJA tidak ikut
+            // di sini sama sekali.
+            //
+            // Realisasi bukan aliran keluar kedua dari PDO: uang keluar sekali saat
+            // ditransfer, lalu dipertanggungjawabkan lewat realisasi. Jadi ketiganya
+            // dipisah, bukan dijejalkan jadi satu angka:
+            //   belum_ditransfer   = berapa pengajuan yang belum dicairkan HO
+            //   saldo_atas_transfer = dana tersalur yang belum dipertanggungjawabkan
+            //   saldo_atas_pengajuan = pengajuan yang belum dipertanggungjawabkan
             ->addSelect(\DB::raw("(
-                COALESCE((SELECT SUM(te.amount) FROM transfer_entries te
-                          JOIN pdo_details pd ON pd.id = te.pdo_detail_id
-                          WHERE pd.pdo_header_id = pdo_headers.id
-                            AND te.status = 'committed'), 0)
+                pdo_headers.grand_total_amount
+                - " . self::committedTransferSql() . "
+            ) as belum_ditransfer"))
+            ->addSelect(\DB::raw("(
+                " . self::committedTransferSql() . "
                 - (" . self::effectiveRealizedSql() . ")
-            ) as balance"))
+            ) as saldo_atas_transfer"))
+            ->addSelect(\DB::raw("(
+                pdo_headers.grand_total_amount
+                - (" . self::effectiveRealizedSql() . ")
+            ) as saldo_atas_pengajuan"))
             ->when(!empty($filters['search']), fn ($q) => $q->where('pdo_number', 'ilike', '%' . $filters['search'] . '%'))
             ->when(!empty($filters['status']), fn ($q) => $q->where('status', $filters['status']))
             ->when(!empty($filters['period_year']), fn ($q) => $q->where('period_year', $filters['period_year']))
@@ -122,36 +135,16 @@ class PdoService
             ->when(!empty($filters['plantation_unit_id']), fn ($q) => $q->where('plantation_unit_id', $filters['plantation_unit_id']))
             ->orderByDesc('period_year')
             ->orderByDesc('period_month')
-            ->paginate(20)
-            ->through(fn (PdoHeader $pdo) => $this->withKebunOpeningBalance($pdo));
+            ->paginate(20);
     }
 
-    /**
-     * Tambahkan saldo awal kas kebun periode ini ke kolom Saldo Daftar PDO, supaya
-     * rumusnya sama dengan Buku Kas Harian, Rekap Buku Kas, "Sisa Dana" di form
-     * Realisasi/Voucher, dan Dashboard: saldo = saldo awal + transfer − realisasi.
-     *
-     * Hanya kantong Kas Kebun yang punya saldo awal (kas fisik sisa bulan lalu);
-     * kantong Pribadi/Vendor tetap per-periode — lihat
-     * RealizationEntryService::openingBalanceForGroup().
-     *
-     * Dihitung di PHP, bukan di SQL: saldo awal butuh agregat kumulatif lintas
-     * SEMUA periode unit itu dengan netting potongan per (PDO, kategori), yang
-     * sebagai subquery berkorelasi akan dijalankan ulang untuk tiap baris.
-     * Di sini cukup 1 perhitungan per (unit, periode) — maksimal 20 baris per
-     * halaman, dan dimemo karena satu unit biasanya muncul berkali-kali.
-     */
-    private function withKebunOpeningBalance(PdoHeader $pdo): PdoHeader
+    /** Total transfer COMMITTED 1 PDO — sudah bersih dari entri potongan panjar (negatif). */
+    private static function committedTransferSql(): string
     {
-        $key = $pdo->plantation_unit_id . '|' . $pdo->period_year . '|' . $pdo->period_month;
-
-        $saldoAwal = $this->openingBalanceMemo[$key] ??= app(\App\Services\Report\CashBookQueryService::class)
-            ->openingBalanceForPeriod($pdo->plantation_unit_id, (int) $pdo->period_year, (int) $pdo->period_month);
-
-        $pdo->saldo_awal = $saldoAwal;
-        $pdo->balance    = (int) $pdo->balance + $saldoAwal;
-
-        return $pdo;
+        return "COALESCE((SELECT SUM(te.amount) FROM transfer_entries te
+                          JOIN pdo_details pd ON pd.id = te.pdo_detail_id
+                          WHERE pd.pdo_header_id = pdo_headers.id
+                            AND te.status = 'committed'), 0)";
     }
 
     public function findPdo(string $id): PdoHeader

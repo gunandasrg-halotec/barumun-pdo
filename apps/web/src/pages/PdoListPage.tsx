@@ -245,7 +245,8 @@ export function PdoListPage() {
           <thead>
             <tr>
               {['Nomor PDO', 'Unit', 'Periode', 'Total Pengajuan', 'Total Transfer',
-                'Total Realisasi', 'Saldo', 'Status', 'Tipe', 'Dibuat Oleh', 'Aksi'].map((h) => (
+                'Total Realisasi', 'Belum Ditransfer', 'Saldo atas Transfer', 'Saldo atas Pengajuan',
+                'Status', 'Tipe', 'Dibuat Oleh', 'Aksi'].map((h) => (
                 <th key={h} className="px-4 py-3 text-left text-[11px] font-bold uppercase tracking-wider text-[#526257] bg-[#f7faf7] sticky top-0">
                   {h}
                 </th>
@@ -296,7 +297,19 @@ export function PdoListPage() {
                     )}
                   </td>
                   <td className="px-4 py-3 text-sm">{fmt(pdo.total_realized)}</td>
-                  <td className="px-4 py-3 text-sm">{fmt(pdo.balance)}</td>
+                  {/* Tiga sudut pandang posisi dana PDO ini — halaman ini rekap PER PDO,
+                      bukan kas berjalan (itu di Buku Kas Kebun), jadi tidak ada saldo awal.
+                      Realisasi bukan aliran keluar kedua: uang keluar sekali saat ditransfer,
+                      lalu dipertanggungjawabkan lewat realisasi. */}
+                  <td className="px-4 py-3 text-sm" title="Total Pengajuan − Total Transfer: pengajuan yang belum dicairkan HO">
+                    {fmt(pdo.belum_ditransfer)}
+                  </td>
+                  <td className={`px-4 py-3 text-sm ${(pdo.saldo_atas_transfer ?? 0) < 0 ? 'text-red-600' : ''}`} title="Total Transfer − Total Realisasi: dana tersalur yang belum dipertanggungjawabkan">
+                    {fmt(pdo.saldo_atas_transfer)}
+                  </td>
+                  <td className={`px-4 py-3 text-sm ${(pdo.saldo_atas_pengajuan ?? 0) < 0 ? 'text-red-600' : ''}`} title="Total Pengajuan − Total Realisasi: pengajuan yang belum dipertanggungjawabkan">
+                    {fmt(pdo.saldo_atas_pengajuan)}
+                  </td>
                   <td className="px-4 py-3">
                     <PdoStatusBadge
                       status={pdo.status}

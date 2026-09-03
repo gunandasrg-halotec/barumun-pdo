@@ -222,17 +222,15 @@ class PdoServiceTest extends TestCase
         $this->assertMatchesRegularExpression('/^PDO-2026-06-.+-\d{3}$/', $pdo->pdo_number);
     }
 
-    public function test_list_pdo_includes_balance_from_committed_transfer_minus_realization(): void
+    public function test_list_pdo_includes_three_fund_position_columns(): void
     {
         $pdo = PdoHeader::factory()->create([
             'company_id'         => $this->companyId,
             'plantation_unit_id' => $this->unit->id,
             'created_by'         => $this->kerani->id,
             'status'             => PdoHeader::STATUS_DRAFT,
-            // Periode dipatok ke bulan berjalan supaya TransferEntry bertanggal now() (default
-            // factory) tidak jatuh SEBELUM periode acak dari PdoHeaderFactory (2024-2026) —
-            // kalau itu terjadi, transfer ikut terhitung sebagai saldo awal kumulatif dan
-            // balance()-nya dobel (lihat PdoService::withKebunOpeningBalance()).
+            // Periode dipatok supaya deterministik; PdoHeaderFactory memilih bulan/tahun
+            // ACAK 2024-2026.
             'period_year'         => now()->year,
             'period_month'        => now()->month,
         ]);
@@ -254,25 +252,33 @@ class PdoServiceTest extends TestCase
             'amount'        => 250000,
         ]);
 
+        // Total Pengajuan dibaca dari kolom tersimpan grand_total_amount — di produksi
+        // selalu disinkronkan PdoService; PdoDetail::factory() melewati jalur itu.
+        $this->service->syncGrandTotal($pdo);
+
         $row = $this->service->listPdo()->getCollection()->firstWhere('id', $pdo->id);
 
         $this->assertNotNull($row);
+        $this->assertEquals(900000, (int) $row->total_amount);
         $this->assertEquals(700000, (int) $row->total_transferred);
         $this->assertEquals(250000, (int) $row->total_realized);
-        $this->assertEquals(450000, (int) $row->balance);
+
+        // Tiga sudut pandang posisi dana — TANPA saldo awal kas kebun: Daftar PDO adalah
+        // rekap PER PDO, kas berjalan ada di Buku Kas Kebun.
+        $this->assertEquals(200000, (int) $row->belum_ditransfer);      // 900.000 − 700.000
+        $this->assertEquals(450000, (int) $row->saldo_atas_transfer);   // 700.000 − 250.000
+        $this->assertEquals(650000, (int) $row->saldo_atas_pengajuan);  // 900.000 − 250.000
     }
 
-    public function test_list_pdo_balance_not_inflated_by_unrealized_deduction(): void
+    public function test_list_pdo_saldo_not_inflated_by_unrealized_deduction(): void
     {
         $pdo = PdoHeader::factory()->create([
             'company_id'         => $this->companyId,
             'plantation_unit_id' => $this->unit->id,
             'created_by'         => $this->kerani->id,
             'status'             => PdoHeader::STATUS_DRAFT,
-            // Periode dipatok ke bulan berjalan supaya TransferEntry bertanggal now() (default
-            // factory) tidak jatuh SEBELUM periode acak dari PdoHeaderFactory (2024-2026) —
-            // kalau itu terjadi, transfer ikut terhitung sebagai saldo awal kumulatif dan
-            // balance()-nya dobel (lihat PdoService::withKebunOpeningBalance()).
+            // Periode dipatok supaya deterministik; PdoHeaderFactory memilih bulan/tahun
+            // ACAK 2024-2026.
             'period_year'         => now()->year,
             'period_month'        => now()->month,
         ]);
@@ -292,7 +298,7 @@ class PdoServiceTest extends TestCase
         $this->assertNotNull($row);
         $this->assertEquals(4_394_864, (int) $row->total_transferred);
         $this->assertEquals(0, (int) $row->total_realized);
-        $this->assertEquals(4_394_864, (int) $row->balance);
+        $this->assertEquals(4_394_864, (int) $row->saldo_atas_transfer);
     }
 
     /**
@@ -313,10 +319,8 @@ class PdoServiceTest extends TestCase
             'plantation_unit_id' => $this->unit->id,
             'created_by'         => $this->kerani->id,
             'status'             => PdoHeader::STATUS_DRAFT,
-            // Periode dipatok ke bulan berjalan supaya TransferEntry bertanggal now() (default
-            // factory) tidak jatuh SEBELUM periode acak dari PdoHeaderFactory (2024-2026) —
-            // kalau itu terjadi, transfer ikut terhitung sebagai saldo awal kumulatif dan
-            // balance()-nya dobel (lihat PdoService::withKebunOpeningBalance()).
+            // Periode dipatok supaya deterministik; PdoHeaderFactory memilih bulan/tahun
+            // ACAK 2024-2026.
             'period_year'         => now()->year,
             'period_month'        => now()->month,
         ]);
@@ -346,7 +350,7 @@ class PdoServiceTest extends TestCase
         $this->assertNotNull($row);
         $this->assertEquals(3_000_000, (int) $row->total_transferred);  // 4.000.000 − 1.000.000
         $this->assertEquals(4_000_000, (int) $row->total_realized);     // 5.000.000 − 1.000.000
-        $this->assertEquals(-1_000_000, (int) $row->balance);
+        $this->assertEquals(-1_000_000, (int) $row->saldo_atas_transfer);
     }
 
     /**
@@ -363,10 +367,8 @@ class PdoServiceTest extends TestCase
             'plantation_unit_id' => $this->unit->id,
             'created_by'         => $this->kerani->id,
             'status'             => PdoHeader::STATUS_DRAFT,
-            // Periode dipatok ke bulan berjalan supaya TransferEntry bertanggal now() (default
-            // factory) tidak jatuh SEBELUM periode acak dari PdoHeaderFactory (2024-2026) —
-            // kalau itu terjadi, transfer ikut terhitung sebagai saldo awal kumulatif dan
-            // balance()-nya dobel (lihat PdoService::withKebunOpeningBalance()).
+            // Periode dipatok supaya deterministik; PdoHeaderFactory memilih bulan/tahun
+            // ACAK 2024-2026.
             'period_year'         => now()->year,
             'period_month'        => now()->month,
         ]);
@@ -400,7 +402,7 @@ class PdoServiceTest extends TestCase
         // Realisasi kategori A tetap UTUH; kredit kategori B tertahan sampai
         // realisasinya masuk (kalau ikut termakan, hasilnya 4.000.000).
         $this->assertEquals(5_000_000, (int) $row->total_realized);
-        $this->assertEquals(-1_000_000, (int) $row->balance);
+        $this->assertEquals(-1_000_000, (int) $row->saldo_atas_transfer);
     }
 
     // ─────────────────────────────────────────────────────

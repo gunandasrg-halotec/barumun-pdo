@@ -160,7 +160,12 @@ export interface PdoHeader {
   total_amount?: number
   total_transferred?: number
   total_realized?: number
-  balance?: number
+  /** Total Pengajuan − Total Transfer (committed) — pengajuan yang belum dicairkan HO */
+  belum_ditransfer?: number
+  /** Total Transfer (committed) − Total Realisasi — dana tersalur yang belum dipertanggungjawabkan */
+  saldo_atas_transfer?: number
+  /** Total Pengajuan − Total Realisasi — pengajuan yang belum dipertanggungjawabkan */
+  saldo_atas_pengajuan?: number
 }
 
 // ─── PDO Detail ──────────────────────────────────────────────────────────────
