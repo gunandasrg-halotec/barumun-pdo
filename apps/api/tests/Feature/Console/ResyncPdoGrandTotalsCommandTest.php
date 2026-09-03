@@ -31,12 +31,17 @@ class ResyncPdoGrandTotalsCommandTest extends TestCase
 
         // Simulasikan PDO yang totalnya stale — mis. hasil merge PDO Tambahan sebelum
         // fix, di mana pdo_details bertambah tapi grand_total_amount tidak ter-update.
+        // Periode dipatok eksplisit & berbeda antar PDO: PdoHeaderFactory memilih
+        // bulan/tahun ACAK, jadi dua PDO untuk unit yang sama sesekali bertabrakan di
+        // unique (plantation_unit_id, period_month, period_year).
         $pdo = PdoHeader::factory()->create([
             'company_id'         => $company->id,
             'plantation_unit_id' => $unit->id,
             'created_by'         => $kerani->id,
             'status'             => PdoHeader::STATUS_FINAL,
             'grand_total_amount' => 1_000_000,
+            'period_year'        => 2026,
+            'period_month'       => 6,
         ]);
         PdoDetail::factory()->create([
             'pdo_header_id'   => $pdo->id,
@@ -51,6 +56,8 @@ class ResyncPdoGrandTotalsCommandTest extends TestCase
             'created_by'         => $kerani->id,
             'status'             => PdoHeader::STATUS_FINAL,
             'grand_total_amount' => 0,
+            'period_year'        => 2026,
+            'period_month'       => 7,
         ]);
 
         $this->artisan('pdo:resync-grand-totals')

@@ -222,7 +222,7 @@ class PdoServiceTest extends TestCase
         $this->assertMatchesRegularExpression('/^PDO-2026-06-.+-\d{3}$/', $pdo->pdo_number);
     }
 
-    public function test_list_pdo_includes_three_fund_position_columns(): void
+    public function test_list_pdo_includes_two_fund_position_columns(): void
     {
         $pdo = PdoHeader::factory()->create([
             'company_id'         => $this->companyId,
@@ -263,11 +263,10 @@ class PdoServiceTest extends TestCase
         $this->assertEquals(700000, (int) $row->total_transferred);
         $this->assertEquals(250000, (int) $row->total_realized);
 
-        // Tiga sudut pandang posisi dana — TANPA saldo awal kas kebun: Daftar PDO adalah
+        // Dua sudut pandang posisi dana — TANPA saldo awal kas kebun: Daftar PDO adalah
         // rekap PER PDO, kas berjalan ada di Buku Kas Kebun.
         $this->assertEquals(200000, (int) $row->belum_ditransfer);      // 900.000 − 700.000
         $this->assertEquals(450000, (int) $row->saldo_atas_transfer);   // 700.000 − 250.000
-        $this->assertEquals(650000, (int) $row->saldo_atas_pengajuan);  // 900.000 − 250.000
     }
 
     public function test_list_pdo_saldo_not_inflated_by_unrealized_deduction(): void

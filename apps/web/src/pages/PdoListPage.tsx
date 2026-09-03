@@ -245,7 +245,7 @@ export function PdoListPage() {
           <thead>
             <tr>
               {['Nomor PDO', 'Unit', 'Periode', 'Total Pengajuan', 'Total Transfer',
-                'Total Realisasi', 'Belum Ditransfer', 'Saldo atas Transfer', 'Saldo atas Pengajuan',
+                'Total Realisasi', 'Belum Ditransfer', 'Saldo atas Transfer',
                 'Status', 'Tipe', 'Dibuat Oleh', 'Aksi'].map((h) => (
                 <th key={h} className="px-4 py-3 text-left text-[11px] font-bold uppercase tracking-wider text-[#526257] bg-[#f7faf7] sticky top-0">
                   {h}
@@ -297,7 +297,7 @@ export function PdoListPage() {
                     )}
                   </td>
                   <td className="px-4 py-3 text-sm">{fmt(pdo.total_realized)}</td>
-                  {/* Tiga sudut pandang posisi dana PDO ini — halaman ini rekap PER PDO,
+                  {/* Dua sudut pandang posisi dana PDO ini — halaman ini rekap PER PDO,
                       bukan kas berjalan (itu di Buku Kas Kebun), jadi tidak ada saldo awal.
                       Realisasi bukan aliran keluar kedua: uang keluar sekali saat ditransfer,
                       lalu dipertanggungjawabkan lewat realisasi. */}
@@ -306,9 +306,6 @@ export function PdoListPage() {
                   </td>
                   <td className={`px-4 py-3 text-sm ${(pdo.saldo_atas_transfer ?? 0) < 0 ? 'text-red-600' : ''}`} title="Total Transfer − Total Realisasi: dana tersalur yang belum dipertanggungjawabkan">
                     {fmt(pdo.saldo_atas_transfer)}
-                  </td>
-                  <td className={`px-4 py-3 text-sm ${(pdo.saldo_atas_pengajuan ?? 0) < 0 ? 'text-red-600' : ''}`} title="Total Pengajuan − Total Realisasi: pengajuan yang belum dipertanggungjawabkan">
-                    {fmt(pdo.saldo_atas_pengajuan)}
                   </td>
                   <td className="px-4 py-3">
                     <PdoStatusBadge

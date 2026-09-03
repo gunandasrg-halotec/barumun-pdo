@@ -113,9 +113,12 @@ class PdoService
             // Realisasi bukan aliran keluar kedua dari PDO: uang keluar sekali saat
             // ditransfer, lalu dipertanggungjawabkan lewat realisasi. Jadi ketiganya
             // dipisah, bukan dijejalkan jadi satu angka:
-            //   belum_ditransfer   = berapa pengajuan yang belum dicairkan HO
+            //   belum_ditransfer    = berapa pengajuan yang belum dicairkan HO
             //   saldo_atas_transfer = dana tersalur yang belum dipertanggungjawabkan
-            //   saldo_atas_pengajuan = pengajuan yang belum dipertanggungjawabkan
+            //
+            // Tidak ada kolom "pengajuan − realisasi": yang bisa direalisasikan hanya
+            // dana yang sudah ditransfer, jadi angka itu selalu bisa diturunkan dari
+            // dua kolom di atas dan tidak menambah informasi baru.
             ->addSelect(\DB::raw("(
                 pdo_headers.grand_total_amount
                 - " . self::committedTransferSql() . "
@@ -124,10 +127,6 @@ class PdoService
                 " . self::committedTransferSql() . "
                 - (" . self::effectiveRealizedSql() . ")
             ) as saldo_atas_transfer"))
-            ->addSelect(\DB::raw("(
-                pdo_headers.grand_total_amount
-                - (" . self::effectiveRealizedSql() . ")
-            ) as saldo_atas_pengajuan"))
             ->when(!empty($filters['search']), fn ($q) => $q->where('pdo_number', 'ilike', '%' . $filters['search'] . '%'))
             ->when(!empty($filters['status']), fn ($q) => $q->where('status', $filters['status']))
             ->when(!empty($filters['period_year']), fn ($q) => $q->where('period_year', $filters['period_year']))
