@@ -8,6 +8,7 @@ import { useToastStore } from '@/store/toast.store'
 import { useAuthStore } from '@/store/auth.store'
 import { fmt } from '@/lib/format'
 import { isDirekturKeuangan } from '@/lib/auth'
+import { buildTransferSummaryCards } from '@/lib/transferSummary'
 import { buildTransferDetailGroups, type TransferCategoryGroup } from '@/lib/transferDetailGroups'
 import {
   ALL_TRANSFER_DEST_OPTIONS,
@@ -269,9 +270,13 @@ async function exportToExcel(summary: PdoSummaryData) {
   }
 
   // akumulator tipe [approved, fRek, fPri, fVen, dRek, dPri, dVen]
-  type Acc = [number, number, number, number, number, number, number]
-  const zero = (): Acc => [0, 0, 0, 0, 0, 0, 0]
-  const addTo = (a: Acc, b: Acc) => { for (let i = 0; i < 7; i++) a[i] += b[i] }
+  // Slot ke-8 (indeks 7) = basis "Sisa Dana": pengajuan item NON-potongan &
+  // NON-kas-kebun dikurangi transfernya sendiri. Dipisah dari a[0] (pengajuan signed)
+  // supaya angkanya sama persis dengan kartu Sisa Dana di layar — lihat alasan
+  // lengkapnya di useMemo `cards`.
+  type Acc = [number, number, number, number, number, number, number, number]
+  const zero = (): Acc => [0, 0, 0, 0, 0, 0, 0, 0]
+  const addTo = (a: Acc, b: Acc) => { for (let i = 0; i < 8; i++) a[i] += b[i] }
 
   // Tulis baris subtotal/kategori/grand dengan nilai statis (breakdown final & draft)
   const writeAggRow = (label: string, a: Acc, style: XLStyle) => {
@@ -285,7 +290,7 @@ async function exportToExcel(summary: PdoSummaryData) {
     row.getCell(5).value = a[1]; row.getCell(6).value = a[2]; row.getCell(7).value = a[3]; row.getCell(8).value = fSub
     row.getCell(9).value = a[4]; row.getCell(10).value = a[5]; row.getCell(11).value = a[6]; row.getCell(12).value = dSub
     row.getCell(13).value = combined
-    row.getCell(14).value = a[0] - combined
+    row.getCell(14).value = a[7]
     row.getCell(15).value = a[0] > 0 ? combined / a[0] : 0
     applyRowStyle(r, style, DATA_FMT)
     r++
@@ -315,6 +320,7 @@ async function exportToExcel(summary: PdoSummaryData) {
       for (const d of sub.items) {
         // Item potongan: Total Pengajuan tampil sebagai nilai minus (mengurangi total).
         const signedApproved = d.expense_item?.is_deduction ? -d.amount_approved : d.amount_approved
+        const noTransferNeeded = !!d.expense_item?.is_deduction || d.funding_option === 'kas_kebun'
         const dr = ws.getRow(r)
         dr.height = 16
         dr.getCell(1).value = itemNo++
@@ -330,15 +336,21 @@ async function exportToExcel(summary: PdoSummaryData) {
         dr.getCell(11).value = d.draft_by_dest.vendor
         dr.getCell(12).value = { formula: `I${r}+J${r}+K${r}` }        // Draft subtotal
         dr.getCell(13).value = { formula: `H${r}+L${r}` }              // Total (final+draft)
-        dr.getCell(14).value = { formula: `D${r}-M${r}` }              // Sisa
+        // Sisa tidak berlaku untuk item potongan (tidak pernah ditransfer) maupun item
+        // PDOT "Gunakan Kas Kebun" (dananya sudah ada di kas kebun) — sama dengan
+        // tampilan layar yang menuliskan "—" untuk baris-baris itu.
+        dr.getCell(14).value = noTransferNeeded ? 0 : { formula: `D${r}-M${r}` }
         dr.getCell(15).value = { formula: `IF(D${r}=0,0,M${r}/D${r})` } // %
         applyRowStyle(r, STYLES.detail, DATA_FMT)
         r++
 
+        const rowTransfer = d.final_by_dest.rek_kebun + d.final_by_dest.pribadi + d.final_by_dest.vendor
+                          + d.draft_by_dest.rek_kebun + d.draft_by_dest.pribadi + d.draft_by_dest.vendor
         const rowAcc: Acc = [
           signedApproved,
           d.final_by_dest.rek_kebun, d.final_by_dest.pribadi, d.final_by_dest.vendor,
           d.draft_by_dest.rek_kebun, d.draft_by_dest.pribadi, d.draft_by_dest.vendor,
+          noTransferNeeded ? 0 : d.amount_approved - rowTransfer,
         ]
         addTo(subAcc, rowAcc)
       }
@@ -626,44 +638,7 @@ export function TransferBulkPage() {
   // Nilai kolom "Jumlah" pada form (input yang belum disimpan) TIDAK diikutkan —
   // itu hanya usulan/prefill, kalau dijumlahkan membuat rek kebun membengkak dan
   // Sisa Dana selalu 0.
-  const cards = useMemo(() => {
-    // Total Pengajuan signed: item potongan (is_deduction) MENGURANGI total —
-    // harus sama dengan grand_total_amount di halaman Daftar PDO.
-    const totalPengajuan = details.reduce(
-      (s, d) => s + (d.expense_item?.is_deduction ? -d.amount_approved : d.amount_approved),
-      0,
-    )
-    // Total potongan (nominal seluruh item is_deduction), ditampilkan sebagai minus.
-    const totalPotongan = details.reduce(
-      (s, d) => s + (d.expense_item?.is_deduction ? d.amount_approved : 0),
-      0,
-    )
-    // Pengajuan item PDOT "Gunakan Kas Kebun" — dananya sudah ada di kas kebun, tidak
-    // pernah perlu ditransfer. Dikeluarkan dari basis "Sisa Dana" (tapi TETAP dihitung
-    // di Total Pengajuan, karena ia memang bagian dari pengajuan PDO ini); kalau ikut,
-    // Sisa Dana tampak masih menyisakan dana yang sebenarnya tidak perlu ditransfer.
-    const totalPengajuanKasKebun = details.reduce(
-      (s, d) => s + (d.funding_option === 'kas_kebun' ? d.amount_approved : 0),
-      0,
-    )
-    const dest: DestBreakdown = { rek_kebun: 0, pribadi: 0, vendor: 0 }
-
-    for (const d of details) {
-      // Hanya transfer yang SUDAH tercatat: committed (final) + draft tersimpan.
-      // Potongan sudah menjadi entri negatif committed (di rek_kebun) saat simpan
-      // permanen, jadi otomatis ikut ter-net di sini — tidak perlu proyeksi lagi.
-      dest.rek_kebun += d.final_by_dest.rek_kebun + d.draft_by_dest.rek_kebun
-      dest.pribadi   += d.final_by_dest.pribadi   + d.draft_by_dest.pribadi
-      dest.vendor    += d.final_by_dest.vendor    + d.draft_by_dest.vendor
-    }
-    const totalTransfer = dest.rek_kebun + dest.pribadi + dest.vendor
-    return {
-      totalPengajuan,
-      totalPotongan,
-      dest,
-      sisa: totalPengajuan - totalPengajuanKasKebun - totalTransfer,
-    }
-  }, [details])
+  const cards = useMemo(() => buildTransferSummaryCards(details), [details])
 
   const hasDrafts = useMemo(() => details.some((d) => d.draft_entries.length > 0), [details])
 
