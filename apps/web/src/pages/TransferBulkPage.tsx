@@ -529,13 +529,25 @@ export function TransferBulkPage() {
     if (!summary?.details) return
     const firstLoad = !hasSavedRef.current
 
-    setRows(
-      summary.details.map((d) => {
+    setRows((prevRows) => {
+      // Dipakai HANYA untuk mempertahankan pilihan kantong potongan yang belum
+      // committed (lihat blok is_deduction di bawah) — bukan sumber kebenaran
+      // untuk baris lain, yang tetap dibangun ulang dari `summary` seperti biasa.
+      const prevByDetailId = new Map(prevRows.map((r) => [r.pdo_detail_id, r]))
+
+      return summary.details.map((d) => {
         // Item potongan (is_deduction): Jumlah dikunci 0. Tujuan transfer bisa
-        // dipilih user selama BELUM committed. Bila sudah committed, ambil tujuan
-        // dari entri potongan (breakdown final yang bernilai negatif).
+        // dipilih user selama BELUM committed — dan backend belum punya tempat
+        // menyimpan pilihan itu sebelum Simpan Permanen (lihat applyDeductionEntries()),
+        // jadi Simpan Draft hanya menyimpan baris LAIN lalu me-refetch summary; kalau
+        // baris ini dibangun ulang murni dari server, pilihan user hilang dan balik ke
+        // rek_kebun. Prioritas tujuan: (1) sudah committed → otoritatif, ambil dari
+        // breakdown final (negatif); (2) belum committed tapi user sudah memilih di
+        // sesi form ini → pertahankan pilihan itu; (3) baru pertama kali dibuka → rek_kebun.
         if (d.expense_item?.is_deduction) {
           const committedDest = DEST_OPTIONS.find((k) => d.final_by_dest[k] < 0)
+          const prevDest = prevByDetailId.get(d.pdo_detail_id)?.normal.dest
+          const dest = committedDest ?? prevDest ?? 'rek_kebun'
           return {
             pdo_detail_id: d.pdo_detail_id,
             isSplit:       false,
@@ -544,7 +556,7 @@ export function TransferBulkPage() {
               transfer_date: today,
               reference_number: '',
               notes: '',
-              dest: normalizeTransferDest(committedDest ?? 'rek_kebun', true),
+              dest: normalizeTransferDest(dest, true),
             },
             split: {
               amount1: 0, dest1: 'rek_kebun' as TransferDest,
@@ -605,7 +617,7 @@ export function TransferBulkPage() {
           },
         }
       })
-    )
+    })
   }, [summary, unitId, pdoId])
 
   const details = useMemo(() => summary?.details ?? [], [summary])
