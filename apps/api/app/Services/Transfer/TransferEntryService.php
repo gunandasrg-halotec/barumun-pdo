@@ -167,9 +167,18 @@ class TransferEntryService
      *
      * Baris yang ikut tertandai di sini TIDAK dihitung pada `updated` yang
      * dikembalikan markTransferred() — angka itu mewakili yang dipilih kasir.
+     *
+     * $actor boleh null (dipanggil dari Artisan command `transfer:sync-deduction-flags`,
+     * dijalankan manual setelah entri committed dihapus langsung dari database — satu-satunya
+     * cara entri committed terhapus saat ini, lihat catatan di deleteDraft()). Saat null,
+     * `transferred_by` dibiarkan null (atribusi sistem) dan AuditLog mencatat actor null.
+     *
+     * @return int jumlah baris potongan yang disesuaikan
      */
-    private function syncDeductionTransferFlags(SupportCollection $pdoIds, User $actor): void
+    public function syncDeductionTransferFlags(SupportCollection $pdoIds, ?User $actor): int
     {
+        $adjusted = 0;
+
         foreach ($pdoIds as $pdoId) {
             $adaPositif = TransferEntry::whereHas('pdoDetail', fn ($q) => $q->where('pdo_header_id', $pdoId))
                 ->where('amount', '>', 0)
@@ -196,7 +205,7 @@ class TransferEntryService
                 $entry->update([
                     'is_transferred' => $target,
                     'transferred_at' => $target ? now() : null,
-                    'transferred_by' => $target ? $actor->id : null,
+                    'transferred_by' => $target ? $actor?->id : null,
                 ]);
                 AuditLog::record(
                     actor: $actor,
@@ -206,8 +215,11 @@ class TransferEntryService
                     oldValues: array_merge($old, ['_alasan' => 'Sinkronisasi otomatis baris potongan mengikuti progres transfer PDO.']),
                     newValues: $entry->fresh()->toArray(),
                 );
+                $adjusted++;
             }
         }
+
+        return $adjusted;
     }
 
     /**
@@ -521,7 +533,15 @@ class TransferEntryService
     }
 
     /**
-     * Hapus entri draft. Entri committed tidak bisa dihapus lewat sini.
+     * Hapus entri draft. Entri committed tidak bisa dihapus lewat sini — satu-satunya
+     * cara entri committed terhapus saat ini adalah operasi manual di database, di luar
+     * jalur ini; untuk kasus itu jalankan `php artisan transfer:sync-deduction-flags`
+     * setelahnya (lihat SyncDeductionTransferFlagsCommand).
+     *
+     * Menyelaraskan ulang flag baris potongan PDO ini setelah penghapusan — draft yang
+     * dihapus tidak pernah ikut dihitung syncDeductionTransferFlags() (baris itu hanya
+     * melihat entri committed), tapi ini menutup celah kalau logikanya berubah nanti dan
+     * menjaga perilaku deleteDraft() konsisten dengan markTransferred().
      */
     public function deleteDraft(PdoHeader $pdo, string $entryId, User $actor): void
     {
@@ -541,6 +561,8 @@ class TransferEntryService
                 oldValues: $old,
                 newValues: null
             );
+
+            $this->syncDeductionTransferFlags(collect([$pdo->id]), $actor);
         });
     }
 

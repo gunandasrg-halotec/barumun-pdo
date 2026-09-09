@@ -341,6 +341,66 @@ class TransferEntryServiceTest extends TestCase
         $this->assertNull($potongan->fresh()->transferred_at);
     }
 
+    // ─────────────────────────────────────────────────────
+    // syncDeductionTransferFlags(): dipanggil manual (Artisan command
+    // transfer:sync-deduction-flags) setelah entri committed dihapus langsung
+    // dari database — satu-satunya cara entri committed terhapus saat ini,
+    // karena aplikasi tidak punya jalur hapus untuk entri committed.
+    // ─────────────────────────────────────────────────────
+
+    public function test_sync_deduction_transfer_flags_recalculates_after_committed_entry_deleted_manually(): void
+    {
+        [$pdo, $item1, $item2, $potongan] = $this->makePdoWithTwoItemsAndDeduction();
+
+        $this->service->markTransferred([$item1->id], true, $this->manajerKeuangan);
+        $this->assertFalse((bool) $potongan->fresh()->is_transferred, 'item2 masih tertunda');
+
+        // Simulasikan penghapusan manual entri committed langsung dari database.
+        $item2->delete();
+
+        // Tanpa sinkronisasi ulang, baris potongan tersangkut selamanya —
+        // is_transferred masih false padahal syaratnya sekarang terpenuhi.
+        $this->assertFalse((bool) $potongan->fresh()->is_transferred, 'belum disinkronkan ulang');
+
+        $adjusted = $this->service->syncDeductionTransferFlags(collect([$pdo->id]), null);
+
+        $this->assertEquals(1, $adjusted);
+        $this->assertTrue((bool) $potongan->fresh()->is_transferred);
+        $this->assertNotNull($potongan->fresh()->transferred_at);
+        $this->assertNull($potongan->fresh()->transferred_by, 'actor null → atribusi sistem, bukan user tertentu');
+    }
+
+    public function test_sync_deduction_transfer_flags_is_idempotent(): void
+    {
+        [$pdo, $item1, $item2, $potongan] = $this->makePdoWithTwoItemsAndDeduction();
+        $this->service->markTransferred([$item1->id, $item2->id], true, $this->manajerKeuangan);
+
+        $this->assertTrue((bool) $potongan->fresh()->is_transferred);
+
+        $adjusted = $this->service->syncDeductionTransferFlags(collect([$pdo->id]), null);
+
+        $this->assertEquals(0, $adjusted, 'sudah selaras, tidak ada yang perlu diubah');
+    }
+
+    public function test_delete_draft_triggers_deduction_sync_without_error(): void
+    {
+        [$pdo, , , $potongan] = $this->makePdoWithTwoItemsAndDeduction();
+
+        $draft = TransferEntry::factory()->create([
+            'pdo_detail_id'        => PdoDetail::factory()->create(['pdo_header_id' => $pdo->id, 'amount' => 500_000])->id,
+            'amount'               => 500_000,
+            'status'               => TransferEntry::STATUS_DRAFT,
+            'transfer_destination' => TransferEntry::DEST_REK_KEBUN,
+        ]);
+
+        $this->service->deleteDraft($pdo, $draft->id, $this->manajerKeuangan);
+
+        $this->assertNull(TransferEntry::withDrafts()->find($draft->id), 'draft terhapus');
+        // Draft tidak ikut dihitung sinkronisasi (hanya entri committed) — potongan
+        // tetap tertunda karena belum ada entri positif committed yang ditransfer.
+        $this->assertFalse((bool) $potongan->fresh()->is_transferred);
+    }
+
     public function test_summary_by_pdo_marks_source_pdo_number_for_merged_tambahan_rows(): void
     {
         $pdo = PdoHeader::factory()->create([
