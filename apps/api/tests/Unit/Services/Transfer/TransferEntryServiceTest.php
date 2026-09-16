@@ -149,6 +149,143 @@ class TransferEntryServiceTest extends TestCase
     }
 
     // ─────────────────────────────────────────────────────
+    // update(): sinkronisasi RealizationEntry.settlement_group & funding_source saat
+    // transfer_destination dikoreksi (lihat feedback_kantong_koreksi_settlement_group)
+    // ─────────────────────────────────────────────────────
+
+    public function test_update_syncs_realization_settlement_group_and_funding_source_when_destination_changed(): void
+    {
+        $detail = $this->makeDetailWithStatus(PdoHeader::STATUS_FINAL, 1_000_000);
+        $entry  = TransferEntry::factory()->create([
+            'pdo_detail_id'        => $detail->id,
+            'is_auto_generated'    => false,
+            'entry_source'         => TransferEntry::SOURCE_MANUAL,
+            'amount'               => 1_000_000,
+            'transfer_destination' => TransferEntry::DEST_VENDOR,
+        ]);
+        $realization = RealizationEntry::factory()->create([
+            'pdo_detail_id'    => $detail->id,
+            'amount'           => 1_000_000,
+            'settlement_group' => RealizationEntry::SETTLEMENT_PRIBADI_VENDOR,
+            'funding_source'   => RealizationEntry::FUNDING_REKENING_UTAMA,
+        ]);
+
+        $this->service->update($entry, ['transfer_destination' => TransferEntry::DEST_REK_KEBUN], $this->manajerKeuangan);
+
+        $fresh = $realization->fresh();
+        $this->assertEquals(RealizationEntry::SETTLEMENT_KEBUN, $fresh->settlement_group);
+        $this->assertEquals(RealizationEntry::FUNDING_REKENING_KEBUN, $fresh->funding_source, 'RecapQueryService membaca funding_source, bukan settlement_group — keduanya wajib ikut disinkronkan.');
+    }
+
+    public function test_update_syncs_realization_the_other_direction_kebun_to_pribadi_vendor(): void
+    {
+        $detail = $this->makeDetailWithStatus(PdoHeader::STATUS_FINAL, 1_000_000);
+        $entry  = TransferEntry::factory()->create([
+            'pdo_detail_id'        => $detail->id,
+            'is_auto_generated'    => false,
+            'amount'               => 1_000_000,
+            'transfer_destination' => TransferEntry::DEST_REK_KEBUN,
+        ]);
+        $realization = RealizationEntry::factory()->create([
+            'pdo_detail_id'    => $detail->id,
+            'settlement_group' => RealizationEntry::SETTLEMENT_KEBUN,
+            'funding_source'   => RealizationEntry::FUNDING_REKENING_KEBUN,
+        ]);
+
+        $this->service->update($entry, ['transfer_destination' => TransferEntry::DEST_PRIBADI], $this->manajerKeuangan);
+
+        $fresh = $realization->fresh();
+        $this->assertEquals(RealizationEntry::SETTLEMENT_PRIBADI_VENDOR, $fresh->settlement_group);
+        $this->assertEquals(RealizationEntry::FUNDING_REKENING_UTAMA, $fresh->funding_source);
+    }
+
+    public function test_update_does_not_touch_realization_when_destination_unchanged(): void
+    {
+        $detail = $this->makeDetailWithStatus(PdoHeader::STATUS_FINAL, 1_000_000);
+        $entry  = TransferEntry::factory()->create([
+            'pdo_detail_id'        => $detail->id,
+            'is_auto_generated'    => false,
+            'amount'               => 500000,
+            'transfer_destination' => TransferEntry::DEST_VENDOR,
+        ]);
+        $realization = RealizationEntry::factory()->create([
+            'pdo_detail_id'    => $detail->id,
+            'settlement_group' => RealizationEntry::SETTLEMENT_PRIBADI_VENDOR,
+            'funding_source'   => RealizationEntry::FUNDING_REKENING_UTAMA,
+        ]);
+
+        // Ubah amount saja, bukan tujuan — settlement_group/funding_source tidak boleh tersentuh.
+        $this->service->update($entry, ['amount' => 400000], $this->manajerKeuangan);
+
+        $fresh = $realization->fresh();
+        $this->assertEquals(RealizationEntry::SETTLEMENT_PRIBADI_VENDOR, $fresh->settlement_group);
+        $this->assertEquals(RealizationEntry::FUNDING_REKENING_UTAMA, $fresh->funding_source);
+    }
+
+    public function test_update_rejects_moving_fund_return_item_to_pribadi_vendor(): void
+    {
+        $detail = $this->makeDetailWithStatus(PdoHeader::STATUS_FINAL, 1_000_000);
+        $detail->expenseItem()->update(['is_fund_return' => true]);
+        $entry = TransferEntry::factory()->create([
+            'pdo_detail_id'        => $detail->id,
+            'is_auto_generated'    => false,
+            'amount'               => 1_000_000,
+            'transfer_destination' => TransferEntry::DEST_REK_KEBUN,
+        ]);
+        RealizationEntry::factory()->create([
+            'pdo_detail_id'    => $detail->id,
+            'settlement_group' => RealizationEntry::SETTLEMENT_KEBUN,
+            'funding_source'   => RealizationEntry::FUNDING_REKENING_KEBUN,
+        ]);
+
+        $this->expectException(\Illuminate\Http\Exceptions\HttpResponseException::class);
+
+        $this->service->update($entry, ['transfer_destination' => TransferEntry::DEST_PRIBADI], $this->manajerKeuangan);
+    }
+
+    public function test_update_does_nothing_when_no_realization_exists_yet(): void
+    {
+        $detail = $this->makeDetailWithStatus(PdoHeader::STATUS_FINAL, 1_000_000);
+        $entry  = TransferEntry::factory()->create([
+            'pdo_detail_id'        => $detail->id,
+            'is_auto_generated'    => false,
+            'amount'               => 1_000_000,
+            'transfer_destination' => TransferEntry::DEST_VENDOR,
+        ]);
+
+        $updated = $this->service->update($entry, ['transfer_destination' => TransferEntry::DEST_REK_KEBUN], $this->manajerKeuangan);
+
+        $this->assertEquals(TransferEntry::DEST_REK_KEBUN, $updated->transfer_destination);
+    }
+
+    public function test_update_rejects_when_destination_split_across_settlement_groups(): void
+    {
+        $detail = $this->makeDetailWithStatus(PdoHeader::STATUS_FINAL, 2_000_000);
+        $entry1 = TransferEntry::factory()->create([
+            'pdo_detail_id'        => $detail->id,
+            'is_auto_generated'    => false,
+            'amount'               => 1_000_000,
+            'transfer_destination' => TransferEntry::DEST_VENDOR,
+        ]);
+        TransferEntry::factory()->create([
+            'pdo_detail_id'        => $detail->id,
+            'is_auto_generated'    => false,
+            'amount'               => 1_000_000,
+            'transfer_destination' => TransferEntry::DEST_REK_KEBUN,
+        ]);
+        RealizationEntry::factory()->create([
+            'pdo_detail_id'    => $detail->id,
+            'settlement_group' => RealizationEntry::SETTLEMENT_PRIBADI_VENDOR,
+        ]);
+
+        $this->expectException(\Illuminate\Http\Exceptions\HttpResponseException::class);
+
+        // Detail ini tetap terpecah rek_kebun + pribadi/vendor setelah koreksi —
+        // tidak bisa ditentukan otomatis realisasi ikut kantong yang mana.
+        $this->service->update($entry1, ['transfer_destination' => TransferEntry::DEST_PRIBADI], $this->manajerKeuangan);
+    }
+
+    // ─────────────────────────────────────────────────────
     // Audit Log
     // ─────────────────────────────────────────────────────
 

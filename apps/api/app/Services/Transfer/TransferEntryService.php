@@ -6,6 +6,7 @@ use App\Models\AuditLog;
 use App\Models\PdoDetail;
 use App\Models\PdoHeader;
 use App\Models\PdoSupplementaryHeader;
+use App\Models\RealizationEntry;
 use App\Models\TransferEntry;
 use App\Models\User;
 use App\Services\Notification\WhatsAppNotificationService;
@@ -811,6 +812,12 @@ class TransferEntryService
             $old = $entry->toArray();
             $entry->update($data);
 
+            // Kalau tujuan kantong diubah dan item ini sudah punya realisasi tercatat,
+            // selaraskan settlement_group realisasi itu juga — lihat syncRealizationSettlementGroup().
+            if (array_key_exists('transfer_destination', $data) && $data['transfer_destination'] !== $old['transfer_destination']) {
+                $this->syncRealizationSettlementGroup($detail, $actor);
+            }
+
             AuditLog::record(
                 actor: $actor,
                 entityType: 'transfer_entries',
@@ -822,5 +829,106 @@ class TransferEntryService
 
             return $entry->fresh()->load('recorder');
         });
+    }
+
+    /**
+     * Selaraskan `settlement_group` DAN `funding_source` realisasi yang SUDAH tercatat
+     * untuk sebuah pdo_detail dengan tujuan kantong TransferEntry-nya saat ini, setelah
+     * tujuan itu dikoreksi.
+     *
+     * Kenapa perlu DUA kolom: kantong dan realisasi dihitung oleh dua service berbeda,
+     * masing-masing dari kolom sumber yang berbeda pula:
+     *   - `RealizationEntryService::totalKantongForGroup()`/`totalRealizedForGroup()`
+     *     (dipakai BR-REAL-002 "Sisa Dana" di form Realisasi & Voucher) → dari
+     *     `RealizationEntry.settlement_group`.
+     *   - `RecapQueryService`/`CashBookQueryService` (dipakai halaman Rekap Buku Kas)
+     *     → dari `RealizationEntry.funding_source` (rekening_utama = pribadi/vendor;
+     *     kas_kebun/rekening_kebun = kebun), TIDAK PERNAH membaca settlement_group.
+     * Baik `transfer_destination`, `settlement_group`, maupun `funding_source` adalah TIGA
+     * kolom terpisah yang tidak otomatis sinkron satu sama lain.
+     *
+     * Insiden nyata (PDO-2026-09-SS-001, 16 September 2026): 2 item dikoreksi
+     * vendor→rek_kebun setelah realisasinya sudah tercatat. Koreksi pertama hanya
+     * menyentuh settlement_group — cukup untuk BR-REAL-002, tapi halaman Rekap Buku Kas
+     * masih menampilkan saldo pribadi/vendor lama karena funding_source-nya (rekening_utama)
+     * belum ikut berubah. Baru setelah funding_source ikut dikoreksi ke rekening_kebun,
+     * kedua halaman menampilkan angka yang konsisten. Lihat memory:
+     * feedback_kantong_koreksi_settlement_group.md.
+     *
+     * Kalau detail punya TransferEntry yang terpecah ke lebih dari satu grup settlement
+     * (sebagian rek_kebun, sebagian pribadi/vendor) — tidak bisa ditentukan otomatis
+     * realisasi mana ikut kantong mana, jadi ditolak dan wajib ditangani manual.
+     */
+    private function syncRealizationSettlementGroup(PdoDetail $detail, User $actor): void
+    {
+        $realizations = RealizationEntry::where('pdo_detail_id', $detail->id)->get();
+        if ($realizations->isEmpty()) {
+            return; // Belum ada realisasi — tidak ada yang perlu disinkronkan.
+        }
+
+        $groups = TransferEntry::where('pdo_detail_id', $detail->id)
+            ->pluck('transfer_destination')
+            ->unique()
+            ->map(fn ($dest) => $dest === TransferEntry::DEST_REK_KEBUN
+                ? RealizationEntry::SETTLEMENT_KEBUN
+                : RealizationEntry::SETTLEMENT_PRIBADI_VENDOR)
+            ->unique();
+
+        if ($groups->count() !== 1) {
+            abort(response()->json([
+                'success' => false,
+                'error'   => [
+                    'code'    => 'REALIZATION_SETTLEMENT_GROUP_AMBIGUOUS',
+                    'message' => 'Item ini sudah punya realisasi tercatat, dan sekarang transfernya terpecah ke '
+                        . 'lebih dari satu kantong (rek. kebun & pribadi/vendor). Sinkronisasi settlement_group '
+                        . 'realisasi tidak bisa dilakukan otomatis — perlu koreksi manual.',
+                ],
+            ], 409));
+        }
+
+        $newGroup = $groups->first();
+
+        // Pengembalian sisa dana bulan lalu (is_fund_return) hanya boleh kantong kebun
+        // (BR di RealizationEntryService::store(), FUND_RETURN_KEBUN_ONLY) — jangan sampai
+        // sinkronisasi otomatis memindahkannya ke pribadi/vendor.
+        if ($newGroup === RealizationEntry::SETTLEMENT_PRIBADI_VENDOR
+            && $detail->expenseItem?->is_fund_return) {
+            abort(response()->json([
+                'success' => false,
+                'error'   => [
+                    'code'    => 'FUND_RETURN_KEBUN_ONLY',
+                    'message' => 'Item pengembalian sisa dana hanya boleh kantong Kas Kebun — tujuan transfer tidak bisa dikoreksi ke pribadi/vendor.',
+                ],
+            ], 403));
+        }
+
+        // rekening_kebun dipilih untuk grup kebun karena koreksi kantong selalu berasal
+        // dari transfer bank (item pribadi/vendor tidak pernah tunai) — bukan kas_kebun.
+        $newFundingSource = $newGroup === RealizationEntry::SETTLEMENT_KEBUN
+            ? RealizationEntry::FUNDING_REKENING_KEBUN
+            : RealizationEntry::FUNDING_REKENING_UTAMA;
+
+        foreach ($realizations as $realization) {
+            if ($realization->settlement_group === $newGroup && $realization->funding_source === $newFundingSource) {
+                continue;
+            }
+
+            $old = $realization->toArray();
+            $realization->update([
+                'settlement_group' => $newGroup,
+                'funding_source'   => $newFundingSource,
+            ]);
+
+            AuditLog::record(
+                actor: $actor,
+                entityType: 'realization_entries',
+                entityId: $realization->id,
+                action: 'UPDATE',
+                oldValues: array_merge($old, [
+                    '_alasan' => 'Sinkronisasi otomatis settlement_group & funding_source mengikuti koreksi tujuan kantong TransferEntry item ini.',
+                ]),
+                newValues: $realization->fresh()->toArray()
+            );
+        }
     }
 }
