@@ -80,6 +80,13 @@ class CashBookQueryService
         $endDate   = $filters['end_date']   ?? null;
         $kantong   = $filters['kantong']    ?? 'kebun'; // 'kebun' | 'pribadi' | 'all'
 
+        // 'subcategory' (default) = tampilan Buku Kas Harian yang lama, apa adanya.
+        // 'item' = tampilan Buku Kas Harian Detail: baris pengeluaran dipecah per
+        // (baris PDO, tanggal) dan Potongan Panjar ditampilkan sebagai baris tersendiri
+        // di kedua sisi, bukan dilarutkan diam-diam. Whitelist di-normalisasi di sini,
+        // bukan hanya di controller, karena service ini juga dipanggil langsung dari test.
+        $groupBy = ($filters['group_by'] ?? 'subcategory') === 'item' ? 'item' : 'subcategory';
+
         $periodStart = Carbon::createFromDate($year, $month, 1)->startOfMonth();
         $periodEnd   = $periodStart->copy()->endOfMonth();
 
@@ -115,7 +122,18 @@ class CashBookQueryService
             $receiptsQuery->whereBetween('transfer_date', [$effectiveStart->toDateString(), $effectiveEnd->toDateString()]);
         }
 
-        $receipts = $receiptsQuery->get()
+        $receiptEntries = $receiptsQuery->get();
+
+        // Mode 'item': entri Potongan Panjar dikeluarkan dari baris penerimaan supaya
+        // baris itu menampilkan nilai BRUTO (sama dengan nilai PDO), lalu potongannya
+        // muncul sebagai satu baris tersendiri tepat di bawahnya. Neto keduanya = dana
+        // yang benar-benar masuk rekening, sehingga baris penerimaan bisa dicocokkan
+        // langsung dengan rekening koran. Total penerimaan tidak berubah karena baris
+        // potongan tetap bertipe 'penerimaan' dengan nilai negatif.
+        $isReceiptDeduction = fn (TransferEntry $t) => (bool) $t->pdoDetail?->expenseItem?->is_deduction;
+        $receiptDeductions  = $groupBy === 'item' ? $receiptEntries->filter($isReceiptDeduction) : collect();
+
+        $receipts = ($groupBy === 'item' ? $receiptEntries->reject($isReceiptDeduction) : $receiptEntries)
             ->groupBy(fn (TransferEntry $t) => $t->transfer_date->toDateString())
             ->map(function ($group, $date) {
                 $itemNames = $group
@@ -136,7 +154,15 @@ class CashBookQueryService
             })
             ->values();
 
-        $expenseRows = $this->buildExpenseRows($unitId, $year, $month, $effectiveStart, $effectiveEnd, $kantong);
+        $expenseRows = $this->buildExpenseRows($unitId, $year, $month, $effectiveStart, $effectiveEnd, $kantong, $groupBy);
+
+        if ($receiptDeductions->isNotEmpty()) {
+            $receipts = $this->withReceiptDeductionRow(
+                $receipts,
+                $receiptDeductions,
+                collect($expenseRows)->min('date') ?? $effectiveStart->toDateString(),
+            );
+        }
 
         $rows = $receipts->concat($expenseRows)
             ->sortBy([['date', 'asc'], ['created_at', 'asc']])
@@ -167,6 +193,184 @@ class CashBookQueryService
             'total_pengeluaran' => $totalPengeluaran,
             'rows'              => $rows,
         ];
+    }
+
+    /**
+     * Sisipkan SATU baris Potongan Panjar (tipe penerimaan, nilai negatif) tepat setelah
+     * baris penerimaan paling awal — hanya dipakai mode detail.
+     *
+     * Ditempel di tanggal penerimaan pertama karena panjar dipotong sekali di awal bulan,
+     * saat dana pertama dicairkan: baris bruto lalu baris potongan, sehingga neto tanggal
+     * itu = nominal yang benar-benar masuk rekening kebun.
+     *
+     * `created_at` disamakan dengan baris induknya; `sortBy` PHP stabil sehingga urutan
+     * penyisipan (induk dulu, potongan menyusul) tetap terjaga setelah pengurutan.
+     *
+     * @param  \Illuminate\Support\Collection<int, array<string, mixed>>  $receipts
+     * @param  \Illuminate\Support\Collection<int, TransferEntry>  $deductionEntries
+     */
+    private function withReceiptDeductionRow($receipts, $deductionEntries, string $fallbackDate)
+    {
+        $names = $deductionEntries
+            ->map(fn (TransferEntry $t) => $t->pdoDetail?->expenseItem?->name)
+            ->filter()
+            ->unique()
+            ->values();
+
+        $row = [
+            'date'        => $fallbackDate,
+            'type'        => 'penerimaan',
+            'reference'   => null,
+            'description' => 'Potongan Panjar : ' . ($names->isNotEmpty() ? $names->implode(', ') : 'uang muka periode sebelumnya'),
+            'notes'       => null,
+            'vouchers'    => null,
+            'amount'      => (int) $deductionEntries->sum('amount'), // negatif
+            'created_at'  => $deductionEntries->min('created_at'),
+        ];
+
+        if ($receipts->isEmpty()) {
+            return $receipts->push($row)->values();
+        }
+
+        $anchorDate  = $receipts->min('date');
+        $anchorIndex = $receipts->search(fn (array $r) => $r['date'] === $anchorDate);
+
+        $row['date']       = $anchorDate;
+        $row['created_at'] = $receipts[$anchorIndex]['created_at'];
+
+        $all = $receipts->values()->all();
+        array_splice($all, $anchorIndex + 1, 0, [$row]);
+
+        return collect($all);
+    }
+
+    /**
+     * Varian PRO-RATA dari allocateDeductionCredit() — khusus mode detail (group_by=item).
+     *
+     * Bedanya hanya CARA MEMBAGI, bukan total: di mode lama kredit panjar dihabiskan dari
+     * grup terbesar lebih dulu (cocok untuk baris gabungan per sub-kategori), sedangkan di
+     * mode detail tiap baris adalah satu item sehingga panjar dibagi sebanding nilai biaya
+     * masing-masing. Sub-kategori yang hanya berisi satu item otomatis menerima potongan penuh.
+     *
+     * Dua fase, sama seperti versi lama:
+     *   1. Tiap panjar dibagi pro-rata ke grup-grup di SUB-KATEGORI-nya sendiri.
+     *   2. Sisa yang tidak tertampung dikumpulkan jadi pool KATEGORI, lalu dibagi pro-rata
+     *      ke sisa kapasitas grup mana pun di kategori itu.
+     *
+     * Karena tiap fase mengisi tepat min(kredit, sisa kapasitas), total kredit terpakai per
+     * kategori = min(|panjar|, total realisasi kategori) — identik dengan versi lama, itulah
+     * yang menjamin total & saldo Buku Kas Harian Detail sama persis dengan Buku Kas Harian.
+     *
+     * Invarian itu mengandaikan realization_entries.amount SELALU > 0 (divalidasi min:1 di
+     * StoreRealizationEntryRequest/UpdateRealizationEntryRequest). Kalau suatu saat ada entri
+     * bernilai <= 0, memecah grup lebih halus bisa mengubah total kapasitas kategori sehingga
+     * kedua mode tidak lagi menghasilkan total yang sama.
+     *
+     * Sub-kategori tiap grup dibaca dari entri di dalamnya, BUKAN dari string key — jadi
+     * fungsi ini tidak ikut terikat pada format key seperti allocateDeductionCredit().
+     *
+     * @param  \Illuminate\Support\Collection<string, \Illuminate\Support\Collection<int, RealizationEntry>>  $dateGroups
+     * @param  array<string, int>  $deductionBySubcategory  panjar KATEGORI INI saja, nilai negatif
+     * @return array<string, int>  key grup => kredit terpakai (positif)
+     */
+    private function allocateDeductionCreditProRata($dateGroups, array $deductionBySubcategory): array
+    {
+        $capacity = [];
+        $subOf    = [];
+        foreach ($dateGroups as $key => $group) {
+            $amount = (int) $group->sum('amount');
+            if ($amount > 0) {
+                $capacity[$key] = $amount;
+                $subOf[$key]    = (string) ($group->first()?->pdoDetail?->expenseItem?->subcategory_id ?? 'unknown');
+            }
+        }
+
+        if (empty($capacity)) {
+            return [];
+        }
+
+        $applied = [];
+
+        // Bagi $credit ke $keys sebanding SISA kapasitas tiap grup. Pembagian dibulatkan ke
+        // bawah, lalu sisa rupiahnya dibagikan dengan metode largest remainder (tie-break:
+        // sisa kapasitas terbesar, lalu key) supaya jumlah porsi persis sama dengan kredit
+        // yang dialokasikan — tidak ada rupiah yang hilang atau berlebih karena pembulatan.
+        $distribute = function (array $keys, int $credit) use (&$applied, $capacity): int {
+            $room = [];
+            foreach ($keys as $key) {
+                $left = $capacity[$key] - ($applied[$key] ?? 0);
+                if ($left > 0) {
+                    $room[$key] = $left;
+                }
+            }
+
+            $totalRoom = array_sum($room);
+            if ($credit <= 0 || $totalRoom <= 0) {
+                return $credit;
+            }
+
+            if ($credit >= $totalRoom) {
+                foreach ($room as $key => $left) {
+                    $applied[$key] = ($applied[$key] ?? 0) + $left;
+                }
+
+                return $credit - $totalRoom;
+            }
+
+            $share = [];
+            $frac  = [];
+            $given = 0;
+            foreach ($room as $key => $left) {
+                $exact       = $credit * $left / $totalRoom;
+                $share[$key] = (int) floor($exact);
+                $frac[$key]  = $exact - $share[$key];
+                $given      += $share[$key];
+            }
+
+            $rest = $credit - $given;
+            if ($rest > 0) {
+                $order = array_keys($room);
+                usort($order, fn ($a, $b) => [$frac[$b], $room[$b], $a] <=> [$frac[$a], $room[$a], $b]);
+                foreach ($order as $key) {
+                    if ($rest <= 0) {
+                        break;
+                    }
+                    $share[$key]++;
+                    $rest--;
+                }
+            }
+
+            foreach ($share as $key => $value) {
+                if ($value > 0) {
+                    $applied[$key] = ($applied[$key] ?? 0) + $value;
+                }
+            }
+
+            return 0;
+        };
+
+        // Fase 1 — tiap panjar dibagi pro-rata di sub-kategorinya sendiri.
+        $spillover = 0;
+        foreach ($deductionBySubcategory as $subcategoryId => $deduction) {
+            $credit = abs((int) $deduction);
+            if ($credit === 0) {
+                continue;
+            }
+
+            $ownKeys = array_values(array_filter(
+                array_keys($capacity),
+                fn ($key) => $subOf[$key] === (string) $subcategoryId
+            ));
+
+            $spillover += $distribute($ownKeys, $credit);
+        }
+
+        // Fase 2 — sisanya meluber pro-rata ke sub-kategori tetangga dalam kategori yang sama.
+        if ($spillover > 0) {
+            $distribute(array_keys($capacity), $spillover);
+        }
+
+        return $applied;
     }
 
     /**
@@ -239,7 +443,7 @@ class CashBookQueryService
      * begitu pengeluaran insidentil kecil tidak lagi tergerus jadi Rp 0. Hasilnya
      * cocok baris-per-baris dengan buku kas manual kebun.
      */
-    private function buildExpenseRows(string $unitId, int $year, int $month, Carbon $effectiveStart, Carbon $effectiveEnd, string $kantong = 'kebun'): array
+    private function buildExpenseRows(string $unitId, int $year, int $month, Carbon $effectiveStart, Carbon $effectiveEnd, string $kantong = 'kebun', string $groupBy = 'subcategory'): array
     {
         $entries = RealizationEntry::query()
             ->whereIn('funding_source', $this->expenseFundingSourcesFor($kantong))
@@ -272,23 +476,46 @@ class CashBookQueryService
                 ->map(fn ($sub) => (int) $sub->sum('amount'))
                 ->all());
 
+        // Nama item panjar per sub-kategori & per kategori — hanya dipakai untuk menulis
+        // uraian baris potongan di mode detail.
+        $deductionNames = fn ($group) => $group
+            ->map(fn (TransferEntry $t) => $t->pdoDetail?->expenseItem?->name)
+            ->filter()->unique()->implode(', ');
+
+        $deductionNamesBySubcategory = $deductions
+            ->groupBy(fn (TransferEntry $t) => $t->pdoDetail?->expenseItem?->subcategory_id)
+            ->map($deductionNames)->all();
+
+        $deductionNamesByCategory = $deductions
+            ->groupBy(fn (TransferEntry $t) => $t->pdoDetail?->expenseItem?->subcategory?->category_id)
+            ->map($deductionNames)->all();
+
         $rows = [];
 
         $entries
             ->groupBy(fn (RealizationEntry $r) => $r->pdoDetail?->expenseItem?->subcategory?->category_id ?? 'unknown')
-            ->each(function ($categoryEntries, $categoryId) use (&$rows, $deductionByCategorySubcategory) {
+            ->each(function ($categoryEntries, $categoryId) use (&$rows, $deductionByCategorySubcategory, $groupBy, $deductionNamesBySubcategory, $deductionNamesByCategory) {
                 // Baris tetap digabung per (subkategori, tanggal). Tanggal di depan key
                 // supaya sortKeys() menghasilkan urutan TAMPILAN kronologis; urutan
                 // KONSUMSI kredit dihitung terpisah di bawah.
+                // Segmen 0 (tanggal) dan 1 (subcategory_id) WAJIB tetap di posisinya:
+                // di bawah ini tanggal dibaca lewat explode('|',$key)[0], dan
+                // allocateDeductionCredit() membaca explode('|',$key)[1] sebagai
+                // subcategory_id untuk mengurung kredit panjar di sub-kategorinya sendiri.
+                // Segmen ke-3 (pdo_detail_id) HANYA ditambahkan di mode detail — memakai
+                // ternary eksplisit supaya mode lama tidak kebagian segmen kosong.
                 $dateGroups = $categoryEntries
-                    ->groupBy(fn (RealizationEntry $r) => $r->transaction_date->toDateString()
-                        .'|'.($r->pdoDetail?->expenseItem?->subcategory_id ?? 'unknown'))
+                    ->groupBy(function (RealizationEntry $r) use ($groupBy) {
+                        $key = $r->transaction_date->toDateString()
+                            .'|'.($r->pdoDetail?->expenseItem?->subcategory_id ?? 'unknown');
+
+                        return $groupBy === 'item' ? $key.'|'.($r->pdo_detail_id ?? 'unknown') : $key;
+                    })
                     ->sortKeys();
 
-                $appliedByGroup = $this->allocateDeductionCredit(
-                    $dateGroups,
-                    $deductionByCategorySubcategory[$categoryId] ?? []
-                );
+                $appliedByGroup = $groupBy === 'item'
+                    ? $this->allocateDeductionCreditProRata($dateGroups, $deductionByCategorySubcategory[$categoryId] ?? [])
+                    : $this->allocateDeductionCredit($dateGroups, $deductionByCategorySubcategory[$categoryId] ?? []);
 
                 foreach ($dateGroups as $groupKey => $group) {
                     $date = explode('|', $groupKey)[0];
@@ -334,7 +561,11 @@ class CashBookQueryService
                         ->map(fn ($v) => ['id' => $v->id, 'voucher_number' => $v->voucher_number])
                         ->values();
 
-                    $amount = (int) $group->sum('amount') - (int) ($appliedByGroup[$groupKey] ?? 0);
+                    // Mode lama: kredit panjar dilarutkan ke nilai baris. Mode detail: nilai
+                    // baris tetap PENUH sesuai realisasi, dan kreditnya muncul sebagai baris
+                    // tersendiri di bawah — jumlah keduanya sama, jadi saldo tidak bergeser.
+                    $applied = (int) ($appliedByGroup[$groupKey] ?? 0);
+                    $amount  = (int) $group->sum('amount') - ($groupBy === 'item' ? 0 : $applied);
 
                     $rows[] = [
                         'date'        => $date,
@@ -346,6 +577,26 @@ class CashBookQueryService
                         'amount'      => $amount,
                         'created_at'  => $group->min('created_at'),
                     ];
+
+                    if ($groupBy === 'item' && $applied > 0) {
+                        $subId = (string) ($group->first()?->pdoDetail?->expenseItem?->subcategory_id ?? 'unknown');
+                        $own   = $deductionNamesBySubcategory[$subId] ?? '';
+
+                        $rows[] = [
+                            'date'        => $date,
+                            'type'        => 'pengeluaran',
+                            'reference'   => null,
+                            'description' => $own !== ''
+                                ? 'Potongan Panjar — '.$own
+                                : 'Potongan Panjar — '.($deductionNamesByCategory[$categoryId] ?? 'uang muka periode sebelumnya').' (alokasi dari sub-kategori lain)',
+                            'notes'       => null,
+                            'vouchers'    => null,
+                            'amount'      => -$applied,
+                            // created_at disamakan dengan baris induk supaya sortBy yang stabil
+                            // menempatkan baris ini persis di bawahnya.
+                            'created_at'  => $group->min('created_at'),
+                        ];
+                    }
                 }
             });
 

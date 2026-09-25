@@ -113,7 +113,11 @@ export function RekapitulasiPage() {
 
   // ── Tab: Rekap Buku Kas (per-item, mengikuti PDO) vs Buku Kas Harian (kronologis)
   // vs Petty Cash Voucher (khusus KERANI) ──
-  const [activeTab, setActiveTab] = useState<'rekap' | 'harian' | 'voucher'>('rekap')
+  const [activeTab, setActiveTab] = useState<'rekap' | 'harian' | 'harian-detail' | 'voucher'>('rekap')
+
+  // Kedua tab buku kas harian berbagi filter, query, dan tabel yang sama — yang
+  // membedakan hanya param group_by yang dikirim ke backend.
+  const isHarianLike = activeTab === 'harian' || activeTab === 'harian-detail'
 
   // ── Period / unit filter state ───────────────────────────────────────────
   const [year,              setYear]              = useState(currentYear)
@@ -206,8 +210,11 @@ export function RekapitulasiPage() {
       start_date:   validStartDate,
       end_date:     validEndDate,
       kantong:      kantongFilter,
+      // Dikirim eksplisit (bukan undefined) supaya query key stabil dan kedua tab
+      // punya entri cache sendiri — tab lama tidak boleh kebagian data mode detail.
+      group_by:     activeTab === 'harian-detail' ? 'item' : 'subcategory',
     },
-    activeTab === 'harian' && !!resolvedUnitId,
+    isHarianLike && !!resolvedUnitId,
   )
 
   // ── Active PDO for current period+unit (for input form) ──────────────────
@@ -558,8 +565,10 @@ export function RekapitulasiPage() {
     if (!resolvedUnitId) return
     setExcelLoading(true)
     try {
-      const isHarian = activeTab === 'harian'
+      const isHarian = isHarianLike
+      const isDetail = activeTab === 'harian-detail'
       const params: Record<string, string | number> = { period_year: year, period_month: month, unit_id: resolvedUnitId }
+      if (isDetail) params.group_by = 'item'
       if (!isHarian && categoryId) params.category_id = categoryId
       // Backend default kantong berbeda per endpoint kalau param tidak dikirim
       // (Rekap → 'all', Harian → 'kebun' demi kompatibilitas mundur) — Harian
@@ -575,7 +584,7 @@ export function RekapitulasiPage() {
       const url = URL.createObjectURL(res.data)
       const a   = document.createElement('a')
       a.href    = url
-      a.download = `${isHarian ? 'BukuKasHarian' : 'BukuKasKebun'}_${year}_${month}.xlsx`
+      a.download = `${isDetail ? 'BukuKasHarianDetail' : isHarian ? 'BukuKasHarian' : 'BukuKasKebun'}_${year}_${month}.xlsx`
       a.click()
       URL.revokeObjectURL(url)
     } catch {
@@ -627,8 +636,9 @@ export function RekapitulasiPage() {
         {([
           { key: 'rekap',  label: 'Rekap Buku Kas' },
           { key: 'harian', label: 'Buku Kas Harian' },
+          { key: 'harian-detail', label: 'Buku Kas Harian Detail' },
           ...(isKerani ? [{ key: 'voucher', label: 'Petty Cash Voucher' }] : []),
-        ] as Array<{ key: 'rekap' | 'harian' | 'voucher'; label: string }>).map((t) => (
+        ] as Array<{ key: 'rekap' | 'harian' | 'harian-detail' | 'voucher'; label: string }>).map((t) => (
           <button
             key={t.key}
             type="button"
@@ -691,7 +701,7 @@ export function RekapitulasiPage() {
           </div>
         )}
 
-        {(activeTab === 'rekap' || activeTab === 'harian') && (
+        {(activeTab === 'rekap' || isHarianLike) && (
           <div>
             <label className="label">Kantong</label>
             <select className="input-base" value={kantongFilter} disabled={kantongLocked} onChange={(e) => setKantongFilter(e.target.value as 'all' | 'kebun' | 'pribadi')}>
@@ -835,7 +845,7 @@ export function RekapitulasiPage() {
       ))}
 
       {/* Content — Tab: Buku Kas Harian (kronologis) */}
-      {activeTab === 'harian' && (cashBookFetching ? (
+      {isHarianLike && (cashBookFetching ? (
         <div className="card space-y-3">
           {Array.from({ length: 5 }).map((_, i) => (
             <div key={i} className="h-8 bg-[#f0f4f0] rounded animate-pulse" />

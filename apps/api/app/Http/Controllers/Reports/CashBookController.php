@@ -60,7 +60,8 @@ class CashBookController extends Controller
             ? '_' . ($filters['start_date'] ?? '') . '_sd_' . ($filters['end_date'] ?? '')
             : '';
         $kantongSuffix = $filters['kantong'] !== 'kebun' ? '_' . $filters['kantong'] : '';
-        $filename   = "BukuKasHarian_{$year}_{$month}" . ($unit ? "_{$unit->code}" : '') . $kantongSuffix . $dateSuffix . '.xlsx';
+        $prefix        = $filters['group_by'] === 'item' ? 'BukuKasHarianDetail' : 'BukuKasHarian';
+        $filename   = "{$prefix}_{$year}_{$month}" . ($unit ? "_{$unit->code}" : '') . $kantongSuffix . $dateSuffix . '.xlsx';
 
         return Excel::download(new CashBookDirectExport($cashBook, $unit, $month, $year), $filename);
     }
@@ -74,6 +75,7 @@ class CashBookController extends Controller
             'start_date'   => ['nullable', 'date_format:Y-m-d'],
             'end_date'     => ['nullable', 'date_format:Y-m-d'],
             'kantong'      => ['nullable', 'in:all,kebun,pribadi'],
+            'group_by'     => ['nullable', 'in:subcategory,item'],
         ]);
 
         $unitId = $this->resolveUnitId($request, $request->user());
@@ -89,6 +91,8 @@ class CashBookController extends Controller
             'start_date'   => $request->input('start_date') ?: null,
             'end_date'     => $request->input('end_date')   ?: null,
             'kantong'      => $request->input('kantong', 'kebun'),
+            // 'item' = Buku Kas Harian Detail (baris per item + potongan panjar eksplisit).
+            'group_by'     => $request->input('group_by', 'subcategory'),
         ];
     }
 

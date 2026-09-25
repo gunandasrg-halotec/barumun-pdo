@@ -10,6 +10,8 @@ export interface CashBookFilters {
   start_date?: string
   end_date?: string
   kantong?: 'all' | 'kebun' | 'pribadi'
+  /** 'item' = Buku Kas Harian Detail: baris per item + baris Potongan Panjar eksplisit. */
+  group_by?: 'subcategory' | 'item'
 }
 
 export function useCashBookData(filters: CashBookFilters, enabled = true) {
@@ -24,6 +26,7 @@ export function useCashBookData(filters: CashBookFilters, enabled = true) {
       if (filters.start_date) params.start_date = filters.start_date
       if (filters.end_date)   params.end_date   = filters.end_date
       if (filters.kantong)    params.kantong    = filters.kantong
+      if (filters.group_by)   params.group_by   = filters.group_by
 
       const res = await api.get<ApiResponse<CashBookResponse>>('/reports/cashbook', { params })
       return res.data.data
