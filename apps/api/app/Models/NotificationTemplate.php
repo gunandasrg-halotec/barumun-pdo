@@ -23,6 +23,9 @@ class NotificationTemplate extends Model
     const EVENT_PDO_APPROVED_DIREKTUR   = 'pdo_approved_direktur';  // Dirkeu approve → semua
     const EVENT_PDO_REJECTED_DIREKTUR   = 'pdo_rejected_direktur';  // Dirkeu reject → semua
     const EVENT_PDO_FINAL               = 'pdo_final';
+    // PDOT funding_option=kas_kebun: 1 approval Manajer Keuangan, bukan Direktur —
+    // template pdo_final salah menyebut "disetujui Direktur Keuangan", jadi dipisah.
+    const EVENT_PDOT_KASKEBUN_FINAL     = 'pdot_kaskebun_final';
     const EVENT_PDO_CLOSED              = 'pdo_closed';
     const EVENT_SLA_REMINDER            = 'sla_reminder';
     const EVENT_MONTHLY_REMINDER        = 'monthly_reminder';

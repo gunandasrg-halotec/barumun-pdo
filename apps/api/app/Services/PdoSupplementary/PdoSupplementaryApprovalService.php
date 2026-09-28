@@ -157,10 +157,13 @@ class PdoSupplementaryApprovalService
             $fresh = $supp->fresh()->load(['creator', 'plantationUnit']);
         }
 
-        match ($nextStatus) {
-            PdoSupplementaryHeader::STATUS_REVIEWED_ASISTEN => $this->wa->notifySupplementaryApprovedByAsisten($fresh, $reason),
-            PdoSupplementaryHeader::STATUS_FINAL_MERGED     => $this->wa->notifySupplementaryFinal($fresh, $reason),
-            default                                          => null,
+        match (true) {
+            $nextStatus === PdoSupplementaryHeader::STATUS_REVIEWED_ASISTEN => $this->wa->notifySupplementaryApprovedByAsisten($fresh, $reason),
+            // kas_kebun juga transit ke final_merged, tapi disetujui Manajer Keuangan
+            // (bukan Direktur) — template beda supaya tidak menyebut "Direktur Keuangan".
+            $nextStatus === PdoSupplementaryHeader::STATUS_FINAL_MERGED && $fresh->usesKasKebun() => $this->wa->notifySupplementaryFinalKasKebun($fresh, $reason),
+            $nextStatus === PdoSupplementaryHeader::STATUS_FINAL_MERGED                           => $this->wa->notifySupplementaryFinal($fresh, $reason),
+            default => null,
         };
 
         return $fresh;
@@ -244,6 +247,9 @@ class PdoSupplementaryApprovalService
             $fresh = $supp->fresh()->load(['creator', 'plantationUnit']);
 
             match (true) {
+                // kas_kebun: cuma 1 approver (Manajer Keuangan), tidak melibatkan Asisten
+                // sama sekali — dicek duluan supaya prioritas di atas cek role actor.
+                $fresh->usesKasKebun()                                                  => $this->wa->notifySupplementaryRejectedKasKebun($fresh, $reason),
                 $actor->hasRole(Role::ASISTEN_KEBUN)                                    => $this->wa->notifySupplementaryRejectedByAsisten($fresh, $reason),
                 $actor->hasAnyRole([Role::MANAJER_KEBUN, Role::MANAJER_KEUANGAN])       => $this->wa->notifySupplementaryRejectedByManager($fresh, $reason),
                 $actor->hasRole(Role::DIREKTUR_KEUANGAN)                                => $this->wa->notifySupplementaryRejectedByDirektur($fresh, $reason),

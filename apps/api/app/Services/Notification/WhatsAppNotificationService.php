@@ -280,6 +280,19 @@ class WhatsAppNotificationService
         );
     }
 
+    /** Manajer Keuangan approve PDOT kas_kebun (final_merged) → Kerani (creator) saja */
+    public function notifySupplementaryFinalKasKebun(PdoSupplementaryHeader $supp, ?string $comment = null): void
+    {
+        $supp->loadMissing(['creator', 'plantationUnit']);
+
+        $this->send(
+            $supp->company_id,
+            NotificationTemplate::EVENT_PDOT_KASKEBUN_FINAL,
+            $this->suppCreator($supp),
+            array_merge($this->suppBaseVars($supp), ['catatan_approval' => $this->formatApprovalComment($comment)])
+        );
+    }
+
     /** Asisten reject PDO Tambahan → Kerani (creator) */
     public function notifySupplementaryRejectedByAsisten(PdoSupplementaryHeader $supp, string $reason): void
     {
@@ -289,6 +302,18 @@ class WhatsAppNotificationService
             NotificationTemplate::EVENT_PDO_REJECTED_ASISTEN,
             $this->suppCreator($supp),
             array_merge($this->suppBaseVars($supp), ['alasan_reject' => $reason, 'penolak' => 'Asisten Kebun'])
+        );
+    }
+
+    /** Manajer Keuangan reject PDOT kas_kebun → Kerani (creator) saja, tidak melibatkan Asisten */
+    public function notifySupplementaryRejectedKasKebun(PdoSupplementaryHeader $supp, string $reason): void
+    {
+        $supp->loadMissing(['creator', 'plantationUnit']);
+        $this->send(
+            $supp->company_id,
+            NotificationTemplate::EVENT_PDO_REJECTED_MANAGER,
+            $this->suppCreator($supp),
+            array_merge($this->suppBaseVars($supp), ['alasan_reject' => $reason, 'penolak' => 'Manajer Keuangan'])
         );
     }
 
