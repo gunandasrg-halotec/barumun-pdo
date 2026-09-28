@@ -53,6 +53,7 @@ export function SupplementaryStatusBadge({ status }: { status: SupplementaryStat
     reviewed_asisten:    { variant: 'review',   label: 'In Review' },
     in_review_manager:   { variant: 'review',   label: 'In Review' },
     in_review_direktur:  { variant: 'review',   label: 'In Review' },
+    pending_keuangan_kas_kebun: { variant: 'review', label: 'Menunggu Manajer Keuangan' },
     final_merged:        { variant: 'approved', label: 'Final Merged' },
     rejected:            { variant: 'reject',   label: 'Ditolak' },
   }

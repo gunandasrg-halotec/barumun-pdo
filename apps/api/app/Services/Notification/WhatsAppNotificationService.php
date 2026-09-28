@@ -219,6 +219,18 @@ class WhatsAppNotificationService
         );
     }
 
+    /** Kerani submit PDO Tambahan kas_kebun → Manajer Keuangan (1 approver saja, bukan Asisten) */
+    public function notifySupplementarySubmittedKasKebun(PdoSupplementaryHeader $supp): void
+    {
+        $supp->loadMissing(['creator', 'plantationUnit']);
+        $this->send(
+            $supp->company_id,
+            NotificationTemplate::EVENT_PDO_SUBMITTED,
+            $this->suppByRole($supp, Role::MANAJER_KEUANGAN),
+            $this->suppBaseVars($supp)
+        );
+    }
+
     /** Asisten approve PDO Tambahan → Kerani + Manajer Kebun + Manajer Keuangan */
     public function notifySupplementaryApprovedByAsisten(PdoSupplementaryHeader $supp, ?string $comment = null): void
     {

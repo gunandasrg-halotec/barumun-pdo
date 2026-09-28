@@ -23,8 +23,11 @@ class PdoSupplementaryApprovalService
      * lanjut ke Direktur setelah KEDUANYA approve (lihat approveManagerParallel()).
      */
     private const TRANSITION_MAP = [
-        PdoSupplementaryHeader::STATUS_SUBMITTED          => [Role::ASISTEN_KEBUN,     PdoSupplementaryHeader::STATUS_REVIEWED_ASISTEN],
-        PdoSupplementaryHeader::STATUS_IN_REVIEW_DIREKTUR => [Role::DIREKTUR_KEUANGAN, PdoSupplementaryHeader::STATUS_FINAL_MERGED],
+        PdoSupplementaryHeader::STATUS_SUBMITTED                   => [Role::ASISTEN_KEBUN,     PdoSupplementaryHeader::STATUS_REVIEWED_ASISTEN],
+        PdoSupplementaryHeader::STATUS_IN_REVIEW_DIREKTUR          => [Role::DIREKTUR_KEUANGAN, PdoSupplementaryHeader::STATUS_FINAL_MERGED],
+        // Jalur kas_kebun: 1 approval Manajer Keuangan langsung ke final_merged, tidak lewat
+        // Asisten/Manajer Kebun/Direktur sama sekali.
+        PdoSupplementaryHeader::STATUS_PENDING_KEUANGAN_KAS_KEBUN  => [Role::MANAJER_KEUANGAN, PdoSupplementaryHeader::STATUS_FINAL_MERGED],
     ];
 
     private const PARALLEL_STATUSES = [
@@ -42,8 +45,9 @@ class PdoSupplementaryApprovalService
      * Submit PDO Tambahan: draft/rejected → submitted.
      *
      * funding_option = kas_kebun: tidak ada dana baru dari HO, jadi TIDAK melalui approval
-     * berjenjang sama sekali — tervalidasi terhadap saldo kas kebun tersedia lalu langsung
-     * final_merged dalam transaksi yang sama, tanpa WhatsApp notification.
+     * berjenjang penuh seperti ho_transfer — tervalidasi terhadap saldo kas kebun tersedia,
+     * lalu menunggu 1 approval Manajer Keuangan (status pending_keuangan_kas_kebun) sebelum
+     * merge ke PDO induk. Lihat approve()/TRANSITION_MAP untuk approval-nya.
      */
     public function submit(PdoSupplementaryHeader $supp, string $submissionDate, User $actor): PdoSupplementaryHeader
     {
@@ -84,7 +88,7 @@ class PdoSupplementaryApprovalService
         });
     }
 
-    /** Jalur "Gunakan Kas Kebun": validasi saldo lalu langsung final_merged, tanpa approval/WA. */
+    /** Jalur "Gunakan Kas Kebun": validasi saldo, lalu menunggu approval Manajer Keuangan. */
     private function submitKasKebun(PdoSupplementaryHeader $supp, string $submissionDate, User $actor, int $totalAmount): PdoSupplementaryHeader
     {
         $available = $this->cashBook->currentBalance($supp->plantation_unit_id);
@@ -96,24 +100,23 @@ class PdoSupplementaryApprovalService
             ]], 422));
         }
 
-        return DB::transaction(function () use ($supp, $submissionDate, $actor) {
+        $fresh = DB::transaction(function () use ($supp, $submissionDate, $actor) {
             $action = $supp->isRejected()
                 ? PdoSupplementaryApprovalLog::ACTION_RESUBMIT
                 : PdoSupplementaryApprovalLog::ACTION_SUBMIT;
 
             $supp->update([
-                'status'          => PdoSupplementaryHeader::STATUS_SUBMITTED,
+                'status'          => PdoSupplementaryHeader::STATUS_PENDING_KEUANGAN_KAS_KEBUN,
                 'submission_date' => $submissionDate,
             ]);
             $this->appendLog($supp, $actor, 'kerani_submit', $action);
 
-            $supp->update(['status' => PdoSupplementaryHeader::STATUS_FINAL_MERGED]);
-            $this->appendLog($supp, $actor, PdoSupplementaryHeader::STATUS_SUBMITTED, PdoSupplementaryApprovalLog::ACTION_APPROVE, 'Auto-merge: gunakan kas kebun, tanpa approval.');
-
-            $this->mergeIntoParent($supp, $actor);
-
             return $supp->fresh()->load(['creator', 'plantationUnit']);
         });
+
+        $this->wa->notifySupplementarySubmittedKasKebun($fresh);
+
+        return $fresh;
     }
 
     /** Approve berdasarkan role approver — chain sama seperti PDO Bulanan */
@@ -220,6 +223,7 @@ class PdoSupplementaryApprovalService
             PdoSupplementaryHeader::STATUS_REVIEWED_ASISTEN,
             PdoSupplementaryHeader::STATUS_IN_REVIEW_MANAGER,
             PdoSupplementaryHeader::STATUS_IN_REVIEW_DIREKTUR,
+            PdoSupplementaryHeader::STATUS_PENDING_KEUANGAN_KAS_KEBUN,
         ];
 
         if (! in_array($supp->status, $inReview)) {

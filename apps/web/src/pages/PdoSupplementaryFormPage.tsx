@@ -255,7 +255,7 @@ export function PdoSupplementaryFormPage() {
     onSuccess: (header) => {
       toast(
         fundingOption === 'kas_kebun'
-          ? 'PDO Tambahan langsung digabung ke PDO Bulanan — tidak perlu approval.'
+          ? 'PDO Tambahan berhasil diajukan, menunggu approval Manajer Keuangan.'
           : 'PDO Tambahan berhasil diajukan, menunggu approval Asisten.'
       )
       qc.invalidateQueries({ queryKey: ['pdo-supplementary'] })
@@ -300,7 +300,7 @@ export function PdoSupplementaryFormPage() {
               </label>
               <label className="flex items-center gap-2 text-sm">
                 <input type="radio" value="kas_kebun" {...register('funding_option')} />
-                Gunakan Kas Kebun <span className="text-muted">(langsung digabung ke PDO Bulanan, tanpa approval)</span>
+                Gunakan Kas Kebun <span className="text-muted">(perlu approval Manajer Keuangan)</span>
               </label>
             </div>
             {fundingOption === 'kas_kebun' && (
@@ -460,7 +460,7 @@ export function PdoSupplementaryFormPage() {
             loading={submit.isPending}
             onClick={handleSubmit((d) => submit.mutate(d))}
           >
-            {fundingOption === 'kas_kebun' ? 'Simpan dan gabung ke PDO Bulanan' : 'Simpan & Ajukan'}
+            {fundingOption === 'kas_kebun' ? 'Ajukan ke Manajer Keuangan' : 'Simpan & Ajukan'}
           </Button>
           <Button type="button" variant="secondary" onClick={() => navigate('/pdo-tambahan')}>Batal</Button>
         </div>

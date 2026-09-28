@@ -337,6 +337,7 @@ export type SupplementaryStatus =
   | 'reviewed_asisten'
   | 'in_review_manager'
   | 'in_review_direktur'
+  | 'pending_keuangan_kas_kebun'
   | 'final_merged'
   | 'rejected'
 

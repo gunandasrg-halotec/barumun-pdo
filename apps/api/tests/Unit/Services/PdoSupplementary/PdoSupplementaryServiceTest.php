@@ -160,7 +160,7 @@ class PdoSupplementaryServiceTest extends TestCase
     }
 
     // ─────────────────────────────────────────────────────
-    // funding_option = kas_kebun: tanpa approval, langsung final_merged
+    // funding_option = kas_kebun: butuh 1 approval Manajer Keuangan sebelum final_merged
     // ─────────────────────────────────────────────────────
 
     private function makeKasKebunSupplementary(?PdoHeader $parentPdo = null, int $amount = 500000): PdoSupplementaryHeader
@@ -185,7 +185,7 @@ class PdoSupplementaryServiceTest extends TestCase
         return $supp;
     }
 
-    public function test_submit_kas_kebun_with_sufficient_balance_merges_immediately_without_approval(): void
+    public function test_submit_kas_kebun_with_sufficient_balance_goes_to_pending_keuangan_approval(): void
     {
         UnitOpeningBalance::create(['plantation_unit_id' => $this->unit->id, 'amount' => 1000000, 'as_of_date' => '2026-06-01']);
 
@@ -194,8 +194,31 @@ class PdoSupplementaryServiceTest extends TestCase
 
         $updated = $this->approvalService->submit($supp, '2026-08-05', $this->kerani);
 
-        $this->assertEquals(PdoSupplementaryHeader::STATUS_FINAL_MERGED, $updated->status);
-        $this->assertNotNull($updated->merged_at);
+        // Belum merge — menunggu 1 approval Manajer Keuangan.
+        $this->assertEquals(PdoSupplementaryHeader::STATUS_PENDING_KEUANGAN_KAS_KEBUN, $updated->status);
+        $this->assertNull($updated->merged_at);
+        $this->assertDatabaseMissing('pdo_details', ['source_pdo_supplementary_id' => $supp->id]);
+
+        // Tidak melalui tahap approval Asisten/Manajer/Direktur sama sekali — jalurnya
+        // beda dari ho_transfer, cuma 1 approver (Manajer Keuangan).
+        $this->assertDatabaseMissing('pdo_supplementary_approval_logs', [
+            'pdo_supplementary_header_id' => $supp->id,
+            'approval_stage'              => PdoSupplementaryHeader::STATUS_REVIEWED_ASISTEN,
+        ]);
+        $this->assertDatabaseMissing('pdo_supplementary_approval_logs', [
+            'pdo_supplementary_header_id' => $supp->id,
+            'approval_stage'              => PdoSupplementaryHeader::STATUS_IN_REVIEW_MANAGER,
+        ]);
+        $this->assertDatabaseMissing('pdo_supplementary_approval_logs', [
+            'pdo_supplementary_header_id' => $supp->id,
+            'approval_stage'              => PdoSupplementaryHeader::STATUS_IN_REVIEW_DIREKTUR,
+        ]);
+
+        // Manajer Keuangan approve → baru sekarang merge terjadi.
+        $approved = $this->approvalService->approve($updated, 'Disetujui', $this->manajerKeuangan);
+
+        $this->assertEquals(PdoSupplementaryHeader::STATUS_FINAL_MERGED, $approved->status);
+        $this->assertNotNull($approved->merged_at);
 
         $this->assertDatabaseHas('pdo_details', [
             'pdo_header_id'                => $parentPdo->id,
@@ -211,7 +234,7 @@ class PdoSupplementaryServiceTest extends TestCase
         // ada uang yang benar-benar ditransfer. Mengisi sebesar pengajuan (perilaku
         // lama) menggelembungkan KPI Transfer di Rekap dan kolom "Sudah Ditransfer"
         // di halaman Detail Transfer. Kecukupan dananya divalidasi di depan saat
-        // PDOT dibuat, dan item ini dikecualikan dari plafon BR-REAL-002 sehingga
+        // PDOT disubmit, dan item ini dikecualikan dari plafon BR-REAL-002 sehingga
         // nominal 0 di sini tidak memblokir realisasinya.
         $detail = PdoDetail::where('source_pdo_supplementary_id', $supp->id)->firstOrFail();
         $this->assertDatabaseHas('transfer_entries', [
@@ -221,20 +244,45 @@ class PdoSupplementaryServiceTest extends TestCase
             'is_auto_generated'    => true,
             'amount'               => 0,
         ]);
+    }
 
-        // Tidak melalui tahap approval Asisten/Manajer/Direktur sama sekali.
-        $this->assertDatabaseMissing('pdo_supplementary_approval_logs', [
-            'pdo_supplementary_header_id' => $supp->id,
-            'approval_stage'              => PdoSupplementaryHeader::STATUS_REVIEWED_ASISTEN,
-        ]);
-        $this->assertDatabaseMissing('pdo_supplementary_approval_logs', [
-            'pdo_supplementary_header_id' => $supp->id,
-            'approval_stage'              => PdoSupplementaryHeader::STATUS_IN_REVIEW_MANAGER,
-        ]);
-        $this->assertDatabaseMissing('pdo_supplementary_approval_logs', [
-            'pdo_supplementary_header_id' => $supp->id,
-            'approval_stage'              => PdoSupplementaryHeader::STATUS_IN_REVIEW_DIREKTUR,
-        ]);
+    public function test_kas_kebun_pending_keuangan_cannot_be_approved_by_other_roles(): void
+    {
+        UnitOpeningBalance::create(['plantation_unit_id' => $this->unit->id, 'amount' => 1000000, 'as_of_date' => '2026-06-01']);
+
+        $supp    = $this->makeKasKebunSupplementary(amount: 500000);
+        $updated = $this->approvalService->submit($supp, '2026-08-05', $this->kerani);
+
+        foreach ([$this->asisten, $this->manajerKebun, $this->direktur] as $wrongActor) {
+            try {
+                $this->approvalService->approve($updated, null, $wrongActor);
+                $this->fail('Expected HttpResponseException was not thrown for actor ' . $wrongActor->id);
+            } catch (\Illuminate\Http\Exceptions\HttpResponseException $e) {
+                $this->assertEquals(403, $e->getResponse()->getStatusCode());
+            }
+        }
+
+        // Masih menunggu, belum ter-merge oleh siapapun yang salah role.
+        $this->assertEquals(PdoSupplementaryHeader::STATUS_PENDING_KEUANGAN_KAS_KEBUN, $updated->fresh()->status);
+        $this->assertNull($updated->fresh()->merged_at);
+    }
+
+    public function test_reject_kas_kebun_pending_keuangan_returns_to_draft_and_resubmittable(): void
+    {
+        UnitOpeningBalance::create(['plantation_unit_id' => $this->unit->id, 'amount' => 1000000, 'as_of_date' => '2026-06-01']);
+
+        $supp    = $this->makeKasKebunSupplementary(amount: 500000);
+        $updated = $this->approvalService->submit($supp, '2026-08-05', $this->kerani);
+
+        $rejected = $this->approvalService->reject($updated, 'Belum perlu bulan ini', $this->manajerKeuangan);
+
+        $this->assertEquals(PdoSupplementaryHeader::STATUS_DRAFT, $rejected->status);
+        $this->assertNull($rejected->merged_at);
+        $this->assertDatabaseMissing('pdo_details', ['source_pdo_supplementary_id' => $supp->id]);
+
+        // Bisa disubmit ulang, kembali ke status menunggu approval yang sama.
+        $resubmitted = $this->approvalService->submit($rejected, '2026-08-06', $this->kerani);
+        $this->assertEquals(PdoSupplementaryHeader::STATUS_PENDING_KEUANGAN_KAS_KEBUN, $resubmitted->status);
     }
 
     public function test_submit_kas_kebun_rejected_when_balance_insufficient(): void

@@ -37,6 +37,8 @@ class PdoSupplementaryHeader extends Model
     const STATUS_IN_REVIEW_DIREKTUR = 'in_review_direktur';
     const STATUS_FINAL_MERGED       = 'final_merged';
     const STATUS_REJECTED           = 'rejected';
+    /** Eksklusif jalur funding_option=kas_kebun: menunggu 1 approval Manajer Keuangan sebelum merge. */
+    const STATUS_PENDING_KEUANGAN_KAS_KEBUN = 'pending_keuangan_kas_kebun';
 
     const FUNDING_HO_TRANSFER = 'ho_transfer';
     const FUNDING_KAS_KEBUN   = 'kas_kebun';

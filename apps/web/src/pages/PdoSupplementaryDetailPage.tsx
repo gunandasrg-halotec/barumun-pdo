@@ -25,12 +25,14 @@ interface ApprovalLog {
 const STATUS_BADGE: Record<string, 'draft' | 'approved' | 'reject' | 'review' | 'purple'> = {
   draft: 'draft', submitted: 'review', reviewed_asisten: 'review',
   in_review_manager: 'review', in_review_direktur: 'review',
+  pending_keuangan_kas_kebun: 'review',
   final_merged: 'approved', rejected: 'reject',
 }
 
 const STATUS_LABEL: Record<string, string> = {
   draft: 'Draft', submitted: 'Diajukan', reviewed_asisten: 'Disetujui Asisten',
   in_review_manager: 'Menunggu Manajer (paralel)', in_review_direktur: 'Disetujui Kedua Manajer',
+  pending_keuangan_kas_kebun: 'Menunggu Manajer Keuangan',
   final_merged: 'Disetujui Direktur', rejected: 'Ditolak',
 }
 
@@ -44,6 +46,16 @@ const PIPELINE: { role: string; label: string; doneStatus: string }[] = [
 ]
 
 const STATUS_ORDER = ['draft', 'submitted', 'reviewed_asisten', 'in_review_manager', 'in_review_direktur', 'final_merged']
+
+// Pipeline terpisah untuk funding_option='kas_kebun' — hanya 1 approver (Manajer
+// Keuangan), tidak melalui Asisten/Manajer Kebun/Direktur. Memakai array & urutan
+// status sendiri supaya tidak salah render 5-tahap ho_transfer untuk jalur ini.
+const KAS_KEBUN_PIPELINE: { role: string; label: string; doneStatus: string }[] = [
+  { role: 'KERANI',           label: 'Pengajuan oleh Kerani',          doneStatus: 'pending_keuangan_kas_kebun' },
+  { role: 'MANAJER_KEUANGAN', label: 'Persetujuan Manajer Keuangan',   doneStatus: 'final_merged'               },
+]
+
+const KAS_KEBUN_STATUS_ORDER = ['draft', 'pending_keuangan_kas_kebun', 'final_merged']
 
 export function PdoSupplementaryDetailPage() {
   const { id }   = useParams<{ id: string }>()
@@ -135,23 +147,27 @@ export function PdoSupplementaryDetailPage() {
             <>
               <Button variant="secondary" onClick={() => navigate(`/pdo-tambahan/${id}/edit`)}>Edit</Button>
               <Button loading={submitMut.isPending} onClick={() => submitMut.mutate()}>
-                {supp.funding_option === 'kas_kebun' ? 'Simpan dan gabung ke PDO Bulanan' : 'Ajukan ke Asisten'}
+                {supp.funding_option === 'kas_kebun' ? 'Ajukan ke Manajer Keuangan' : 'Ajukan ke Asisten'}
               </Button>
             </>
           )}
           {userCanApprove && !['final_merged', 'rejected', 'draft'].includes(supp.status) && (() => {
             // BR-APPR-002: Sembunyikan tombol Approve jika manajer ini sudah approve di tahap paralel
-            const isManagerStage = ['reviewed_asisten', 'in_review_manager'].includes(supp.status)
+            // (tidak berlaku untuk kas_kebun — cuma 1 approver, bukan tahap paralel).
+            const isManagerStage = supp.funding_option !== 'kas_kebun' && ['reviewed_asisten', 'in_review_manager'].includes(supp.status)
             const alreadyApproved = isManagerStage && (
               (role === 'MANAJER_KEBUN'    && supp.manager_kebun_approved === true) ||
               (role === 'MANAJER_KEUANGAN' && supp.manager_keuangan_approved === true)
             )
+            // Jalur kas_kebun hanya boleh di-approve Manajer Keuangan — backend sudah
+            // menolak role lain (403), ini cuma menyembunyikan tombol yang pasti gagal.
+            const canApproveThisStage = supp.status !== 'pending_keuangan_kas_kebun' || role === 'MANAJER_KEUANGAN'
             return (
               <>
                 <Button variant="danger" onClick={() => { setModalType('reject'); setShowModal(true) }}>
                   <XCircle className="w-4 h-4" /> Reject
                 </Button>
-                {!alreadyApproved && (
+                {!alreadyApproved && canApproveThisStage && (
                   <Button onClick={() => { setModalType('approve'); setShowModal(true) }}>
                     <CheckCircle className="w-4 h-4" /> Approve
                   </Button>
@@ -230,11 +246,12 @@ export function PdoSupplementaryDetailPage() {
           </div>
         ) : (
           <div className="flex items-start gap-0">
-            {PIPELINE.map((step, i) => {
-              const currentIdx = STATUS_ORDER.indexOf(supp.status)
-              const stepIdx    = STATUS_ORDER.indexOf(step.doneStatus)
+            {(supp.funding_option === 'kas_kebun' ? KAS_KEBUN_PIPELINE : PIPELINE).map((step, i, arr) => {
+              const order      = supp.funding_option === 'kas_kebun' ? KAS_KEBUN_STATUS_ORDER : STATUS_ORDER
+              const currentIdx = order.indexOf(supp.status)
+              const stepIdx    = order.indexOf(step.doneStatus)
               const isDone     = currentIdx >= stepIdx
-              const isCurrent  = STATUS_ORDER.indexOf(step.doneStatus) === currentIdx
+              const isCurrent  = stepIdx === currentIdx
               const log        = logs?.find((l) => l.approval_stage && step.doneStatus.startsWith(l.approval_stage.split('_')[0]))
 
               return (
@@ -244,7 +261,7 @@ export function PdoSupplementaryDetailPage() {
                     <div className={`absolute left-0 top-[14px] w-1/2 h-0.5 ${isDone || isCurrent ? 'bg-green' : 'bg-line'}`} />
                   )}
                   {/* Connector line (except last) */}
-                  {i < PIPELINE.length - 1 && (
+                  {i < arr.length - 1 && (
                     <div className={`absolute right-0 top-[14px] w-1/2 h-0.5 ${isDone && !isCurrent ? 'bg-green' : 'bg-line'}`} />
                   )}
                   {/* Icon */}
@@ -269,8 +286,8 @@ export function PdoSupplementaryDetailPage() {
           </div>
         )}
 
-        {/* BR-APPR-002: Panel status per-manajer di tahap paralel */}
-        {['reviewed_asisten', 'in_review_manager'].includes(supp.status) && (
+        {/* BR-APPR-002: Panel status per-manajer di tahap paralel (tidak berlaku kas_kebun — 1 approver saja) */}
+        {supp.funding_option !== 'kas_kebun' && ['reviewed_asisten', 'in_review_manager'].includes(supp.status) && (
           <div className="mt-4 grid grid-cols-2 gap-2">
             {[
               { label: 'Manajer Kebun',    approved: supp.manager_kebun_approved },

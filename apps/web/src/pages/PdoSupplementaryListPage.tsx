@@ -15,29 +15,31 @@ import { useToastStore } from '@/store/toast.store'
 import type { PaginatedResponse, PdoSupplementaryHeader, RoleCode } from '@/types'
 
 const STATUS_LABELS: Record<string, string> = {
-  draft:               'Draft',
-  submitted:           'Submitted',
-  reviewed_asisten:    'Reviewed Asisten',
-  in_review_manager:   'In Review Manager',
-  in_review_direktur:  'In Review Direktur',
-  final_merged:        'Merged ke PDO',
-  rejected:            'Ditolak',
+  draft:                       'Draft',
+  submitted:                   'Submitted',
+  reviewed_asisten:            'Reviewed Asisten',
+  in_review_manager:           'In Review Manager',
+  in_review_direktur:          'In Review Direktur',
+  pending_keuangan_kas_kebun:  'Menunggu Manajer Keuangan',
+  final_merged:                'Merged ke PDO',
+  rejected:                    'Ditolak',
 }
 
 const STATUS_BADGE: Record<string, 'draft' | 'approved' | 'reject' | 'review' | 'purple'> = {
-  draft:               'draft',
-  submitted:           'review',
-  reviewed_asisten:    'review',
-  in_review_manager:   'review',
-  in_review_direktur:  'review',
-  final_merged:        'approved',
-  rejected:            'reject',
+  draft:                      'draft',
+  submitted:                  'review',
+  reviewed_asisten:           'review',
+  in_review_manager:          'review',
+  in_review_direktur:         'review',
+  pending_keuangan_kas_kebun: 'review',
+  final_merged:               'approved',
+  rejected:                   'reject',
 }
 
 const GROUPS = {
   proses: {
     title: 'Masih Proses',
-    statuses: ['draft', 'submitted', 'reviewed_asisten', 'in_review_manager', 'in_review_direktur'],
+    statuses: ['draft', 'submitted', 'reviewed_asisten', 'in_review_manager', 'in_review_direktur', 'pending_keuangan_kas_kebun'],
   },
   merged: {
     title: 'Merged ke PDO',
