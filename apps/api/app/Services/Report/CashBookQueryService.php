@@ -593,6 +593,7 @@ class CashBookQueryService
                 // hanya dijumlahkan, jadi totalnya tidak berubah.
                 $appliedBySub = [];
                 $lastOfSub    = [];
+                $gajiOfSub    = []; // grup item "GAJI ..." — titik tempel baris potongan gaji
                 $blockFirstAt = []; // created_at paling awal tiap blok
                 $blockTime    = []; // kunci urut blok (lihat pembentukannya di bawah)
                 $seqInBlock   = [];
@@ -601,6 +602,13 @@ class CashBookQueryService
                         $prefix = implode('|', array_slice(explode('|', $key), 0, 2)); // tanggal|subcategory_id
                         $appliedBySub[$prefix] = ($appliedBySub[$prefix] ?? 0) + (int) ($appliedByGroup[$key] ?? 0);
                         $lastOfSub[$prefix]    = $key;
+
+                        // Panjar gaji dibebankan ke item gaji, jadi barisnya ditempel tepat di
+                        // bawah item itu supaya hubungannya terbaca — bukan di akhir blok.
+                        if (! isset($gajiOfSub[$prefix])
+                            && preg_match('/^GAJI\b/i', trim((string) $group->first()?->pdoDetail?->expenseItem?->name))) {
+                            $gajiOfSub[$prefix] = $key;
+                        }
 
                         $first = $group->min('created_at');
                         if (! isset($blockFirstAt[$prefix]) || $first < $blockFirstAt[$prefix]) {
@@ -681,15 +689,20 @@ class CashBookQueryService
                         // Mode detail: baris satu sub-kategori dirapatkan jadi satu blok, dengan
                         // baris potongan menutup blok itu (lihat pengurutan di getCashBookData()).
                         'sort_block'  => $blockTime[$blockKey] ?? '',
-                        'sort_seq'    => $seqInBlock[$blockKey] = ($seqInBlock[$blockKey] ?? 0) + 1,
+                        // Loncat 10 supaya baris potongan bisa diselipkan tepat di bawah satu
+                        // item tertentu (lihat sort_seq baris potongan di bawah).
+                        'sort_seq'    => $seqInBlock[$blockKey] = ($seqInBlock[$blockKey] ?? 0) + 10,
                     ];
 
                     if ($groupBy === 'item') {
                         $prefix        = $blockKey;
                         $appliedForSub = (int) ($appliedBySub[$prefix] ?? 0);
 
-                        // Hanya dipasang sekali, saat grup terakhir sub-kategori ini dilewati.
-                        if ($appliedForSub > 0 && ($lastOfSub[$prefix] ?? null) === $groupKey) {
+                        // Dipasang sekali: di bawah item gaji kalau panjarnya panjar gaji,
+                        // selain itu di akhir blok sub-kategori.
+                        $anchor = $gajiOfSub[$prefix] ?? $lastOfSub[$prefix] ?? null;
+
+                        if ($appliedForSub > 0 && $anchor === $groupKey) {
                             $subId = (string) ($group->first()?->pdoDetail?->expenseItem?->subcategory_id ?? 'unknown');
                             $own   = $deductionNamesBySubcategory[$subId] ?? '';
 
@@ -705,7 +718,11 @@ class CashBookQueryService
                                 'amount'      => -$appliedForSub,
                                 'created_at'  => $group->max('created_at'),
                                 'sort_block'  => $blockTime[$prefix] ?? '',
-                                'sort_seq'    => PHP_INT_MAX, // selalu menutup bloknya
+                                // Menempel persis di bawah baris induknya kalau ditempel ke item
+                                // gaji; kalau di akhir blok, selalu jadi baris penutup.
+                                'sort_seq'    => isset($gajiOfSub[$prefix])
+                                    ? $seqInBlock[$blockKey] + 1
+                                    : PHP_INT_MAX,
                             ];
                         }
                     }

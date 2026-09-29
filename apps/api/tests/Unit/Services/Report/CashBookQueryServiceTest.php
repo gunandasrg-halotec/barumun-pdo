@@ -1402,4 +1402,58 @@ class CashBookQueryServiceTest extends TestCase
         $this->assertSame(['2026-08-04', '2026-08-05'], $potongan->pluck('date')->all());
     }
 
+
+    /**
+     * Baris potongan panjar GAJI menempel tepat di bawah baris Gaji-nya, walau di tanggal yang
+     * sama masih ada biaya lain di sub-kategori itu — bukan didorong ke akhir blok.
+     *
+     * Regresi kasus nyata PDO-2026-09-KP-001: di KRANI/CENTENG/SUPIR TRUCK/GEMBALA, gaji dan
+     * biaya lain sama-sama jatuh 05 September, sehingga baris potongan sempat mendarat di
+     * bawah "LEMBUR KRANI"/"PUDDING CENTENG" dan hubungannya dengan gaji tidak terbaca.
+     */
+    public function test_gaji_deduction_row_sits_directly_below_the_gaji_row(): void
+    {
+        $pdo = $this->makeDetailPdo();
+        $cat = ExpenseCategory::factory()->create(['company_id' => $this->companyId]);
+
+        // Gaji dan lembur sama-sama direalisasikan di tanggal yang sama.
+        $this->makeSubcategoryWithDeduction($pdo, $cat, [
+            ['GAJI KRANI',   3_000_000, '2026-08-04'],
+            ['LEMBUR KRANI',   400_000, '2026-08-04'],
+        ], 1_000_000);
+
+        $detail = $this->service->getCashBookData([
+            'period_year' => 2026, 'period_month' => 8, 'unit_id' => $this->unit->id, 'group_by' => 'item',
+        ]);
+
+        $expenses = collect($detail['rows'])->where('type', 'pengeluaran')->values();
+
+        $this->assertSame([3_000_000, -1_000_000, 400_000], $expenses->pluck('amount')->all());
+        $this->assertStringContainsString('GAJI KRANI', $expenses[0]['description']);
+        $this->assertStringContainsString('Potongan Panjar', $expenses[1]['description']);
+        $this->assertStringContainsString('LEMBUR KRANI', $expenses[2]['description']);
+    }
+
+    /**
+     * Panjar UPAH tetap menutup blok sub-kategorinya (tidak ada item gaji yang bisa ditempeli).
+     */
+    public function test_upah_deduction_row_still_closes_the_subcategory_block(): void
+    {
+        $pdo = $this->makeDetailPdo();
+        $cat = ExpenseCategory::factory()->create(['company_id' => $this->companyId]);
+
+        $this->makeSubcategoryWithDeduction($pdo, $cat, [
+            ['UPAH MEMUPUK',        2_000_000, '2026-08-04'],
+            ['UPAH BABAT GAWANGAN',   500_000, '2026-08-04'],
+        ], 600_000);
+
+        $detail = $this->service->getCashBookData([
+            'period_year' => 2026, 'period_month' => 8, 'unit_id' => $this->unit->id, 'group_by' => 'item',
+        ]);
+
+        $expenses = collect($detail['rows'])->where('type', 'pengeluaran')->values();
+
+        $this->assertSame(-600_000, $expenses->last()['amount'], 'potongan upah harus jadi baris penutup blok');
+    }
+
 }
