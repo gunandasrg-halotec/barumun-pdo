@@ -979,7 +979,7 @@ class CashBookQueryServiceTest extends TestCase
         $this->assertSame(42_000_000, $detail['total_penerimaan']);
     }
 
-    /** T6: sub-kategori berisi 1 item — potongan tampil PENUH sebagai baris tepat di bawah item itu. */
+    /** T6: sub-kategori berisi 1 item — potongan tampil PENUH sebagai satu baris di bawah item itu. */
     public function test_group_by_item_shows_full_deduction_row_for_single_item_subcategory(): void
     {
         $pdo  = $this->makeDetailPdo();
@@ -1019,10 +1019,10 @@ class CashBookQueryServiceTest extends TestCase
     }
 
     /**
-     * T7: sub-kategori berisi >1 item — panjar dibagi PRO-RATA sesuai nilai biaya tiap item,
-     * dan pembulatannya dijaga supaya jumlah porsi persis sama dengan nilai panjar.
+     * T7: sub-kategori berisi >1 item — potongan tampil SATU baris di akhir sub-kategori
+     * (permintaan tim keuangan), bukan satu baris per item. Nilainya tetap utuh sebesar panjar.
      */
-    public function test_group_by_item_splits_deduction_pro_rata_with_exact_rounding(): void
+    public function test_group_by_item_shows_single_aggregated_deduction_row_per_subcategory(): void
     {
         $pdo = $this->makeDetailPdo();
         $cat = ExpenseCategory::factory()->create(['company_id' => $this->companyId]);
@@ -1057,10 +1057,15 @@ class CashBookQueryServiceTest extends TestCase
             ->filter(fn (array $r) => $r['amount'] < 0)
             ->values();
 
-        $this->assertCount(2, $potongan);
-        $this->assertEqualsCanonicalizing([-333_333, -666_667], $potongan->pluck('amount')->all());
-        // Jumlah porsi persis 1.000.000 — tidak ada rupiah hilang/berlebih karena pembulatan.
-        $this->assertSame(-1_000_000, (int) $potongan->sum('amount'));
+        // Satu sub-kategori = satu baris potongan, walau isinya dua item.
+        $this->assertCount(1, $potongan);
+        $this->assertSame(-1_000_000, $potongan[0]['amount']);
+
+        // Baris potongan berada SETELAH kedua baris item sub-kategori itu.
+        $expenses = collect($detail['rows'])->where('type', 'pengeluaran')->values();
+        $posPotongan = $expenses->search(fn (array $r) => $r['amount'] < 0);
+        $this->assertSame(2, $posPotongan, 'potongan harus di akhir sub-kategori');
+
         $this->assertSame($lama['total_pengeluaran'], $detail['total_pengeluaran']);
     }
 
@@ -1130,8 +1135,9 @@ class CashBookQueryServiceTest extends TestCase
             ->filter(fn (array $r) => $r['amount'] < 0)
             ->values();
 
-        // 1jt (sub sendiri, habis) + 500rb & 1,5jt (tetangga, pro-rata 2jt : 6jt).
-        $this->assertEqualsCanonicalizing([-1_000_000, -500_000, -1_500_000], $potongan->pluck('amount')->all());
+        // 1jt (sub sendiri, habis) + 2jt luberan yang mendarat di sub tetangga — dua item
+        // di sub tetangga itu diringkas jadi SATU baris (500rb + 1,5jt).
+        $this->assertEqualsCanonicalizing([-1_000_000, -2_000_000], $potongan->pluck('amount')->all());
         $this->assertSame(-3_000_000, (int) $potongan->sum('amount'));
 
         // Kategori lain utuh: masih ada baris 900.000 tanpa potongan.
@@ -1179,6 +1185,104 @@ class CashBookQueryServiceTest extends TestCase
         $this->assertSame(0, $lama['total_pengeluaran']);
         $this->assertSame(0, $detail['total_pengeluaran']);
         $this->assertSame($lama['closing_balance'], $detail['closing_balance']);
+    }
+
+
+    /**
+     * T10: tim keuangan menjamin item satu sub-kategori direalisasikan di tanggal yang sama,
+     * tapi kalau data lama ternyata tidak begitu, baris potongan tetap dipecah PER TANGGAL —
+     * bukan dipaksa menumpuk di satu tanggal — supaya tidak pernah mengurangi pengeluaran di
+     * tanggal yang bukan tanggalnya, dan saldo berjalan di tengah bulan tetap masuk akal.
+     */
+    public function test_group_by_item_keeps_one_deduction_row_per_date_when_subcategory_spans_dates(): void
+    {
+        $pdo  = $this->makeDetailPdo();
+        $cat  = ExpenseCategory::factory()->create(['company_id' => $this->companyId]);
+        $sub  = ExpenseSubcategory::factory()->create(['category_id' => $cat->id]);
+        $item = ExpenseItem::factory()->create(['subcategory_id' => $sub->id]);
+        $det  = PdoDetail::factory()->create(['pdo_header_id' => $pdo->id, 'expense_item_id' => $item->id, 'amount' => 2_000_000]);
+        TransferEntry::factory()->create([
+            'pdo_detail_id' => $det->id, 'amount' => 2_000_000,
+            'transfer_destination' => 'rek_kebun', 'transfer_date' => '2026-08-01',
+        ]);
+
+        // Satu item, DUA tanggal realisasi.
+        foreach (['2026-08-05', '2026-08-06'] as $tanggal) {
+            RealizationEntry::factory()->create([
+                'pdo_detail_id' => $det->id, 'amount' => 1_000_000,
+                'funding_source' => RealizationEntry::FUNDING_KAS_KEBUN, 'transaction_date' => $tanggal,
+            ]);
+        }
+
+        $dedItem   = ExpenseItem::factory()->create(['subcategory_id' => $sub->id, 'is_deduction' => true]);
+        $dedDetail = PdoDetail::factory()->create(['pdo_header_id' => $pdo->id, 'expense_item_id' => $dedItem->id, 'amount' => 400_000]);
+        TransferEntry::factory()->create([
+            'pdo_detail_id' => $dedDetail->id, 'amount' => -400_000,
+            'transfer_destination' => 'rek_kebun', 'transfer_date' => '2026-08-01',
+            'entry_source' => 'system', 'is_auto_generated' => true,
+        ]);
+
+        [$lama, $detail] = $this->bothModes();
+
+        $potongan = collect($detail['rows'])
+            ->where('type', 'pengeluaran')
+            ->filter(fn (array $r) => $r['amount'] < 0)
+            ->values();
+
+        // Dua tanggal → dua baris potongan, masing-masing di tanggalnya sendiri.
+        $this->assertCount(2, $potongan);
+        $this->assertEqualsCanonicalizing(['2026-08-05', '2026-08-06'], $potongan->pluck('date')->all());
+        $this->assertSame(-400_000, (int) $potongan->sum('amount'));
+        $this->assertSame($lama['total_pengeluaran'], $detail['total_pengeluaran']);
+    }
+
+
+    /**
+     * T11: dalam satu tanggal, baris satu sub-kategori dirapatkan jadi satu blok dan baris
+     * potongan menutup blok itu — walau sub-kategori lain diinput berselang-seling waktunya.
+     * Tanpa ini, urutan kronologis murni membuat blok terpencar sehingga "potongan di akhir
+     * sub-kategori" tidak terbaca sebagai satu kesatuan.
+     */
+    public function test_group_by_item_keeps_subcategory_rows_contiguous_with_deduction_last(): void
+    {
+        $pdo = $this->makeDetailPdo();
+        $cat = ExpenseCategory::factory()->create(['company_id' => $this->companyId]);
+        $subA = ExpenseSubcategory::factory()->create(['category_id' => $cat->id]);
+        $subB = ExpenseSubcategory::factory()->create(['category_id' => $cat->id]);
+
+        // Diinput berselang-seling: A, B, A, B — semuanya di tanggal yang sama.
+        foreach ([[$subA, 1_000_000], [$subB, 2_000_000], [$subA, 3_000_000], [$subB, 4_000_000]] as [$sub, $amount]) {
+            $item = ExpenseItem::factory()->create(['subcategory_id' => $sub->id]);
+            $det  = PdoDetail::factory()->create(['pdo_header_id' => $pdo->id, 'expense_item_id' => $item->id, 'amount' => $amount]);
+            TransferEntry::factory()->create([
+                'pdo_detail_id' => $det->id, 'amount' => $amount,
+                'transfer_destination' => 'rek_kebun', 'transfer_date' => '2026-08-01',
+            ]);
+            RealizationEntry::factory()->create([
+                'pdo_detail_id' => $det->id, 'amount' => $amount,
+                'funding_source' => RealizationEntry::FUNDING_KAS_KEBUN, 'transaction_date' => '2026-08-05',
+            ]);
+        }
+
+        $dedItem   = ExpenseItem::factory()->create(['subcategory_id' => $subA->id, 'is_deduction' => true]);
+        $dedDetail = PdoDetail::factory()->create(['pdo_header_id' => $pdo->id, 'expense_item_id' => $dedItem->id, 'amount' => 800_000]);
+        TransferEntry::factory()->create([
+            'pdo_detail_id' => $dedDetail->id, 'amount' => -800_000,
+            'transfer_destination' => 'rek_kebun', 'transfer_date' => '2026-08-01',
+            'entry_source' => 'system', 'is_auto_generated' => true,
+        ]);
+
+        $detail = $this->service->getCashBookData([
+            'period_year' => 2026, 'period_month' => 8, 'unit_id' => $this->unit->id, 'group_by' => 'item',
+        ]);
+
+        $expenses = collect($detail['rows'])->where('type', 'pengeluaran')->values();
+
+        // Blok A (dua item + potongan) harus rapat, lalu blok B — bukan A, B, A, B.
+        $this->assertSame(
+            [1_000_000, 3_000_000, -800_000, 2_000_000, 4_000_000],
+            $expenses->pluck('amount')->all(),
+        );
     }
 
 }

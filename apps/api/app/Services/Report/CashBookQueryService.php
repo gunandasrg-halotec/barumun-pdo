@@ -150,6 +150,8 @@ class CashBookQueryService
                     'vouchers'    => null,
                     'amount'      => (int) $group->sum('amount'),
                     'created_at'  => $group->min('created_at'),
+                    'sort_block'  => $group->min('created_at')->format('Y-m-d H:i:s.u').'|',
+                    'sort_seq'    => 0,
                 ];
             })
             ->values();
@@ -164,8 +166,13 @@ class CashBookQueryService
             );
         }
 
+        // Mode detail: dalam satu tanggal, baris sub-kategori yang sama dirapatkan jadi satu
+        // blok (diurut menurut kemunculan pertamanya) dengan baris potongan menutup blok itu.
+        // Posisi blok relatif terhadap baris penerimaan tetap kronologis seperti mode lama.
         $rows = $receipts->concat($expenseRows)
-            ->sortBy([['date', 'asc'], ['created_at', 'asc']])
+            ->sortBy($groupBy === 'item'
+                ? [['date', 'asc'], ['sort_block', 'asc'], ['sort_seq', 'asc']]
+                : [['date', 'asc'], ['created_at', 'asc']])
             ->values();
 
         $balance = $openingBalance;
@@ -180,7 +187,7 @@ class CashBookQueryService
                 $balance -= $row['amount'];
                 $totalPengeluaran += $row['amount'];
             }
-            unset($row['created_at']);
+            unset($row['created_at'], $row['sort_block'], $row['sort_seq']);
             $row['balance'] = $balance;
 
             return $row;
@@ -226,6 +233,8 @@ class CashBookQueryService
             'vouchers'    => null,
             'amount'      => (int) $deductionEntries->sum('amount'), // negatif
             'created_at'  => $deductionEntries->min('created_at'),
+            'sort_block'  => $deductionEntries->min('created_at')->format('Y-m-d H:i:s.u').'|',
+            'sort_seq'    => 1,
         ];
 
         if ($receipts->isEmpty()) {
@@ -237,6 +246,10 @@ class CashBookQueryService
 
         $row['date']       = $anchorDate;
         $row['created_at'] = $receipts[$anchorIndex]['created_at'];
+        // Selalu string berformat sama dengan kunci urut lain — jangan campur tipe di sini,
+        // sortBy() membandingkan nilainya langsung.
+        $row['sort_block'] = $receipts[$anchorIndex]['sort_block']
+            ?? $receipts[$anchorIndex]['created_at']->format('Y-m-d H:i:s.u').'|';
 
         $all = $receipts->values()->all();
         array_splice($all, $anchorIndex + 1, 0, [$row]);
@@ -517,6 +530,41 @@ class CashBookQueryService
                     ? $this->allocateDeductionCreditProRata($dateGroups, $deductionByCategorySubcategory[$categoryId] ?? [])
                     : $this->allocateDeductionCredit($dateGroups, $deductionByCategorySubcategory[$categoryId] ?? []);
 
+                // Mode detail: potongan diringkas jadi SATU baris per (tanggal, sub-kategori),
+                // ditempatkan setelah item TERAKHIR sub-kategori itu — permintaan tim keuangan,
+                // yang memastikan item satu sub-kategori selalu direalisasikan di tanggal yang
+                // sama. Kalau ternyata tanggalnya berbeda, baris potongan tetap dipecah per
+                // tanggal supaya tidak pernah mendarat di tanggal yang bukan tanggal
+                // pengeluarannya (saldo berjalan harus tetap masuk akal).
+                // Pembagian pro-rata per item tetap dihitung di atas karena menentukan batas
+                // kapasitas tiap item dan berapa yang meluber ke sub-kategori tetangga; di sini
+                // hasilnya hanya dijumlahkan, jadi totalnya tidak berubah.
+                $appliedBySub = [];
+                $lastOfSub    = [];
+                $blockFirstAt = []; // created_at paling awal tiap blok
+                $blockTime    = []; // kunci urut blok (lihat pembentukannya di bawah)
+                $seqInBlock   = [];
+                if ($groupBy === 'item') {
+                    foreach ($dateGroups as $key => $group) {
+                        $prefix = implode('|', array_slice(explode('|', $key), 0, 2)); // tanggal|subcategory_id
+                        $appliedBySub[$prefix] = ($appliedBySub[$prefix] ?? 0) + (int) ($appliedByGroup[$key] ?? 0);
+                        $lastOfSub[$prefix]    = $key;
+
+                        $first = $group->min('created_at');
+                        if (! isset($blockFirstAt[$prefix]) || $first < $blockFirstAt[$prefix]) {
+                            $blockFirstAt[$prefix] = $first;
+                        }
+                    }
+
+                    // Kunci komposit "waktu|tanggal|subcategory_id": waktu menjaga urutan tetap
+                    // kronologis, sisanya memastikan seluruh baris satu sub-kategori punya kunci
+                    // yang PERSIS sama sehingga tidak bisa disisipi blok lain saat waktunya seri
+                    // (baris yang diinput pada detik yang sama — sering terjadi).
+                    foreach ($blockFirstAt as $prefix => $at) {
+                        $blockTime[$prefix] = $at->format('Y-m-d H:i:s.u').'|'.$prefix;
+                    }
+                }
+
                 foreach ($dateGroups as $groupKey => $group) {
                     $date = explode('|', $groupKey)[0];
 
@@ -567,6 +615,8 @@ class CashBookQueryService
                     $applied = (int) ($appliedByGroup[$groupKey] ?? 0);
                     $amount  = (int) $group->sum('amount') - ($groupBy === 'item' ? 0 : $applied);
 
+                    $blockKey = implode('|', array_slice(explode('|', $groupKey), 0, 2));
+
                     $rows[] = [
                         'date'        => $date,
                         'type'        => 'pengeluaran',
@@ -576,26 +626,36 @@ class CashBookQueryService
                         'vouchers'    => $vouchers->isNotEmpty() ? $vouchers->all() : null,
                         'amount'      => $amount,
                         'created_at'  => $group->min('created_at'),
+                        // Mode detail: baris satu sub-kategori dirapatkan jadi satu blok, dengan
+                        // baris potongan menutup blok itu (lihat pengurutan di getCashBookData()).
+                        'sort_block'  => $blockTime[$blockKey] ?? '',
+                        'sort_seq'    => $seqInBlock[$blockKey] = ($seqInBlock[$blockKey] ?? 0) + 1,
                     ];
 
-                    if ($groupBy === 'item' && $applied > 0) {
-                        $subId = (string) ($group->first()?->pdoDetail?->expenseItem?->subcategory_id ?? 'unknown');
-                        $own   = $deductionNamesBySubcategory[$subId] ?? '';
+                    if ($groupBy === 'item') {
+                        $prefix        = $blockKey;
+                        $appliedForSub = (int) ($appliedBySub[$prefix] ?? 0);
 
-                        $rows[] = [
-                            'date'        => $date,
-                            'type'        => 'pengeluaran',
-                            'reference'   => null,
-                            'description' => $own !== ''
-                                ? 'Potongan Panjar — '.$own
-                                : 'Potongan Panjar — '.($deductionNamesByCategory[$categoryId] ?? 'uang muka periode sebelumnya').' (alokasi dari sub-kategori lain)',
-                            'notes'       => null,
-                            'vouchers'    => null,
-                            'amount'      => -$applied,
-                            // created_at disamakan dengan baris induk supaya sortBy yang stabil
-                            // menempatkan baris ini persis di bawahnya.
-                            'created_at'  => $group->min('created_at'),
-                        ];
+                        // Hanya dipasang sekali, saat grup terakhir sub-kategori ini dilewati.
+                        if ($appliedForSub > 0 && ($lastOfSub[$prefix] ?? null) === $groupKey) {
+                            $subId = (string) ($group->first()?->pdoDetail?->expenseItem?->subcategory_id ?? 'unknown');
+                            $own   = $deductionNamesBySubcategory[$subId] ?? '';
+
+                            $rows[] = [
+                                'date'        => $date,
+                                'type'        => 'pengeluaran',
+                                'reference'   => null,
+                                'description' => $own !== ''
+                                    ? 'Potongan Panjar — '.$own
+                                    : 'Potongan Panjar — '.($deductionNamesByCategory[$categoryId] ?? 'uang muka periode sebelumnya').' (alokasi dari sub-kategori lain)',
+                                'notes'       => null,
+                                'vouchers'    => null,
+                                'amount'      => -$appliedForSub,
+                                'created_at'  => $group->max('created_at'),
+                                'sort_block'  => $blockTime[$prefix] ?? '',
+                                'sort_seq'    => PHP_INT_MAX, // selalu menutup bloknya
+                            ];
+                        }
                     }
                 }
             });
