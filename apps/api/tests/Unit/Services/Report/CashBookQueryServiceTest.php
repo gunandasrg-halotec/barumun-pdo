@@ -1188,53 +1188,6 @@ class CashBookQueryServiceTest extends TestCase
     }
 
 
-    /**
-     * T10: tim keuangan menjamin item satu sub-kategori direalisasikan di tanggal yang sama,
-     * tapi kalau data lama ternyata tidak begitu, baris potongan tetap dipecah PER TANGGAL —
-     * bukan dipaksa menumpuk di satu tanggal — supaya tidak pernah mengurangi pengeluaran di
-     * tanggal yang bukan tanggalnya, dan saldo berjalan di tengah bulan tetap masuk akal.
-     */
-    public function test_group_by_item_keeps_one_deduction_row_per_date_when_subcategory_spans_dates(): void
-    {
-        $pdo  = $this->makeDetailPdo();
-        $cat  = ExpenseCategory::factory()->create(['company_id' => $this->companyId]);
-        $sub  = ExpenseSubcategory::factory()->create(['category_id' => $cat->id]);
-        $item = ExpenseItem::factory()->create(['subcategory_id' => $sub->id]);
-        $det  = PdoDetail::factory()->create(['pdo_header_id' => $pdo->id, 'expense_item_id' => $item->id, 'amount' => 2_000_000]);
-        TransferEntry::factory()->create([
-            'pdo_detail_id' => $det->id, 'amount' => 2_000_000,
-            'transfer_destination' => 'rek_kebun', 'transfer_date' => '2026-08-01',
-        ]);
-
-        // Satu item, DUA tanggal realisasi.
-        foreach (['2026-08-05', '2026-08-06'] as $tanggal) {
-            RealizationEntry::factory()->create([
-                'pdo_detail_id' => $det->id, 'amount' => 1_000_000,
-                'funding_source' => RealizationEntry::FUNDING_KAS_KEBUN, 'transaction_date' => $tanggal,
-            ]);
-        }
-
-        $dedItem   = ExpenseItem::factory()->create(['subcategory_id' => $sub->id, 'is_deduction' => true]);
-        $dedDetail = PdoDetail::factory()->create(['pdo_header_id' => $pdo->id, 'expense_item_id' => $dedItem->id, 'amount' => 400_000]);
-        TransferEntry::factory()->create([
-            'pdo_detail_id' => $dedDetail->id, 'amount' => -400_000,
-            'transfer_destination' => 'rek_kebun', 'transfer_date' => '2026-08-01',
-            'entry_source' => 'system', 'is_auto_generated' => true,
-        ]);
-
-        [$lama, $detail] = $this->bothModes();
-
-        $potongan = collect($detail['rows'])
-            ->where('type', 'pengeluaran')
-            ->filter(fn (array $r) => $r['amount'] < 0)
-            ->values();
-
-        // Dua tanggal → dua baris potongan, masing-masing di tanggalnya sendiri.
-        $this->assertCount(2, $potongan);
-        $this->assertEqualsCanonicalizing(['2026-08-05', '2026-08-06'], $potongan->pluck('date')->all());
-        $this->assertSame(-400_000, (int) $potongan->sum('amount'));
-        $this->assertSame($lama['total_pengeluaran'], $detail['total_pengeluaran']);
-    }
 
 
     /**
@@ -1283,6 +1236,170 @@ class CashBookQueryServiceTest extends TestCase
             [1_000_000, 3_000_000, -800_000, 2_000_000, 4_000_000],
             $expenses->pluck('amount')->all(),
         );
+    }
+
+
+    /**
+     * Helper: satu sub-kategori berisi item gaji + item lain, masing-masing tanggalnya sendiri,
+     * plus satu item panjar. Meniru kasus nyata PDO-2026-09-KP-001 sub-kategori ASISTEN.
+     *
+     * @param  array<int, array{0:string,1:int,2:string}>  $items  [nama, nilai, tanggal realisasi]
+     */
+    private function makeSubcategoryWithDeduction(PdoHeader $pdo, ExpenseCategory $cat, array $items, int $panjar): ExpenseSubcategory
+    {
+        $sub = ExpenseSubcategory::factory()->create(['category_id' => $cat->id]);
+
+        foreach ($items as [$nama, $nilai, $tanggal]) {
+            $item = ExpenseItem::factory()->create(['subcategory_id' => $sub->id, 'name' => $nama]);
+            $det  = PdoDetail::factory()->create(['pdo_header_id' => $pdo->id, 'expense_item_id' => $item->id, 'amount' => $nilai]);
+            TransferEntry::factory()->create([
+                'pdo_detail_id' => $det->id, 'amount' => $nilai,
+                'transfer_destination' => 'rek_kebun', 'transfer_date' => '2026-08-01',
+            ]);
+            RealizationEntry::factory()->create([
+                'pdo_detail_id' => $det->id, 'amount' => $nilai,
+                'funding_source' => RealizationEntry::FUNDING_KAS_KEBUN, 'transaction_date' => $tanggal,
+            ]);
+        }
+
+        $dedItem   = ExpenseItem::factory()->create(['subcategory_id' => $sub->id, 'is_deduction' => true, 'name' => 'POTONGAN PANJAR GAJI']);
+        $dedDetail = PdoDetail::factory()->create(['pdo_header_id' => $pdo->id, 'expense_item_id' => $dedItem->id, 'amount' => $panjar]);
+        TransferEntry::factory()->create([
+            'pdo_detail_id' => $dedDetail->id, 'amount' => -$panjar,
+            'transfer_destination' => 'rek_kebun', 'transfer_date' => '2026-08-01',
+            'entry_source' => 'system', 'is_auto_generated' => true,
+        ]);
+
+        return $sub;
+    }
+
+    /**
+     * T12 — panjar GAJI: sub-kategori yang punya item "GAJI ..." menerima panjar gaji, jadi
+     * potongannya dibebankan PENUH ke item gaji itu — tidak disebar ke biaya lain, walau
+     * biaya-biaya itu jatuh di tanggal berbeda.
+     *
+     * Regresi kasus nyata PDO-2026-09-KP-001 sub-kategori ASISTEN: panjar Rp 500.000 sempat
+     * terpecah jadi −436.463 (gaji, 04 Sep) + sisanya menempel di biaya perawatan/perobatan
+     * tanggal lain, sehingga satu panjar tampil beberapa kali.
+     */
+    public function test_gaji_deduction_is_charged_fully_to_the_gaji_item(): void
+    {
+        $pdo = $this->makeDetailPdo();
+        $cat = ExpenseCategory::factory()->create(['company_id' => $this->companyId]);
+
+        $this->makeSubcategoryWithDeduction($pdo, $cat, [
+            ['GAJI ASISTEN',              6_732_000, '2026-08-04'],
+            ['BIAYA PERAWATAN KENDARAAN',   350_000, '2026-08-05'],
+            ['BIAYA PEROBATAN ASISTEN',     130_000, '2026-08-05'],
+        ], 500_000);
+
+        $detail = $this->service->getCashBookData([
+            'period_year' => 2026, 'period_month' => 8, 'unit_id' => $this->unit->id, 'group_by' => 'item',
+        ]);
+
+        $potongan = collect($detail['rows'])
+            ->where('type', 'pengeluaran')
+            ->filter(fn (array $r) => $r['amount'] < 0)
+            ->values();
+
+        // Satu baris saja, penuh, di tanggal gajinya.
+        $this->assertCount(1, $potongan);
+        $this->assertSame(-500_000, $potongan[0]['amount']);
+        $this->assertSame('2026-08-04', $potongan[0]['date']);
+
+        // Biaya di tanggal lain tetap utuh, tidak tergerus panjar.
+        $expenses = collect($detail['rows'])->where('type', 'pengeluaran')->keyBy('amount');
+        $this->assertNotNull($expenses->get(350_000));
+        $this->assertNotNull($expenses->get(130_000));
+    }
+
+
+    /**
+     * T14 — panjar gaji lebih besar dari gaji bulan itu: sisanya baru jatuh ke biaya lain di
+     * sub-kategori yang sama, supaya total kredit terpakai tetap utuh.
+     */
+    public function test_gaji_deduction_larger_than_gaji_spills_to_the_rest_of_the_subcategory(): void
+    {
+        $pdo = $this->makeDetailPdo();
+        $cat = ExpenseCategory::factory()->create(['company_id' => $this->companyId]);
+
+        $this->makeSubcategoryWithDeduction($pdo, $cat, [
+            ['GAJI KRANI',        1_000_000, '2026-08-04'],
+            ['LEMBUR KRANI',        500_000, '2026-08-05'],
+        ], 1_200_000);
+
+        $detail = $this->service->getCashBookData([
+            'period_year' => 2026, 'period_month' => 8, 'unit_id' => $this->unit->id, 'group_by' => 'item',
+        ]);
+
+        $potongan = collect($detail['rows'])
+            ->where('type', 'pengeluaran')
+            ->filter(fn (array $r) => $r['amount'] < 0)
+            ->values();
+
+        // Gaji habis dulu (1jt), sisa 200rb menempel di lembur.
+        $this->assertEqualsCanonicalizing([-1_000_000, -200_000], $potongan->pluck('amount')->all());
+        $this->assertSame(-1_200_000, (int) $potongan->sum('amount'));
+    }
+
+
+    /**
+     * Panjar UPAH (sub-kategori tanpa item "GAJI ...") dibebankan mulai dari tanggal transaksi
+     * PALING AWAL sub-kategori itu. Selama biaya di tanggal itu cukup menampung, potongannya
+     * cukup muncul SEKALI — tidak tersebar ke tanggal-tanggal berikutnya.
+     */
+    public function test_upah_deduction_is_charged_at_the_earliest_date(): void
+    {
+        $pdo = $this->makeDetailPdo();
+        $cat = ExpenseCategory::factory()->create(['company_id' => $this->companyId]);
+
+        $this->makeSubcategoryWithDeduction($pdo, $cat, [
+            ['UPAH BABAT GAWANGAN', 6_000_000, '2026-08-04'],
+            ['UPAH MEMUPUK',        2_000_000, '2026-08-05'],
+        ], 800_000);
+
+        $detail = $this->service->getCashBookData([
+            'period_year' => 2026, 'period_month' => 8, 'unit_id' => $this->unit->id, 'group_by' => 'item',
+        ]);
+
+        $potongan = collect($detail['rows'])
+            ->where('type', 'pengeluaran')
+            ->filter(fn (array $r) => $r['amount'] < 0)
+            ->values();
+
+        $this->assertCount(1, $potongan);
+        $this->assertSame(-800_000, $potongan[0]['amount']);
+        $this->assertSame('2026-08-04', $potongan[0]['date'], 'panjar upah jatuh di tanggal transaksi paling awal');
+    }
+
+    /**
+     * Kalau biaya di tanggal paling awal BELUM cukup menampung panjarnya, sisanya lanjut ke
+     * tanggal berikutnya — baru di sinilah potongan boleh muncul lebih dari sekali.
+     */
+    public function test_upah_deduction_spills_to_the_next_date_when_first_date_is_not_enough(): void
+    {
+        $pdo = $this->makeDetailPdo();
+        $cat = ExpenseCategory::factory()->create(['company_id' => $this->companyId]);
+
+        $this->makeSubcategoryWithDeduction($pdo, $cat, [
+            ['UPAH SEMPROT LALANG',  300_000, '2026-08-04'],
+            ['UPAH MEMUPUK',       1_000_000, '2026-08-05'],
+        ], 800_000);
+
+        $detail = $this->service->getCashBookData([
+            'period_year' => 2026, 'period_month' => 8, 'unit_id' => $this->unit->id, 'group_by' => 'item',
+        ]);
+
+        $potongan = collect($detail['rows'])
+            ->where('type', 'pengeluaran')
+            ->filter(fn (array $r) => $r['amount'] < 0)
+            ->sortBy('date')
+            ->values();
+
+        $this->assertCount(2, $potongan);
+        // Tanggal awal terserap habis (300rb), sisanya 500rb jatuh ke tanggal berikutnya.
+        $this->assertSame([-300_000, -500_000], $potongan->pluck('amount')->all());
+        $this->assertSame(['2026-08-04', '2026-08-05'], $potongan->pluck('date')->all());
     }
 
 }

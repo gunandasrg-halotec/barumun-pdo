@@ -258,17 +258,20 @@ class CashBookQueryService
     }
 
     /**
-     * Varian PRO-RATA dari allocateDeductionCredit() — khusus mode detail (group_by=item).
+     * Alokasi kredit panjar khusus mode detail (group_by=item).
      *
-     * Bedanya hanya CARA MEMBAGI, bukan total: di mode lama kredit panjar dihabiskan dari
-     * grup terbesar lebih dulu (cocok untuk baris gabungan per sub-kategori), sedangkan di
-     * mode detail tiap baris adalah satu item sehingga panjar dibagi sebanding nilai biaya
-     * masing-masing. Sub-kategori yang hanya berisi satu item otomatis menerima potongan penuh.
+     * Bedanya dengan allocateDeductionCredit() hanya CARA MEMBAGI, bukan totalnya. Mode lama
+     * menghabiskan grup terbesar lebih dulu (cocok untuk baris gabungan per sub-kategori);
+     * mode detail mengikuti cara kerja panjar di lapangan, karena di sini tiap baris adalah
+     * satu item pada satu tanggal:
+     *   - Panjar GAJI (sub-kategori punya item "GAJI ...") dibebankan penuh ke item gaji itu.
+     *   - Panjar UPAH dibebankan mulai dari tanggal transaksi paling awal; kalau biaya di
+     *     tanggal itu belum cukup menampung, sisanya lanjut ke tanggal berikutnya.
      *
      * Dua fase, sama seperti versi lama:
-     *   1. Tiap panjar dibagi pro-rata ke grup-grup di SUB-KATEGORI-nya sendiri.
-     *   2. Sisa yang tidak tertampung dikumpulkan jadi pool KATEGORI, lalu dibagi pro-rata
-     *      ke sisa kapasitas grup mana pun di kategori itu.
+     *   1. Tiap panjar diserap SUB-KATEGORI-nya sendiri (urutan sesuai dua aturan di atas).
+     *   2. Sisa yang tidak tertampung jadi pool KATEGORI, dikonsumsi kronologis dari sisa
+     *      kapasitas grup mana pun di kategori itu.
      *
      * Karena tiap fase mengisi tepat min(kredit, sisa kapasitas), total kredit terpakai per
      * kategori = min(|panjar|, total realisasi kategori) — identik dengan versi lama, itulah
@@ -286,15 +289,22 @@ class CashBookQueryService
      * @param  array<string, int>  $deductionBySubcategory  panjar KATEGORI INI saja, nilai negatif
      * @return array<string, int>  key grup => kredit terpakai (positif)
      */
-    private function allocateDeductionCreditProRata($dateGroups, array $deductionBySubcategory): array
+    private function allocateDeductionCreditForDetail($dateGroups, array $deductionBySubcategory): array
     {
         $capacity = [];
         $subOf    = [];
+        $isGaji   = [];
+        $dateOf   = [];
         foreach ($dateGroups as $key => $group) {
             $amount = (int) $group->sum('amount');
             if ($amount > 0) {
+                $item           = $group->first()?->pdoDetail?->expenseItem;
                 $capacity[$key] = $amount;
-                $subOf[$key]    = (string) ($group->first()?->pdoDetail?->expenseItem?->subcategory_id ?? 'unknown');
+                $dateOf[$key]   = explode('|', $key)[0];
+                $subOf[$key]    = (string) ($item?->subcategory_id ?? 'unknown');
+                // Item gaji pokok sub-kategori ini. "PANJAR GAJI ..." tidak ikut kena karena
+                // diawali kata PANJAR, bukan GAJI.
+                $isGaji[$key]   = (bool) preg_match('/^GAJI\b/i', trim((string) $item?->name));
             }
         }
 
@@ -362,7 +372,43 @@ class CashBookQueryService
             return 0;
         };
 
-        // Fase 1 — tiap panjar dibagi pro-rata di sub-kategorinya sendiri.
+        // Konsumsi kronologis: panjar dibebankan mulai dari tanggal transaksi PALING AWAL;
+        // kalau biaya di tanggal itu tidak cukup menampung, sisanya baru lanjut ke tanggal
+        // berikutnya. Dengan begitu satu panjar umumnya hanya menghasilkan SATU baris, bukan
+        // tersebar ke semua tanggal. Di dalam satu tanggal pembagiannya tetap pro-rata dengan
+        // pembulatan presisi, tapi itu tidak terlihat karena baris satu (sub-kategori, tanggal)
+        // memang sudah diringkas jadi satu.
+        $consumeByDate = function (array $keys, int $credit) use ($distribute, $dateOf): int {
+            $byDate = [];
+            foreach ($keys as $key) {
+                $byDate[$dateOf[$key]][] = $key;
+            }
+            ksort($byDate); // tanggal ISO — urut string = urut kronologis
+
+            foreach ($byDate as $keysOfDate) {
+                if ($credit <= 0) {
+                    break;
+                }
+                $credit = $distribute($keysOfDate, $credit);
+            }
+
+            return $credit;
+        };
+
+        // Fase 1 — tiap panjar diserap sub-kategorinya sendiri.
+        //
+        // Ada dua jenis panjar, dan bedanya menentukan ke item mana ia dibebankan:
+        //   - Panjar GAJI: uang muka atas gaji bulan lalu, jadi hanya memotong gajinya.
+        //     Sub-kategori yang punya item "GAJI ..." dianggap menerima jenis ini — penanda
+        //     ini dipakai karena nama item potongannya sendiri tidak konsisten (mis.
+        //     sub-kategori GEMBALA memakai "POTONGAN PANJAR GEMBALA" padahal uang mukanya
+        //     "PANJAR GAJI GEMBALA"), dan tidak ada kolom di expense_items yang membedakannya.
+        //   - Panjar UPAH (mis. POTONGAN PANJAR TANAMAN MENGHASILKAN): memotong seluruh biaya
+        //     di sub-kategorinya, dibebankan mulai dari tanggal transaksi paling awal.
+        //
+        // Sisa yang tidak tertampung item gaji (gajinya lebih kecil dari panjar, atau belum
+        // direalisasikan bulan ini) tetap jatuh ke item lain sub-kategori itu, lalu meluber ke
+        // kategori di Fase 2 — supaya total kredit terpakai tidak berubah.
         $spillover = 0;
         foreach ($deductionBySubcategory as $subcategoryId => $deduction) {
             $credit = abs((int) $deduction);
@@ -375,12 +421,18 @@ class CashBookQueryService
                 fn ($key) => $subOf[$key] === (string) $subcategoryId
             ));
 
-            $spillover += $distribute($ownKeys, $credit);
+            $gajiKeys = array_values(array_filter($ownKeys, fn ($key) => $isGaji[$key]));
+            if ($gajiKeys !== []) {
+                $credit = $consumeByDate($gajiKeys, $credit);
+            }
+
+            $spillover += $consumeByDate($ownKeys, $credit);
         }
 
-        // Fase 2 — sisanya meluber pro-rata ke sub-kategori tetangga dalam kategori yang sama.
+        // Fase 2 — sisanya meluber ke sub-kategori tetangga dalam kategori yang sama, dengan
+        // aturan kronologis yang sama supaya luberan pun tidak tersebar ke banyak tanggal.
         if ($spillover > 0) {
-            $distribute(array_keys($capacity), $spillover);
+            $consumeByDate(array_keys($capacity), $spillover);
         }
 
         return $applied;
@@ -527,7 +579,7 @@ class CashBookQueryService
                     ->sortKeys();
 
                 $appliedByGroup = $groupBy === 'item'
-                    ? $this->allocateDeductionCreditProRata($dateGroups, $deductionByCategorySubcategory[$categoryId] ?? [])
+                    ? $this->allocateDeductionCreditForDetail($dateGroups, $deductionByCategorySubcategory[$categoryId] ?? [])
                     : $this->allocateDeductionCredit($dateGroups, $deductionByCategorySubcategory[$categoryId] ?? []);
 
                 // Mode detail: potongan diringkas jadi SATU baris per (tanggal, sub-kategori),
@@ -536,9 +588,9 @@ class CashBookQueryService
                 // sama. Kalau ternyata tanggalnya berbeda, baris potongan tetap dipecah per
                 // tanggal supaya tidak pernah mendarat di tanggal yang bukan tanggal
                 // pengeluarannya (saldo berjalan harus tetap masuk akal).
-                // Pembagian pro-rata per item tetap dihitung di atas karena menentukan batas
-                // kapasitas tiap item dan berapa yang meluber ke sub-kategori tetangga; di sini
-                // hasilnya hanya dijumlahkan, jadi totalnya tidak berubah.
+                // Alokasi per item tetap dihitung di atas karena menentukan batas kapasitas
+                // tiap item dan berapa yang meluber ke sub-kategori tetangga; di sini hasilnya
+                // hanya dijumlahkan, jadi totalnya tidak berubah.
                 $appliedBySub = [];
                 $lastOfSub    = [];
                 $blockFirstAt = []; // created_at paling awal tiap blok
