@@ -89,13 +89,22 @@ class TransferEntryController extends Controller
             'entries.*.reference_number'         => ['nullable', 'string', 'max:100'],
             'entries.*.notes'                    => ['nullable', 'string'],
             'entries.*.transfer_destination'     => ['nullable', 'string', 'in:rek_kebun,pribadi,vendor'],
+            // Map pdo_detail_id (item potongan) → kantong pilihan kasir. Disimpan di server
+            // supaya sampai ke Direktur Keuangan yang menyimpan permanen di sesi lain.
+            'deduction_destinations'             => ['sometimes', 'array'],
+            'deduction_destinations.*'           => ['string', 'in:rek_kebun,pribadi'],
         ]);
 
         if (! $request->user()?->canRecordTransfer()) {
             abort(response()->json(['success' => false, 'error' => ['code' => 'FORBIDDEN', 'message' => 'Anda tidak berhak mencatat transfer dana.']], 403));
         }
 
-        $results = $this->service->storeBulk($pdo, $request->input('entries'), $request->user());
+        $results = $this->service->storeBulk(
+            $pdo,
+            $request->input('entries'),
+            $request->user(),
+            $request->input('deduction_destinations', []),
+        );
 
         return response()->json(['success' => true, 'data' => $results, 'message' => 'Draft transfer berhasil disimpan.'], 201);
     }

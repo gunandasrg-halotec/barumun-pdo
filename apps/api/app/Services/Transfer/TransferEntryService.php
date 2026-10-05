@@ -286,6 +286,9 @@ class TransferEntryService
                     ? $detail->expenseItem->subcategory->only(['id', 'code', 'name', 'display_order'])
                     : null,
                 'description'      => $detail->description,
+                // Kantong pilihan kasir untuk item potongan, tersimpan sejak Simpan Draft
+                // (null = belum pernah dipilih). Lihat persistDeductionDestinations().
+                'deduction_destination' => $detail->deduction_destination,
                 'amount_approved'  => $detail->amount,
                 // Committed (final) — nilai yang dihitung di halaman/laporan lain
                 'total_transferred'=> $finalTotal,
@@ -386,7 +389,7 @@ class TransferEntryService
      *
      * BR-TRANSFER-002: total (committed + draft baru) tidak boleh melebihi amount detail.
      */
-    public function storeBulk(PdoHeader $pdo, array $entries, User $actor): array
+    public function storeBulk(PdoHeader $pdo, array $entries, User $actor, array $deductionDests = []): array
     {
         if (! $pdo->isFinal()) {
             abort(response()->json([
@@ -397,7 +400,9 @@ class TransferEntryService
 
         $results = [];
 
-        DB::transaction(function () use ($pdo, $entries, $actor, &$results) {
+        DB::transaction(function () use ($pdo, $entries, $actor, $deductionDests, &$results) {
+            $this->persistDeductionDestinations($pdo, $deductionDests, $actor);
+
             // Hapus semua draft lama PDO ini — form akan menggantinya sepenuhnya.
             TransferEntry::onlyDrafts()
                 ->whereHas('pdoDetail', fn ($q) => $q->where('pdo_header_id', $pdo->id))
@@ -471,6 +476,56 @@ class TransferEntryService
         }
 
         return $results;
+    }
+
+    /**
+     * Simpan kantong pilihan kasir untuk item Potongan Panjar (pdo_details.deduction_destination).
+     *
+     * Entri transfer potongan baru dibuat saat Simpan Permanen (applyDeductionEntries()), dan
+     * itu dilakukan Direktur Keuangan di sesi berbeda dari pembuat draft. Tanpa penyimpanan
+     * di server, pilihan kasir hanya hidup di state React-nya dan Direktur selalu melihat
+     * default rek_kebun — semua potongan pribadi tercatat ke kebun.
+     *
+     * Hanya item potongan milik PDO ini yang BELUM punya entri potongan committed yang
+     * diterima; sisanya diabaikan diam-diam (pilihan sudah tidak berarti setelah commit).
+     */
+    private function persistDeductionDestinations(PdoHeader $pdo, array $deductionDests, User $actor): void
+    {
+        if ($deductionDests === []) {
+            return;
+        }
+
+        $details = $pdo->details()
+            ->whereIn('pdo_details.id', array_keys($deductionDests))
+            ->whereHas('expenseItem', fn ($q) => $q->where('is_deduction', true))
+            ->lockForUpdate()
+            ->get();
+
+        foreach ($details as $detail) {
+            $dest = $deductionDests[$detail->id];
+            if (! in_array($dest, [TransferEntry::DEST_REK_KEBUN, TransferEntry::DEST_PRIBADI], true)) {
+                continue;
+            }
+
+            $alreadyApplied = TransferEntry::where('pdo_detail_id', $detail->id)
+                ->where('is_auto_generated', true)
+                ->exists(); // global scope committed_only
+            if ($alreadyApplied || $detail->deduction_destination === $dest) {
+                continue;
+            }
+
+            $old = ['deduction_destination' => $detail->deduction_destination];
+            $detail->update(['deduction_destination' => $dest]);
+
+            AuditLog::record(
+                actor: $actor,
+                entityType: 'pdo_details',
+                entityId: $detail->id,
+                action: 'UPDATE',
+                oldValues: $old,
+                newValues: ['deduction_destination' => $dest],
+            );
+        }
     }
 
     /**
@@ -670,8 +725,9 @@ class TransferEntryService
                 continue;
             }
 
-            // Tujuan potongan: pilihan user (default rek_kebun), divalidasi.
-            $dest = $deductionDests[$detail->id] ?? TransferEntry::DEST_REK_KEBUN;
+            // Tujuan potongan: pilihan eksplisit saat commit, kalau tidak ada pakai yang
+            // tersimpan sejak Simpan Draft, terakhir default rek_kebun. Divalidasi.
+            $dest = $deductionDests[$detail->id] ?? $detail->deduction_destination ?? TransferEntry::DEST_REK_KEBUN;
             if (! in_array($dest, $validDests, true)) {
                 $dest = TransferEntry::DEST_REK_KEBUN;
             }

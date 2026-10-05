@@ -538,6 +538,106 @@ class TransferEntryServiceTest extends TestCase
         $this->assertFalse((bool) $potongan->fresh()->is_transferred);
     }
 
+    // ─────────────────────────────────────────────────────
+    // Kantong potongan panjar tersimpan di server sejak Simpan Draft
+    // (regresi: Direktur menyimpan permanen di sesi lain → semua potongan jadi rek_kebun)
+    // ─────────────────────────────────────────────────────
+
+    /** @return array{0: PdoHeader, 1: PdoDetail, 2: PdoDetail} [pdo, item biasa, item potongan] */
+    private function makePdoWithPlainAndDeductionDetail(): array
+    {
+        $keraniRole = Role::factory()->create(['code' => Role::KERANI]);
+        $kerani     = User::factory()->create(['company_id' => $this->companyId, 'role_id' => $keraniRole->id]);
+        $pdo = PdoHeader::factory()->create([
+            'company_id' => $this->companyId, 'plantation_unit_id' => $this->unit->id,
+            'created_by' => $kerani->id, 'status' => PdoHeader::STATUS_FINAL,
+        ]);
+        $plain   = PdoDetail::factory()->create(['pdo_header_id' => $pdo->id, 'amount' => 3_000_000]);
+        $dedItem = ExpenseItem::factory()->create(['is_deduction' => true]);
+        $ded     = PdoDetail::factory()->create(['pdo_header_id' => $pdo->id, 'expense_item_id' => $dedItem->id, 'amount' => 1_000_000]);
+
+        return [$pdo, $plain, $ded];
+    }
+
+    private function plainDraftRow(PdoDetail $plain): array
+    {
+        return [
+            'pdo_detail_id' => $plain->id, 'amount' => 3_000_000, 'transfer_date' => '2026-10-05',
+            'reference_number' => null, 'notes' => null, 'transfer_destination' => TransferEntry::DEST_REK_KEBUN,
+        ];
+    }
+
+    public function test_store_bulk_persists_deduction_destination_only_for_deduction_items(): void
+    {
+        [$pdo, $plain, $ded] = $this->makePdoWithPlainAndDeductionDetail();
+
+        $this->service->storeBulk($pdo, [$this->plainDraftRow($plain)], $this->manajerKeuangan, [
+            $ded->id   => TransferEntry::DEST_PRIBADI,
+            $plain->id => TransferEntry::DEST_PRIBADI, // bukan item potongan → diabaikan
+        ]);
+
+        $this->assertEquals(TransferEntry::DEST_PRIBADI, $ded->fresh()->deduction_destination);
+        $this->assertNull($plain->fresh()->deduction_destination);
+    }
+
+    public function test_commit_uses_deduction_destination_saved_at_draft_time(): void
+    {
+        [$pdo, $plain, $ded] = $this->makePdoWithPlainAndDeductionDetail();
+        $this->service->storeBulk($pdo, [$this->plainDraftRow($plain)], $this->manajerKeuangan, [$ded->id => TransferEntry::DEST_PRIBADI]);
+
+        // Simpan Permanen oleh user lain tanpa mengirim pilihan apa pun.
+        $this->service->commitDrafts($pdo, $this->manajerKeuangan, []);
+
+        $potongan = TransferEntry::where('pdo_detail_id', $ded->id)->where('is_auto_generated', true)->firstOrFail();
+        $this->assertEquals(TransferEntry::DEST_PRIBADI, $potongan->transfer_destination);
+        $this->assertEquals(-1_000_000, $potongan->amount);
+        $this->assertStringContainsString('Pribadi', $potongan->notes);
+    }
+
+    public function test_commit_explicit_choice_overrides_saved_destination(): void
+    {
+        [$pdo, $plain, $ded] = $this->makePdoWithPlainAndDeductionDetail();
+        $this->service->storeBulk($pdo, [$this->plainDraftRow($plain)], $this->manajerKeuangan, [$ded->id => TransferEntry::DEST_PRIBADI]);
+
+        $this->service->commitDrafts($pdo, $this->manajerKeuangan, [$ded->id => TransferEntry::DEST_REK_KEBUN]);
+
+        $potongan = TransferEntry::where('pdo_detail_id', $ded->id)->where('is_auto_generated', true)->firstOrFail();
+        $this->assertEquals(TransferEntry::DEST_REK_KEBUN, $potongan->transfer_destination);
+    }
+
+    public function test_commit_defaults_to_rek_kebun_when_destination_never_chosen(): void
+    {
+        [$pdo, $plain, $ded] = $this->makePdoWithPlainAndDeductionDetail();
+        $this->service->storeBulk($pdo, [$this->plainDraftRow($plain)], $this->manajerKeuangan);
+
+        $this->service->commitDrafts($pdo, $this->manajerKeuangan, []);
+
+        $potongan = TransferEntry::where('pdo_detail_id', $ded->id)->where('is_auto_generated', true)->firstOrFail();
+        $this->assertEquals(TransferEntry::DEST_REK_KEBUN, $potongan->transfer_destination);
+    }
+
+    public function test_store_bulk_ignores_deduction_destination_once_deduction_is_committed(): void
+    {
+        [$pdo, $plain, $ded] = $this->makePdoWithPlainAndDeductionDetail();
+        $this->service->storeBulk($pdo, [$this->plainDraftRow($plain)], $this->manajerKeuangan, [$ded->id => TransferEntry::DEST_PRIBADI]);
+        $this->service->commitDrafts($pdo, $this->manajerKeuangan, []);
+
+        $this->service->storeBulk($pdo, [], $this->manajerKeuangan, [$ded->id => TransferEntry::DEST_REK_KEBUN]);
+
+        $this->assertEquals(TransferEntry::DEST_PRIBADI, $ded->fresh()->deduction_destination);
+    }
+
+    public function test_summary_by_pdo_exposes_saved_deduction_destination(): void
+    {
+        [$pdo, $plain, $ded] = $this->makePdoWithPlainAndDeductionDetail();
+        $this->service->storeBulk($pdo, [$this->plainDraftRow($plain)], $this->manajerKeuangan, [$ded->id => TransferEntry::DEST_PRIBADI]);
+
+        $summary = $this->service->summaryByPdo($pdo->fresh());
+
+        $this->assertEquals(TransferEntry::DEST_PRIBADI, $summary->firstWhere('pdo_detail_id', $ded->id)['deduction_destination']);
+        $this->assertNull($summary->firstWhere('pdo_detail_id', $plain->id)['deduction_destination']);
+    }
+
     public function test_summary_by_pdo_marks_source_pdo_number_for_merged_tambahan_rows(): void
     {
         $pdo = PdoHeader::factory()->create([

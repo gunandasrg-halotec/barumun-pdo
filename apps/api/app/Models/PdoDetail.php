@@ -39,6 +39,7 @@ class PdoDetail extends Model
         'expense_item_id',
         'source_pdo_supplementary_id',
         'funding_option',
+        'deduction_destination',
         'account_number',
         'description',
         'quantity',

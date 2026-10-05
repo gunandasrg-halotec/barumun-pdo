@@ -66,6 +66,8 @@ interface PdoDetailSummary {
   source_pdo_number:    string | null
   source_pdo_merged_at: string | null
   funding_option:       string | null
+  /** Kantong pilihan kasir untuk item potongan, tersimpan di server sejak Simpan Draft. */
+  deduction_destination: TransferDest | null
   expense_item:      ExpenseItemInfo | null
   category:          CategoryInfo | null
   subcategory:       CategoryInfo | null
@@ -495,6 +497,12 @@ export function TransferBulkPage() {
   // "bukan pertama kali" dan menol-kan kolom Jumlah secara keliru.
   const hasSavedRef = useRef(false)
 
+  // Item potongan yang kantongnya diubah user di form ini tapi belum disimpan ke server.
+  // Hanya yang "kotor" yang dipertahankan saat rows dibangun ulang; selebihnya mengikuti
+  // nilai server (deduction_destination) supaya Direktur yang membuka halaman belakangan
+  // melihat pilihan kasir, bukan default rek_kebun.
+  const dirtyDeductionRef = useRef<Set<string>>(new Set())
+
   useEffect(() => {
     hasSavedRef.current = false
   }, [pdoId])
@@ -546,8 +554,10 @@ export function TransferBulkPage() {
         // sesi form ini → pertahankan pilihan itu; (3) baru pertama kali dibuka → rek_kebun.
         if (d.expense_item?.is_deduction) {
           const committedDest = DEST_OPTIONS.find((k) => d.final_by_dest[k] < 0)
-          const prevDest = prevByDetailId.get(d.pdo_detail_id)?.normal.dest
-          const dest = committedDest ?? prevDest ?? 'rek_kebun'
+          const localDest = dirtyDeductionRef.current.has(d.pdo_detail_id)
+            ? prevByDetailId.get(d.pdo_detail_id)?.normal.dest
+            : undefined
+          const dest = committedDest ?? localDest ?? d.deduction_destination ?? 'rek_kebun'
           return {
             pdo_detail_id: d.pdo_detail_id,
             isSplit:       false,
@@ -684,6 +694,9 @@ export function TransferBulkPage() {
   }
 
   const updateNormal = (pdoDetailId: string, field: keyof NormalRow, value: string | number) => {
+    if (field === 'dest' && details.find((d) => d.pdo_detail_id === pdoDetailId)?.expense_item?.is_deduction) {
+      dirtyDeductionRef.current.add(pdoDetailId)
+    }
     setRows((prev) => prev.map((r) => r.pdo_detail_id === pdoDetailId ? { ...r, normal: { ...r.normal, [field]: value } } : r))
   }
 
@@ -716,10 +729,19 @@ export function TransferBulkPage() {
   }, [rows])
 
   const save = useMutation({
-    mutationFn: (entries: DraftEntry[]) =>
+    mutationFn: (entries: DraftEntry[]) => {
+      // Kantong potongan ikut disimpan di server: entri potongan baru lahir saat Simpan
+      // Permanen oleh Direktur di sesi lain, jadi tidak boleh hanya hidup di state React.
+      const deduction_destinations: Record<string, TransferDest> = {}
+      details.forEach((d, i) => {
+        if (d.expense_item?.is_deduction && d.total_transferred >= 0 && rows[i]) {
+          deduction_destinations[d.pdo_detail_id] = rows[i].normal.dest
+        }
+      })
       // entries kosong = hapus semua draft (sinkronisasi form → draft)
-      api.post(`/pdo/${pdoId}/transfers/bulk`, { entries }),
-    onSuccess: () => { hasSavedRef.current = true; setConfirmSave(null); toast('Draft transfer berhasil disimpan'); invalidate() },
+      return api.post(`/pdo/${pdoId}/transfers/bulk`, { entries, deduction_destinations })
+    },
+    onSuccess: () => { hasSavedRef.current = true; dirtyDeductionRef.current.clear(); setConfirmSave(null); toast('Draft transfer berhasil disimpan'); invalidate() },
     onError: (err) => toast(errMsg(err, 'Gagal menyimpan draft'), 'error'),
   })
 
@@ -734,7 +756,7 @@ export function TransferBulkPage() {
       })
       return api.post(`/pdo/${pdoId}/transfers/commit`, { deduction_destinations })
     },
-    onSuccess: () => { hasSavedRef.current = true; toast('Semua draft berhasil disimpan permanen'); invalidate() },
+    onSuccess: () => { hasSavedRef.current = true; dirtyDeductionRef.current.clear(); toast('Semua draft berhasil disimpan permanen'); invalidate() },
     onError: (err) => toast(errMsg(err, 'Gagal menyimpan permanen'), 'error'),
   })
 
