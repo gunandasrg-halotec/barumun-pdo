@@ -97,7 +97,8 @@ Password: ChangeMe123!
 pdo-system/
 ├── apps/
 │   ├── api/          ← Laravel 13 Backend
-│   └── web/          ← React 19 Frontend
+│   ├── web/          ← React 19 Frontend
+│   └── mcp/          ← MCP server read-only (tanya data PDO lewat Claude)
 ├── docs/             ← Dokumentasi teknis (PRD, BRD, ERD, API Spec, TAD, UI Spec)
 ├── docker-compose.yml
 └── .github/

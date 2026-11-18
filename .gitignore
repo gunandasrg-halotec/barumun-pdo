@@ -28,3 +28,6 @@ docs/adr/
 # Node
 node_modules/
 BPN.pem
+
+# MCP server punya repo sendiri: github.com/gunandasrg-halotec/mcp-pdo
+apps/mcp/

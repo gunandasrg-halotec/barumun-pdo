@@ -6,6 +6,9 @@
 apps/api/vendor
 apps/web/node_modules
 
+# MCP server — tidak ikut image api/web
+apps/mcp
+
 # Env files (gunakan docker/api/.env.docker)
 apps/api/.env
 
